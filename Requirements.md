@@ -212,6 +212,19 @@ UI-based configuration with sections: Name, Description, Prompt, Scope, Permissi
 
 Technology: **Qdrant**
 
+### 6.2.1 Structural Code Memory (Optional)
+
+Technology: **Graphify** (open-source, Apache 2.0)
+
+Complements Qdrant's episodic memory (sessions, decisions, ADRs) with structural codebase memory:
+
+- Parses repositories locally with tree-sitter into a queryable knowledge graph (entities and relationships)
+- Agents query code structure instead of grepping, reducing token cost on large codebases
+- Runs fully local (no cloud, no telemetry, no API keys) — consistent with the self-hosted, no-Docker model
+- Ships as a Claude Code skill, matching the primary V1 runtime
+
+Adoption path: trial as a per-repository Claude Code skill first; if proven, integrate into repository onboarding with graph refresh handled by the Sync Worker.
+
 ### 6.3 Memory Sources
 
 - Sessions
@@ -353,7 +366,7 @@ Core entities:
 6. Telegram Worker
 7. Sync Worker
 
-**Optional:** Ollama
+**Optional:** Ollama, Graphify (structural code memory, see 6.2.1)
 
 ### Development Environment
 
@@ -386,7 +399,7 @@ Dashboard, Projects, Sessions, Agents, Memory, ADRs, Settings.
 
 - **Phase 1 (Foundation):** Authentication, session tracking, Claude wrapper, GitHub integration, dashboard
 - **Phase 2 (Knowledge):** Obsidian sync, ADR generation, Telegram, search
-- **Phase 3 (Memory):** Qdrant, context recovery, semantic search
+- **Phase 3 (Memory):** Qdrant, context recovery, semantic search, Graphify structural code memory (optional)
 - **Phase 4 (Agents):** Agent framework, agent builder, agent teams, agent workflows
 - **Phase 5 (Advanced):** Anthropic/OpenAI/Gemini adapters, multi-runtime orchestration, advanced automation, autonomous review flows
 

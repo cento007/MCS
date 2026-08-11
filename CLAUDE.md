@@ -12,7 +12,7 @@ Per the PRD, the next deliverable is a **Technical Design Specification (TDS)** 
 
 ## What Mission Control Is
 
-A self-hosted command center for AI-assisted development, installed natively (no Docker) on a single Ubuntu home server. Core capabilities: Claude Code session management (managed + observed sessions with live browser chat), GitHub integration (repos, commits, PRs), an agent framework (agents = personas running on runtimes, not models), a four-tier memory system (session/project/agent/global) backed by Qdrant semantic search, two-way Obsidian sync with ADR generation, and Telegram notifications.
+A self-hosted command center for AI-assisted development, installed natively (no Docker) on a single Ubuntu home server. Core capabilities: Claude Code session management (managed + observed sessions with live browser chat), GitHub integration (repos, commits, PRs), an agent framework (agents = personas running on runtimes, not models), a four-tier memory system (session/project/agent/global) backed by Qdrant semantic search, two-way Obsidian sync with ADR generation, and Telegram notifications. Graphify (local code knowledge graph, Claude Code skill) is planned as optional structural code memory alongside Qdrant's episodic memory (Phase 3+, pending a hands-on trial).
 
 Read `Requirements.md` in full before making design or implementation decisions — it is the single source of truth for scope, data model, and roadmap.
 
