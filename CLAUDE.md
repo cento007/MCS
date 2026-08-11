@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-**Greenfield — no code exists yet.** The repository currently contains only `Requirements.md`, the Product Requirements Document (PRD v2.0) for **Mission Control**, a self-hosted AI Engineering Operating System. It is not yet a git repository.
+**Greenfield — no code exists yet.** The repository currently contains only `Requirements.md`, the Product Requirements Document (PRD v2.0) for **Mission Control**, a self-hosted AI Engineering Operating System.
+
+Remote: https://github.com/cento007/MCS. Development work happens on the `DEV` branch; `main` is the stable branch.
 
 Per the PRD, the next deliverable is a **Technical Design Specification (TDS)** — database schemas, API contracts, Docker architecture, service boundaries, event models, and wireframes — before implementation begins.
 
