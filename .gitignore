@@ -31,3 +31,9 @@ test-results/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Browser-automation artifacts and ad-hoc screenshots
+.playwright-mcp/
+*.png
+!apps/frontend/**/*.png
+!docs/**/*.png
