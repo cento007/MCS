@@ -1,0 +1,45 @@
+# Mission Control — Backend (TDS 02 §9.1)
+# TEMPLATE. Copy to /etc/systemd/system/, adjust User/paths, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mission-control-backend
+# Nothing in this directory is imported by application code (F8.1): systemd knowledge
+# lives only here, and the app starts in the foreground and logs to stdout either way.
+
+[Unit]
+Description=Mission Control Backend
+After=network-online.target postgresql.service
+Wants=network-online.target
+# Deliberately NOT Requires=postgresql.service — the app retries its DB connection on its
+# own, so a PostgreSQL restart must not cascade-stop the Backend (TDS 02 §9.1).
+
+[Service]
+Type=simple
+User=missioncontrol
+Group=missioncontrol
+WorkingDirectory=/opt/mission-control
+EnvironmentFile=/etc/mission-control/mission-control.env
+ExecStart=/usr/bin/node apps/backend/dist/main.js
+Restart=on-failure
+RestartSec=3
+
+# Managed Claude child processes die with the Backend by design (TDS 02 §4.4): orphaned
+# `running` sessions are transitioned to `failed` with one-click resume-as-new at boot.
+KillMode=control-group
+
+# Logs go to stdout only; journald captures them (TDS 02 §9.4).
+#   journalctl -u mission-control-backend -f
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/mission-control
+# Add operator-granted paths as needed: repository roots, and the ~/.claude directory of
+# the operating user (the Backend reads transcripts and surgically writes hook profiles).
+# ReadWritePaths=/home/you/.claude
+# ReadOnlyPaths=/srv/repos
+
+[Install]
+WantedBy=multi-user.target

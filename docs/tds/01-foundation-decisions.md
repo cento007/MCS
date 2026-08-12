@@ -17,7 +17,7 @@ These nine decisions are the Foundation Contract. WS1–WS6 consume them verbati
 | Layer | Choice |
 |---|---|
 | Language (whole stack) | TypeScript 5.x, strict mode |
-| Backend runtime | Node.js 22 LTS |
+| Backend runtime | Node.js — floor **≥ 22**, target the active LTS at deploy time (see F1.2) |
 | Backend framework | Fastify 5 (with `@fastify/websocket`) |
 | Frontend | React 19 + Vite 6 (SPA), Tailwind CSS 4, dark-mode-first |
 | Data layer / ORM | Drizzle ORM + drizzle-kit migrations, `pg` driver |
@@ -25,7 +25,9 @@ These nine decisions are the Foundation Contract. WS1–WS6 consume them verbati
 | Package/workspace tooling | pnpm workspaces (monorepo) |
 | Test tooling (baseline for WS6) | Vitest (unit/integration), Playwright (E2E) |
 
-### F1.2 Backend: Node.js 22 + TypeScript + Fastify
+### F1.2 Backend: Node.js (≥ 22, active LTS at deploy) + TypeScript + Fastify
+
+> **Amended 2026-08-12.** This decision originally read "Node.js 22 LTS". Node 22 has since moved to maintenance LTS, and the development host runs 26.4.0 — so a literal pin would have created a dev/prod split on day one, which is exactly what F8's cross-platform rule exists to prevent. The version is therefore expressed as a **floor plus a policy** rather than a fixed number: `engines.node` is `">=22"`, and production installs whichever release is **active LTS at the time of deployment** (Node 24 today; Node 26 enters LTS in October 2026, before this product reaches its server). CI tests the floor and the target. Nothing in the stack depends on a version-specific API, so this is a deployment choice, not an architectural one. `.nvmrc` tracks the development host.
 
 **Rationale:** The core Phase 1 job is wrapping the Claude Code CLI as a child process with bidirectional streaming — Node's `child_process` + streams model is the native idiom for exactly this, and Claude Code itself (and its Agent SDK) is a Node/TypeScript product, so the wrapper, SDK types, and `stream-json` parsing live in the same ecosystem. Node runs identically on Windows 11 and Ubuntu with no platform-specific dependencies, satisfying the dual-OS constraint. One language across backend, workers, and frontend maximizes shared types (entities, event envelopes, API DTOs) in a single monorepo package. The builderz-labs reference implementation independently validates Node 22 + TypeScript + pnpm as proven in this exact domain.
 

@@ -1,0 +1,252 @@
+/*
+ * Mission Control design tokens.
+ *
+ * Token STRUCTURE per TDS 05 §9.1 (WS4); token VALUES per TDS 06 §2.1/§2.2/§2.3 rev. 2
+ * (WS5). Tailwind CSS 4 is configured CSS-first: this `@theme` block is the whole theme
+ * configuration — there is no tailwind.config.js.
+ *
+ * DARK IS THE DEFAULT. The `:root` values ARE the dark palette (PRD §14). A light mode,
+ * if it is ever enabled from Settings -> General, is an override block under
+ * `[data-theme="light"]` applied to <html>; it does not exist yet and no component may
+ * assume it does.
+ *
+ * TWO CONSUMPTION RULES, enforceable in review (TDS 05 §9.1, TDS 06 §2.1.4):
+ *
+ *  1. `--color-accent` marks OPERATOR INTENT AND POSITION — actionable, selected, focused,
+ *     current. It NEVER reports a system condition. Anything that would use the accent to
+ *     say "healthy" or "running" uses a status or state token instead. This is why
+ *     `--color-success` is cyan rather than green.
+ *
+ *  2. Control boundaries come from `--color-border-control`, never from the field's own
+ *     fill. On a near-black canvas no darker fill can reach the 3:1 identification floor
+ *     of WCAG SC 1.4.11 — black on `#202020` tops out at 1.29:1 — so the border is the
+ *     only element that can carry it. `--color-border` is decorative and has no floor.
+ *
+ * Components consume ONLY the semantic tokens below. Raw hex in a component is a review
+ * failure; so is reusing a status token for a session state, or vice versa (the two ramps
+ * share values by construction but stay separate tokens so they remain independently
+ * themeable).
+ */
+
+@theme {
+  /* Clear Tailwind's default scales. The design system is closed: if a value is not
+     declared here it does not exist, which is what stops `bg-blue-500` appearing in a
+     component six months from now. Breakpoints are deliberately NOT cleared — TDS 05 §9.2
+     uses the standard Tailwind breakpoints. */
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --leading-*: initial;
+  --font-weight-*: initial;
+  --tracking-*: initial;
+  --spacing-*: initial;
+  --spacing: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+
+  /* ── Surfaces (TDS 06 §2.1.1) ────────────────────────────────────────────────────
+     Three layers plus an inset; higher = lighter. No drop shadows on dark surfaces —
+     separation is background delta + a 1px border, and on this canvas the deltas are
+     necessarily small (1.05–1.15:1), which is exactly why the border is mandatory on
+     every raised surface. */
+  --color-bg: #1c1c1c; /* page background, layer 0 */
+  --color-surface: #202020; /* cards, panels, sidebar, table headers — layer 1 */
+  --color-surface-raised: #2b2b2b; /* modals, popovers, dropdowns, toasts — layer 2 */
+  --color-surface-inset: #141414; /* code blocks, tool-call I/O, terminal-style areas */
+  --color-overlay: rgba(0, 0, 0, 0.72); /* modal scrim */
+  --color-hover: rgba(255, 255, 255, 0.055); /* row/list hover wash, any layer */
+  --color-selected: rgba(62, 207, 142, 0.12); /* selected row/tab wash — accent tint */
+
+  /* ── Borders and focus (TDS 06 §2.1.2) ───────────────────────────────────────────
+     Two families, deliberately. See consumption rule 2 above. */
+  --color-border: #333333; /* decorative hairline — no contrast floor */
+  --color-border-strong: #4a4a4a; /* emphasised dividers, hover on decorative */
+  --color-border-control: #7a7a7a; /* boundary of any control — >=3:1 on all layers */
+  --color-border-control-hover: #a3a3a3; /* hover/active on a control boundary */
+  --color-border-focus: #3ecf8e; /* focus ring — the accent */
+
+  /* ── Text (TDS 06 §2.1.3) ────────────────────────────────────────────────────────
+     `--color-text` is #ededed, not #ffffff: white measures 17.04:1 on the canvas, far
+     more than needed, and halates at the 13–14px mono densities this product uses.
+     `--color-text-disabled` is NOT a text colour — 3.44:1 fails AA as body text. It is
+     admitted only for disabled controls (WCAG-exempt) and non-text marks. Never use it
+     for phase-gated navigation; that is what the P3/P4 badge is for. */
+  --color-text: #ededed; /* headings, body, values      — >=12:1 on all layers */
+  --color-text-secondary: #b2b2b2; /* labels, metadata, th        — >=6.6:1 */
+  --color-text-muted: #9a9a9a; /* hints, placeholders, times  — >=5.0:1 on ALL layers */
+  --color-text-disabled: #707070; /* disabled controls ONLY */
+  --color-text-inverse: #171717; /* text on accent / warning / danger fills */
+
+  /* ── Accent — single accent, emerald (TDS 06 §2.1.4) ─────────────────────────────
+     A dark-canvas colour: 8.54:1 on #1c1c1c, but only 2.00:1 on white. That asymmetry is
+     the strongest single argument for the dark-first decision. */
+  --color-accent: #3ecf8e;
+  --color-accent-hover: #4ade80;
+  --color-accent-active: #24b47e;
+  --color-accent-subtle: #1e3329; /* tinted grounds: selected nav item, accent chips */
+  --color-on-accent: #171717; /* text/icon on a solid accent fill — 8.98:1 */
+
+  /* ── Status — outcomes and health only (TDS 06 §2.1.5) ───────────────────────────
+     Reserved for Test Connection results, service health, error banners, destructive
+     buttons. `--color-success` is CYAN, not green: a green "live" chip 200px from an
+     emerald primary button is precisely the ambiguity consumption rule 1 exists to
+     prevent. */
+  --color-success: #4fa8bd;
+  --color-success-subtle: #212a2c;
+  --color-warning: #e5b64a;
+  --color-warning-subtle: #302b21;
+  --color-danger: #f47460;
+  --color-danger-subtle: #322523;
+  --color-info: #a9bdfa;
+  --color-info-subtle: #2a2c32;
+
+  /* ── Session states — keyed verbatim to the six F7 states (TDS 06 §2.1.6) ────────
+     StatusBadge maps a Session's lowercase state string straight to
+     `--color-state-<state>`: one source of truth across list rows, the open-sessions
+     strip, the Live Session tab bar, the timeline and the dashboard widgets.
+
+     Colour is never the only channel. Every badge carries the verbatim F7 state name as
+     text, every dot carries its glyph, and `running` additionally pulses — the one
+     channel that survives every form of colour blindness. Glyphs: created ○, running ▶,
+     paused ‖, completed ✓, failed ✕, archived ▣. */
+  --color-state-created: #b2b2b2;
+  --color-state-created-subtle: #2c2c2c;
+  --color-state-running: #4fa8bd;
+  --color-state-running-subtle: #212a2c;
+  --color-state-paused: #e5b64a;
+  --color-state-paused-subtle: #302b21;
+  --color-state-completed: #a9bdfa;
+  --color-state-completed-subtle: #2a2c32;
+  --color-state-failed: #f47460;
+  --color-state-failed-subtle: #322523;
+  --color-state-archived: #8f8f8f;
+  --color-state-archived-subtle: #232323;
+
+  /* ── Typography (TDS 06 §2.2) ────────────────────────────────────────────────────
+     Fonts are SELF-HOSTED woff2 inside this app — see src/styles/fonts/README.md and the
+     @font-face block below. Circular (the brand reference face) is commercially licensed
+     and cannot ship on an offline LAN server; Inter reproduces its register through the
+     weight-500 display tier and the negative tracking below, not through the outlines.
+     Do not re-add Circular. */
+  --font-ui: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SF Mono", monospace;
+
+  /* size ladder */
+  --text-2xs: 12px;
+  --text-xs: 13px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --text-4xl: 48px; /* reserved — unused in Phase 1–2 */
+  --text-5xl: 64px; /* reserved — unused in Phase 1–2 */
+
+  /* line-height, weight and tracking are SEPARATE axes, not fused into the size token:
+     18px serves both heading-md (1.4) and body-lg (1.55), which a fused token cannot
+     express. */
+  --leading-100: 1;
+  --leading-110: 1.1;
+  --leading-115: 1.15;
+  --leading-120: 1.2;
+  --leading-140: 1.4;
+  --leading-145: 1.45;
+  --leading-150: 1.5;
+  --leading-155: 1.55;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500; /* the display tier's weight — 600 is retired from the system */
+
+  --tracking-0: 0;
+  --tracking-2xl: -0.42px;
+  --tracking-3xl: -0.72px;
+  --tracking-4xl: -1.44px;
+  --tracking-5xl: -1.92px;
+
+  /* ── Spacing (TDS 06 §2.3) ───────────────────────────────────────────────────────
+     The number is the 4px multiple. Deliberately not a uniform ladder above 32px: the
+     scale jumps straight to 64 for page-level rhythm, which is the only place a gap that
+     large belongs. 20 / 40 / 48 do not exist. */
+  --spacing-05: 2px;
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-16: 64px;
+
+  /* ── Radii (TDS 06 §2.3) ─────────────────────────────────────────────────────────*/
+  --radius-xs: 4px; /* badges, chips, inline code, state pills */
+  --radius-sm: 6px; /* buttons, inputs, selects, small controls */
+  --radius-md: 8px; /* cards, widgets, panels, table container */
+  --radius-lg: 12px; /* modals, toasts, popovers, command palette */
+  --radius-xl: 16px; /* login card, full-bleed mobile sheets */
+  --radius-full: 9999px; /* status dots, avatar, count chips */
+
+  /* ── Elevation ───────────────────────────────────────────────────────────────────
+     Exactly one shadow exists. Dark surfaces separate by background delta + border
+     (TDS 06 §2.1.1); this is for detached overlays only. */
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  /* ── Layout constants (TDS 06 §2.3) ──────────────────────────────────────────────
+     Not part of a Tailwind namespace — plain custom properties consumed directly. */
+  --mc-control-sm: 28px; /* compact controls in table rows, panel headers */
+  --mc-control-md: 32px; /* default desktop control height */
+  --mc-control-lg: 40px; /* mobile touch targets, login form */
+  --mc-row-dense: 36px; /* table row height */
+  --mc-sidebar-w: 220px; /* desktop nav rail */
+  --mc-panel-w: 340px; /* live-session right panel */
+
+  /* ── Motion (TDS 06 §2.4) ────────────────────────────────────────────────────────
+     Minimal and purposeful. The only looping animations permitted anywhere are the
+     `running` state-dot pulse and the streaming-cursor blink in live chat. */
+  --mc-motion-fast: 120ms;
+  --mc-motion-base: 200ms;
+  --mc-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+ * SELF-HOSTED FONTS — required, not optional (TDS 05 §9.1, TDS 06 §2.2.2).
+ *
+ * The woff2 files are NOT in the repository yet. Add them to src/styles/fonts/ (see the
+ * README there for exact filenames and subsetting instructions) and uncomment this block.
+ * Until then the stacks above fall back to Segoe UI / Cascadia Code, which renders
+ * correctly but is not the intended type.
+ *
+ * NO CDN, NO GOOGLE FONTS, NO RUNTIME FONT FETCH OF ANY KIND. Mission Control must render
+ * correctly on an air-gapped LAN server; an external font request would degrade the whole
+ * UI to system fonts exactly on the machine this product targets, and would leak instance
+ * usage to a third party. Only weights 400 and 500 ship, for both families.
+ */
+/*
+@font-face {
+  font-family: 'Inter';
+  src: url('./fonts/inter-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('./fonts/inter-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/jetbrains-mono-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/jetbrains-mono-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+*/

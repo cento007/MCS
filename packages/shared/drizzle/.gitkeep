@@ -1,0 +1,3 @@
+Generated SQL migrations land here (drizzle-kit generate; TDS 03 §8).
+They are committed and code-reviewed — the SQL in these files is what runs.
+Empty until WS3 authors the schema in ../src/db/schema/.

@@ -1,0 +1,35 @@
+# Mission Control — Telegram Worker (Phase 2; TDS 02 §9.1)
+# TEMPLATE. Differs from the Backend unit only in Description, ExecStart and KillMode.
+# The worker exposes no port: it is a queue consumer only (TDS 02 §1.1), and its health is
+# derived from the age of its heartbeat row, not from an HTTP probe (TDS 02 §7.2).
+
+[Unit]
+Description=Mission Control Telegram Worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=missioncontrol
+Group=missioncontrol
+WorkingDirectory=/opt/mission-control
+EnvironmentFile=/etc/mission-control/mission-control.env
+ExecStart=/usr/bin/node apps/telegram-worker/dist/main.js
+Restart=on-failure
+RestartSec=3
+
+# SIGTERM on stop; the process drains its subscriptions and exits (TDS 07 §7.2).
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mission-control
+
+[Install]
+WantedBy=multi-user.target

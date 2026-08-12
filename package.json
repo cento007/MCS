@@ -1,0 +1,42 @@
+{
+  "name": "mission-control",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mission Control — self-hosted AI Engineering Operating System (monorepo root)",
+  "type": "module",
+  "packageManager": "pnpm@10.29.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently --names backend,frontend --prefix-colors cyan,magenta \"pnpm --filter @mc/backend dev\" \"pnpm --filter @mc/frontend dev\"",
+    "dev:workers": "concurrently --names telegram,sync --prefix-colors yellow,green \"pnpm --filter @mc/telegram-worker dev\" \"pnpm --filter @mc/sync-worker dev\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "node scripts/db.mjs generate",
+    "db:migrate": "node scripts/db.mjs migrate",
+    "db:studio": "node scripts/db.mjs studio",
+    "clean": "pnpm -r exec node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "pnpm": {
+    "//": "esbuild places its platform binary in a postinstall step; Vite, Vitest and tsx all need it.",
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.8",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.20.1",
+    "concurrently": "10.0.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

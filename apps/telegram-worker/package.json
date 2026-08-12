@@ -1,0 +1,24 @@
+{
+  "name": "@mc/telegram-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mission Control Telegram Worker — notification dispatcher (Phase 2, TDS 02 §2.2)",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mc/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

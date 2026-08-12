@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "Shared compiler contract for every workspace package (TDS F1.1 — TypeScript strict, whole stack).",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "moduleDetection": "force",
+    "useDefineForClassFields": true,
+
+    /* Strictness — F1.1 / TDS 05 §2.1 */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "allowUnreachableCode": false,
+
+    /* Module hygiene */
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    /* Emit defaults (packages that emit override outDir/rootDir in tsconfig.build.json) */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+
+    /* Cross-package aliases resolve to SOURCE for typecheck/editor/tsx.
+       Build configs (tsconfig.build.json) reset "paths" so emitted code resolves
+       @mc/shared through node_modules -> packages/shared/dist (F8.1 monorepo layout). */
+    "baseUrl": ".",
+    "paths": {
+      "@mc/shared": ["./packages/shared/src/index.ts"],
+      "@mc/shared/types": ["./packages/shared/src/types.ts"]
+    }
+  }
+}

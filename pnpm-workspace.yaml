@@ -1,0 +1,4 @@
+# Mission Control monorepo (TDS F8.1)
+packages:
+  - 'apps/*'
+  - 'packages/*'

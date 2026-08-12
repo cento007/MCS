@@ -39,8 +39,39 @@ TypeScript throughout, in a pnpm monorepo: `apps/{backend,frontend,telegram-work
 - **Tests:** Vitest (unit + integration) and Playwright (E2E), on a Windows + Ubuntu CI matrix.
 - **Bootstrap config** (env/file only, everything else is DB-stored via the Settings page): `DATABASE_URL`, `MC_HOST`, `MC_PORT`, `MC_ENCRYPTION_KEY`, `MC_DATA_DIR`, `NODE_ENV`, `LOG_LEVEL`. Single root `.env`, real environment variables take precedence.
 
-## Working in This Repo
+## Commands
 
-- There are no build, lint, or test commands yet — scaffolding has not been generated. When it is, replace this line with the actual commands.
+Run from the repo root. None of these require a database.
+
+| Command | What it does |
+|---|---|
+| `pnpm install` | Install all workspace dependencies |
+| `pnpm dev` | Backend (`tsx watch`) + Vite dev server (`:5173`), colour-prefixed |
+| `pnpm dev:workers` | Telegram + Sync workers (Phase 2) |
+| `pnpm build` | Build shared → apps → SPA (`apps/frontend/dist`), topological order |
+| `pnpm typecheck` | `tsc --noEmit` per package |
+| `pnpm lint` / `pnpm lint:fix` | Biome (lint + format + import sort) |
+| `pnpm format` | Biome formatter, write |
+| `pnpm test` | Vitest unit suites, all packages |
+| `pnpm test:e2e` | Playwright (run `pnpm exec playwright install chromium` first) |
+| `pnpm --filter @mc/backend <script>` | Scope any script to one package |
+
+These require a running PostgreSQL and fail with an actionable message if it is absent:
+
+| Command | What it does |
+|---|---|
+| `pnpm db:generate` | drizzle-kit: schema → SQL migrations in `packages/shared/drizzle/` |
+| `pnpm db:migrate` | Apply pending migrations |
+| `pnpm db:studio` | drizzle-kit studio |
+
+First run: copy `.env.example` → `.env` at the repo root and generate `MC_ENCRYPTION_KEY` with
+`node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.
+See `deploy/windows/README.md` (dev) and `deploy/systemd/README.md` (prod).
+
+**Back up `MC_ENCRYPTION_KEY` out-of-band.** It is the key-encryption key for every stored
+secret and is deliberately excluded from database backups — losing it makes those secrets
+unrecoverable even from a perfect restore.
+
+## Working in This Repo
 - Design documents live in `docs/`: TDS in `docs/tds/`, research in `docs/research/`, review registers in `docs/reviews/`. ADRs will follow the PRD §7.3 template.
 - Before designing or implementing anything, read `Requirements.md` and `docs/tds/01-foundation-decisions.md`. The Foundation Contract is not advisory — workstreams consume it verbatim and escalate conflicts rather than amending it locally.

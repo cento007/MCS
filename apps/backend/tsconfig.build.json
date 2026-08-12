@@ -1,0 +1,12 @@
+{
+  "//": "Build config: `paths` is reset so emitted JS resolves @mc/shared through node_modules -> packages/shared/dist. `pnpm -r build` builds workspace dependencies first.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {}
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.int.test.ts", "src/**/*.contract.test.ts"]
+}

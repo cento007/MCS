@@ -1,0 +1,39 @@
+{
+  "name": "@mc/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared contract layer: config loader, entities/state machine, event envelope, QueuePort, crypto, logger (TDS 02 §2.1)",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "import": "./dist/types.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0",
+    "pino": "10.3.1",
+    "uuid": "14.0.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@types/pg": "8.21.0",
+    "drizzle-kit": "0.31.10",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

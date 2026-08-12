@@ -1,0 +1,30 @@
+{
+  "name": "@mc/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mission Control Frontend — React 19 + Vite SPA, dark-mode-first (TDS 05)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@mc/shared": "workspace:*",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "22.20.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.2.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "6.4.3",
+    "vitest": "4.1.10"
+  }
+}

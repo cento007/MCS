@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "./theme.css";
+
+/*
+ * Base layer. Dark is not a mode here — it is the only palette that exists (PRD §14,
+ * TDS 05 §9.1). `color-scheme: dark` makes native scrollbars, form controls and the
+ * browser's own UI agree with the canvas instead of flashing white.
+ */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-ui);
+    /* body-sm (14/20) is the default surface: dense tables and operator lists. */
+    font-size: var(--text-sm);
+    line-height: 20px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  /* Universal focus ring (TDS 06 §7.2). Every interactive element gets it; nothing may
+     remove it without providing an equivalent visible indicator. */
+  :focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  /* All motion is disabled under reduced-motion (TDS 06 §2.4, §7). The `running` pulse
+     degrades to a static filled dot with a ring; the glyph is always retained.
+     `!important` is required here and is the canonical form of this reset: the whole point
+     is to override author animation declarations of arbitrary specificity, including
+     inline styles set by a component. An accessibility guarantee cannot be left to lose a
+     cascade fight. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      /* biome-ignore lint/complexity/noImportantStyles: accessibility reset must win the cascade */
+      animation-duration: 0.01ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: accessibility reset must win the cascade */
+      animation-iteration-count: 1 !important;
+      /* biome-ignore lint/complexity/noImportantStyles: accessibility reset must win the cascade */
+      transition-duration: 0.01ms !important;
+      /* biome-ignore lint/complexity/noImportantStyles: accessibility reset must win the cascade */
+      scroll-behavior: auto !important;
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # TDS 06 — Wireframes & Design System (WS5)
 
-- **Status:** **Final (rev. 2 — brand rebase)** — palette, type scale, spacing and radii re-based onto the user-supplied brand direction `Design.md`; supersedes rev. 1 of 2026-08-11. Provenance in §2.6, migration for WS4 in §8.1, revision record in §8.4. Ready for WS7 constraint audit.
+- **Status:** **Final (rev. 2 — brand rebase)** — palette, type scale, spacing and radii re-based onto the user-supplied brand direction `Design.md`; supersedes rev. 1 of 2026-08-11. Provenance in §2.6, migration for WS4 in §8.1, revision record in §8.4. Ready for WS7 constraint audit. **2026-08-12 — WS7 non-blocking findings N18, N19 and N20 applied:** §5.7.6 conflict count re-annotated to `sync.conflict_detected`; §6.2 Phase 4 placeholder gains the "no Task entity" footnote (A1); the `Adr.status` chip is rendered in §5.6.1 and §5.6.2, with an outline Badge variant recorded in §2.5. No token value, no F7 vocabulary, no layout and no new contrast obligation changed.
 - **Owner:** WS5 / ui-designer
 - **Date:** 2026-08-12
 - **Inputs:** `Design.md` (**user-supplied brand direction** — Supabase-inspired token set; adopted/rejected per §2.6), `docs/tds/01-foundation-decisions.md` (Foundation Contract — consumes F2.1, F4, F5.4, F5.6, F7, F9 verbatim), `Requirements.md` (PRD v2.1 — §4.1–4.4, §8, §9, §14), `docs/project-plan.md` (WS5 row), `docs/tds/02-service-architecture-and-deployment.md` (WS1 §4.3 launch queueing, §5.1 interrupt/cold-pause semantics, §5.2 observed-session applicability, §6.3 fidelity degradation, §7.2 worker heartbeats), `docs/tds/05-frontend-architecture.md` (WS4 §5.1 connection status, §6 live chat model, §7 Settings behavior, §9.1 token structure — reconciled bidirectionally)
@@ -286,7 +286,7 @@ Canonical component list WS4 implements. States listed are the design-relevant o
 | **Button** | primary (solid `--mc-accent`), secondary (surface + `--mc-border-control`), ghost (borderless), danger (solid `--mc-danger`), icon-only | default, hover, active, disabled, **loading** (inline spinner replaces label, width preserved) | Heights `--mc-control-sm/md/lg`; `--mc-radius-sm` (6px); `button` style (14/500); padding `--mc-sp-2 --mc-sp-4`. Primary: `--mc-on-accent` `#171717` label (8.98:1), hover `--mc-accent-hover`, pressed `--mc-accent-active`. Danger: `--mc-text-inverse` label on `--mc-danger` (6.41:1). **Primary and danger fills never share an action row** (§2.1.6) |
 | **Input** | text, number, password, textarea, **path** (mono font + trailing validity hint), **secret** (see §4.4), select, search (leading icon, `/` shortcut) | default, focus, disabled, invalid (border `--mc-danger` + `caption` message below) | `--mc-bg-inset` fill, **1px `--mc-border-control`** (≥3:1, §2.1.2 — *not* `--mc-border`), `--mc-radius-sm`; hover `--mc-border-control-hover`; `body-md` value text; placeholder `--mc-text-muted` |
 | **Toggle** | default, with inline label | on, off, disabled | On = `--mc-accent` track with `--mc-on-accent` knob (selection = operator intent, permitted by §2.1.4); off-track border `--mc-border-control` |
-| **Badge** | state badge (F7 states, §2.1.6), neutral tag, count, **phase tag** (`P3`/`P4`) | — | `micro` style (12px) at 500 wt, **`--mc-radius-xs`** (4px), padding `--mc-sp-05 --mc-sp-2`, subtle bg + full-strength text, always includes label text. Count/unread chips use `--mc-radius-full` |
+| **Badge** | state badge (F7 states, §2.1.6), neutral tag, **outline tag** (no fill, 1px `--mc-border`), count, **phase tag** (`P3`/`P4`), **ADR status** (§5.6.1 — outline for `proposed`/`rejected`/`superseded`, filled `--mc-info-subtle` for `accepted`) | — | `micro` style (12px) at 500 wt, **`--mc-radius-xs`** (4px), padding `--mc-sp-05 --mc-sp-2`, subtle bg + full-strength text, always includes label text. Count/unread chips use `--mc-radius-full`. The outline variant exists so a non-F7 status can be rendered without borrowing the state ramp or the accent (§2.1.4, §2.1.6) |
 | **StatusDot** | 10px dot carrying the F7 **state glyph** (`○ ▶ ‖ ✓ ✕ ▣`, §2.1.6); health dot (`● ▲ ✕ ◌ ⟳`) | `running` pulses; **reduced-emphasis** when the connection chip is not `live` (§3.3) | Glyph is mandatory — the dot may appear without an adjacent text label, but never without its glyph + `aria-label`/`title` carrying the verbatim F7 state name. `--mc-radius-full` |
 | **ConnectionChip** | shell-level transport indicator | `live`, `reconnecting`, `offline` | §3.3; persistent in the desktop top bar and mobile header. `live` dot is `--mc-success` (cyan), **never the accent** (§2.1.4) |
 | **OpenSessionsStrip** | sidebar footer (desktop), tab bar (Live Session view), chip scroller (mobile) | per-entry: F7 state glyph, title, unread-activity dot with count | §3.4 — one shared data source, three renderings; max 6 entries. Unread dot is `--mc-accent` (navigational attention, not state) |
@@ -668,7 +668,7 @@ Sources, all four wired in Phase 1–2, newest first, max 8 rows:
 - **Spend widget (PRD §4.4.2 cost budget):** today's accumulated cost as a mono `display-md` numeral (`--mc-fs-2xl`, 28px/500, tracking −0.42px), `of ‹$budget›` beneath, and a **thin progress rule** (4px, `--mc-radius-full`) that renders **`--mc-success`** under the alert threshold, `--mc-warning` at/over it, and `--mc-danger` over 100%. *(Rev. 1 used `--mc-accent` for the under-threshold fill; that is now forbidden — a meter fill whose colour encodes a threshold is reporting a system condition, which §2.1.4 reserves away from the accent.)* Secondary line: month-to-date. Costs are SDK-canonical for managed sessions (F1.5); observed sessions contribute nothing and a footnote says so on hover ("Observed sessions report no cost"). If cost-budget alerts are disabled in Settings the widget still shows spend, with `no budget set` in place of the rule — spend is never invisible just because no limit was configured, which was the whole gap: the budget was configurable but the number it constrained appeared nowhere in the UI.
 - **Services widget:** the compact variant of the §5.7.12 Services panel (WS4 §7.5 already specifies this component is reusable on the Dashboard) — one glyph+name chip per service, no detail text; click → Settings → Services. Polled on the same 10 s interval as the panel (deliberately *not* WebSocket-driven: health must remain observable when the socket is the sick component).
 - **Recent ADRs** and **Notifications** widgets are Phase 2-wired (Adr, Notification entities); in Phase 1 they render their empty states ("No ADRs yet" / "No notifications").
-- **Upcoming Tasks:** the PRD names this widget, but no Task entity exists in F4.1. WS5's position: the widget renders **scheduled system activity** derived from Settings and queue schedule — daily-report delivery time (PRD §4.4.3), next Obsidian sync, next repo poll. It is read-only and creates no new entity. WS4 §2.2 currently states the opposite (empty-state placeholder in V1); this is the one open behavioural question left in this document and is flagged for WS7 arbitration in §8.2.
+- **Upcoming Tasks:** the PRD names this widget, but no Task entity exists in F4.1. **Settled by WS7 arbitration A1 in WS5's favour:** the widget renders **scheduled system activity** — daily-report delivery time (PRD §4.4.3), next Obsidian sync, next repo poll — read-only, derived at read time from `GET /api/v1/schedule` (WS2 §7.7), creating no entity and no table. WS4's empty-state placeholder is withdrawn. The reasoning on record is that a permanently empty widget on the most-visited page is not the simpler option but the dishonest one; the empty state here is actionable instead ("No scheduled work — set sync intervals in Settings"). Guardrail: the values are always derived, never persisted, and the subtitle must make clear these are *system-scheduled runs*, not user to-dos — see the §6.2 footnote, since no Task entity exists or is planned.
 - Empty states: Active Projects → "No projects yet · [Add project]" ; Active Sessions → "No active sessions · [New Session]".
 - Loading: shape-matched skeleton widgets. Widget-level fetch errors show the inline ErrorBanner inside that widget only; the rest of the dashboard is unaffected.
 
@@ -991,16 +991,35 @@ On mobile the chip scroller is the only session switcher (there is no sidebar), 
 +----------------+---------------------------------------------------------------------------+
 | nav            |  ADRs                                              [+ New ADR]            |
 |                |                                                                           |
-|                |  Project [ All ▾ ]   [ Search titles… ]                                   |
+|                |  Project [ All ▾ ]   Status [ All ▾ ]   [ Search titles… ]                |
 |                |  +---------------------------------------------------------------------+  |
-|                |  | ID       TITLE                          PROJECT        DATE         |  |
+|                |  | ID       TITLE                  STATUS       PROJECT     DATE       |  |
 |                |  |---------------------------------------------------------------------|  |
-|                |  | ADR-014  Queue on PostgreSQL (pg-boss)  mission-ctl    2026-08-11   |  |
-|                |  | ADR-013  No Redis in V1                 mission-ctl    2026-08-11   |  |
-|                |  | ADR-012  WebSocket as realtime channel  mission-ctl    2026-08-10   |  |
+|                |  | ADR-014  Queue on PostgreSQL    ✓ accepted   mission-ctl 2026-08-11 |  |
+|                |  | ADR-013  No Redis in V1         ✓ accepted   mission-ctl 2026-08-11 |  |
+|                |  | ADR-012  WebSocket realtime     ○ proposed   mission-ctl 2026-08-10 |  |
+|                |  | ADR-011  Redis via Memurai      ✕ rejected   mission-ctl 2026-08-09 |  |
+|                |  | ADR-010  Poll GitHub per repo   ▣ superseded mission-ctl 2026-08-08 |  |
 |                |  +---------------------------------------------------------------------+  |
 +----------------+---------------------------------------------------------------------------+
 ```
+
+**ADR status chip (closes WS7 non-blocking finding N20).** `Adr.status` is a **required** field on the WS2 §9 resource with exactly four values — `proposed | accepted | superseded | rejected` (arbitration **A4**; there is **no** `draft`, and the word must never appear in ADR copy). Until now no wireframe rendered it, so the arbitrated vocabulary had no visual surface. It renders as a **Badge** (§2.5 recipe: `micro` 12/500, `--mc-radius-xs`, padding `--mc-sp-05 --mc-sp-2`) carrying a glyph **and** the verbatim status word — never colour alone, never an abbreviation or synonym (F9.5):
+
+| `Adr.status` | Glyph | Chip treatment | Reading |
+|---|---|---|---|
+| `proposed` | `○` | outline — no fill, 1px `--mc-border`, `--mc-text-secondary` | under discussion |
+| `accepted` | `✓` | **filled** — `--mc-info-subtle` ground, `--mc-info` text (7.54:1, §7.1.6 row 45) | **in force** |
+| `superseded` | `▣` | outline, `--mc-text-muted`; the row's title also drops to `--mc-text-secondary` | replaced by a later ADR |
+| `rejected` | `✕` | outline, `--mc-text-secondary` | considered and refused |
+
+Three rules make this consistent with the rev. 2 system rather than a fifth colour vocabulary:
+
+1. **Colour carries one bit — is this decision in force?** Only `accepted` is filled and coloured; the other three are quiet outlines. The four-way distinction is carried by the **glyph and the word**, which is the §7.1.9 non-colour-channel rule applied to a document status. It also means a list of thirty ADRs shows at a glance which ones still bind.
+2. **The F7 `--mc-state-*` ramp is never borrowed.** That ramp is 1:1 with session states (§2.1.6); an `accepted` ADR wearing `--mc-state-completed` would read as a completed Session in a product whose other lists are full of Sessions. ADR status is a document lifecycle, not a Session state.
+3. **`--mc-accent` is never used here** — §2.1.4 reserves it for operator intent and position, and a status chip reports a condition. For the same reason the outline variants take the decorative `--mc-border` (no floor, §7.1.8), not `--mc-border-control`, which identifies interactive controls.
+
+Every pairing above is already asserted in §7.1 (rows 5–8 for `--mc-text-secondary`, 9–12 for `--mc-text-muted`, 45 for `--mc-info` on its subtle ground), so N20 adds no new contrast obligation. The `Status [ All ▾ ]` filter is a client-side facet over the same four values plus `All`.
 
 #### 5.6.2 ADR detail
 
@@ -1010,7 +1029,7 @@ Sections verbatim per F4.1 Adr / PRD §7.3: Context, Decision, Alternatives, Con
 +----------------+---------------------------------------------------------------------------+
 | nav            |  ADRs / ADR-013                                    [Edit]  [⋯]            |
 |                |                                                                           |
-|                |  ADR-013 — No Redis in V1                                                 |
+|                |  ADR-013 — No Redis in V1   ✓ accepted                                    |
 |                |  mission-control · 2026-08-11 · from session "No Redis spike"             |
 |                |  Synced to Obsidian ✓ 5 min ago  (ADRs/ADR-013.md)                        |
 |                |                                                                           |
@@ -1030,6 +1049,8 @@ Sections verbatim per F4.1 Adr / PRD §7.3: Context, Decision, Alternatives, Con
 
 **Interaction notes**
 - Primary actions: New ADR (modal: title, project, four template sections), Edit (inline section editing).
+- **Status chip** sits immediately after the ADR title in the detail header, using the identical recipe and glyphs as the list (§5.6.1) — one component, two placements. A **new** ADR is created `proposed` (WS2 §9: `status` defaults to `proposed`), so the chip is never absent and never blank.
+- **Changing status is an explicit action**, not an inline toggle: the `[⋯]` overflow offers `Accept`, `Reject` and `Supersede…`, each a `PATCH /adrs/{id}`. `Supersede…` opens an sm modal that asks which ADR replaces this one (it sets `supersededByAdrId`, WS2 §9); on save the header chip flips to `▣ superseded` and gains a `Superseded by ADR-0NN →` link beneath the meta line. The other two need no modal.
 - Origin link: ADRs generated from a Session (PRD §7.2) show a backlink chip **labelled with the Session title**, not its ID (§2.2).
 - Obsidian sync status line per document: synced ✓ / pending ↻ / conflict ⚠ (conflict links to the conflict-policy setting §5.7.6). Sync failures also produce an inbox notification (`sync.failed`).
 - Empty: "No ADRs yet. ADRs can be generated from sessions or written here. · [New ADR]".
@@ -1196,7 +1217,8 @@ Result text is integration-specific on success (see each panel); results are eph
 +---------------------------------------------------------------+
 ```
 
-- "Paused" sync mode shows a `--mc-warning` card-header status. Conflict count links to inbox entries for `sync.failed` / conflict notifications.
+- "Paused" sync mode shows a `--mc-warning` card-header status.
+- **Conflict count** (`· 0 conflicts` on the Last sync line) counts **`sync.conflict_detected`** (WS2 event catalog #26) for the most recent `SyncRun`, and links to those conflicts. It is **not** `sync.failed` (#25): a conflict is a per-note reconciliation outcome carrying `path` + `resolution`, whereas `sync.failed` is the whole-run failure that feeds the Needs Attention row in §5.2 and the `sync_failed` inbox notification. A run can complete successfully with a non-zero conflict count, so binding the count to the failure event would show `0 conflicts` on exactly the runs that had them. Non-zero renders in `--mc-warning` with a `▲` glyph — a resolved conflict is caution, not failure — and links to the conflict-policy setting above.
 
 #### 5.7.7 Integrations → Qdrant and Ollama
 
@@ -1381,6 +1403,8 @@ Shell reserves tabs matching PRD §8.5 scope (Global agents / Project agents / T
 +----------------+-----------------------------------------------------------+
 ```
 
+> **Footnote on the word "Task" (closes WS7 non-blocking finding N19).** `Runtime → Agent → Task` is **PRD §5.1 conceptual copy, quoted verbatim** inside a Phase 4 placeholder. It describes a layering idea, not a data model. **There is no `Task` entity in F4.1, none is stored, none is exposed by any API, and none is planned** — WS7 arbitration **A1** states this explicitly. The Dashboard's "Upcoming Tasks" widget (§5.2) is likewise **not** a task list: it is a computed **schedule read model** served by `GET /api/v1/schedule` (WS2 §7.7) — next Obsidian sync, next repository poll, next daily report — derived at read time from Settings plus last-run records, with no persistence, no event and no entity behind it. The two appearances of the word in this document are unrelated to each other and neither may be read as a commitment. Introducing a Task entity would be an F4.1 Foundation Contract change, not an inheritance from this placeholder.
+
 ---
 
 ## 7. Accessibility
@@ -1495,7 +1519,7 @@ Row 44's `--mc-bg-raised` column (5.07:1) is the toast case — a sticky danger 
 
 #### 7.1.9 Non-colour channels (unchanged, and load-bearing)
 
-Colour is never the sole carrier of meaning: state badges include the verbatim F7 state name, **every StatusDot carries its state glyph** (§2.1.6), health rows include status words, the streaming pill includes the word "Streaming", Needs Attention rows are glyph-prefixed, and required-field/error states pair colour with icon + text. §2.1.6 additionally records the measured colour-vision-deficiency separations for the ramp and the one accepted residual (tritanopic `running`/accent, ΔE 10.1), which these channels cover.
+Colour is never the sole carrier of meaning: state badges include the verbatim F7 state name, **every StatusDot carries its state glyph** (§2.1.6), health rows include status words, the streaming pill includes the word "Streaming", Needs Attention rows are glyph-prefixed, **ADR status chips carry a glyph plus the verbatim `Adr.status` word and use colour for one bit only — in force or not** (§5.6.1), and required-field/error states pair colour with icon + text. §2.1.6 additionally records the measured colour-vision-deficiency separations for the ramp and the one accepted residual (tritanopic `running`/accent, ΔE 10.1), which these channels cover.
 
 ### 7.2 Focus visibility
 
@@ -1593,7 +1617,7 @@ The brand rebase (§2.6) keeps most `--mc-*` names stable, but not all. Everythi
 
 ### 8.2 Flags for WS7 (no foundation conflicts; cross-checks requested)
 
-1. **"Upcoming Tasks" widget (PRD §8.1)** — **one behaviour still needs to be picked, and WS7 should arbitrate.** WS5 §5.2 assumes a **schedule read model** (daily-report time, next Obsidian sync, next repo poll — read-only, no new F4 entity); WS4 §2.2 states the widget renders an **empty-state placeholder in V1**. Both are defensible and they are mutually exclusive on screen. The decision hinges on whether WS2/WS3 expose a schedule read surface at all; if they do not, WS4's placeholder wins by default and §5.2's widget is hidden rather than empty. This is the only open behavioural divergence left between WS4 and WS5 after this pass.
+1. ~~**"Upcoming Tasks" widget (PRD §8.1)**~~ **RESOLVED — WS7 arbitration A1, in WS5's favour.** The widget is a **schedule read model**: daily-report time, next Obsidian sync, next repo poll, derived at read time from `GET /api/v1/schedule` (WS2 §7.7) with no Task entity, no table, no event and no worker change. WS4 §2.2's empty-state placeholder is withdrawn. The concern that killed the placeholder was that a permanently empty widget on the most-visited page occupies prime space, tells the operator nothing, and invites someone to later fill it with a fake to-do feature. Guardrails on record: values are always derived and never persisted, and the subtitle must make clear these are system-scheduled runs rather than user to-dos (§5.2, and the §6.2 footnote stating no Task entity exists or is planned).
 2. **Claude Code Test Connection** (§5.7.4): PRD §4.4 lists Test Connection for five integrations; this design extends the same affordance to the Claude Code CLI path (version probe). WS2 to confirm a test/health surface for it.
 3. ~~**Turn interrupt as an addressable action**~~ **RESOLVED** — WS2 §6.3.1 now specifies `POST /api/v1/sessions/{id}/interrupt`: stops the in-flight turn with **no F7 transition** and no `session.state_changed`, persisting the partial assistant Message with `status = 'interrupted'` (WS3 `messages.status`). Errors `SESSION_NOT_RUNNING`, `NO_TURN_IN_FLIGHT`, `OPERATION_NOT_SUPPORTED` (observed sessions). This is the contract behind `[Stop]` in §5.5.
 4. ~~**Workflow modes**~~ **RESOLVED** — WS7 blocking findings B11a/B11b assign the storage and the setting: `projects.workflow_mode` CHECK (`manual`,`assisted`) as the per-Project override (WS3) and `GithubSettings.workflowMode` as the global default (WS2). Assisted *actions* (PR description generation, review summaries) remain Phase 2; the setting itself is Phase 1, matching §5.7.3 and §5.3.2.
@@ -1652,4 +1676,4 @@ The product owner supplied `Design.md`, a Supabase-inspired brand direction, as 
 1. **A rose-red `failed` state is worse for colour-blind operators than a coral one, not better.** The intuition — "add blue, deuteranopes retain the blue axis" — is wrong at this specific pairing: rose `#f5707f` simulates to near-identical khaki against the emerald under deuteranopia (**ΔE 7.4**) and against `archived` under protanopia (**ΔE 5.4**). The warmer coral `#f47460` scores **23.5** and **23.7** on those same pairs. Recorded in §2.1.6 so the value is not "corrected" back.
 2. **On a near-black canvas, a control boundary cannot be carried by the field's fill.** No colour darker than the surrounding surface can reach 3:1 against it — the ceiling is 1.29:1. This is a hard consequence of the neutral canvas that only appeared once the palette was re-based, and it is why R10 exists.
 
-**Open items unchanged by this revision.** §8.2's flags stand as written; the rebase touched no behaviour, no F7 vocabulary, no entity name and no API surface. The one WS7 arbitration still open (Upcoming Tasks, §8.2 item 1) is unaffected.
+**Open items unchanged by this revision.** The rebase touched no behaviour, no F7 vocabulary, no entity name and no API surface. The Upcoming Tasks question that §8.2 item 1 raised has since been settled by WS7 arbitration **A1** in WS5's favour (schedule read model, backed by `GET /api/v1/schedule`); §5.2 and the §6.2 footnote carry the outcome.

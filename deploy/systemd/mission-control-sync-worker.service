@@ -1,0 +1,38 @@
+# Mission Control — Sync Worker (Phase 2; TDS 02 §9.1)
+# TEMPLATE. Unlike the Telegram Worker this one needs ReadWritePaths for the Obsidian
+# vault and read access to the repository roots — see the bottom of the [Service] block.
+
+[Unit]
+Description=Mission Control Sync Worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=missioncontrol
+Group=missioncontrol
+WorkingDirectory=/opt/mission-control
+EnvironmentFile=/etc/mission-control/mission-control.env
+ExecStart=/usr/bin/node apps/sync-worker/dist/main.js
+Restart=on-failure
+RestartSec=3
+
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/mission-control
+# REQUIRED for this unit — the Obsidian vault it syncs two ways, and the repositories it
+# polls. Paths come from the `settings` table; these must match or sync fails at the
+# filesystem, not in the app.
+# ReadWritePaths=/home/you/ObsidianVault
+# ReadOnlyPaths=/srv/repos
+
+[Install]
+WantedBy=multi-user.target

@@ -12,6 +12,11 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+.pnpm-debug.log*
+npm-debug.log*
+
+# Vite
+.vite/
 
 # Test & build output
 coverage/

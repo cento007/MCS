@@ -1,6 +1,6 @@
 # TDS 03 — Database Schema (WS3)
 
-- **Status:** Revised 2026-08-11 — WS7 review Package 1 applied (B1, B2, B4, B7, B8, B10, B11a; N2, N3, N11). Ready for WS7 re-check.
+- **Status:** Revised 2026-08-12 — two additive storage changes for the WS7 §7.2 leaf endpoints: `ix_sessions_started_at` (§3.9, WS2 §7.8 spend aggregate) and `messages.tool_file_path` + `ix_messages_session_tool_file` (§3.11, WS2 §6.10.2 Session Files). Earlier: 2026-08-11 — WS7 review Package 1 applied (B1, B2, B4, B7, B8, B10, B11a; N2, N3, N11).
 - **Owner:** WS3 / postgresql-dba
 - **Date:** 2026-08-11
 - **Inputs:** `docs/tds/01-foundation-decisions.md` (Foundation Contract — consumed verbatim, esp. F3, F4, F6.3, F7, F8), `docs/tds/00-overview.md` (WS7 integration review — §5 arbitrated decisions A3, A6, A8, A10 and §7 Package 1 consumed verbatim), `Requirements.md` (PRD v2.1 §4.1, §4.3, §4.4, §6, §10, §11), `docs/project-plan.md` (WS3 row), `docs/research/claude-code-control-spike.md` (§6 cost/usage fields), `docs/tds/02-service-architecture-and-deployment.md` (§5 pause semantics, §6.3 tailer, §7.2 heartbeats, §12 handoff), `docs/tds/04-api-contracts-and-events.md` (§3.3 token scopes, §5–§11 resource shapes the columns must back)
@@ -452,7 +452,12 @@ CREATE INDEX ix_sessions_active ON sessions (created_at DESC)
 -- One record per runtime-native session; idempotent observed-session detection.
 CREATE UNIQUE INDEX ux_sessions_runtime_session_id ON sessions (runtime, runtime_session_id)
   WHERE runtime_session_id IS NOT NULL;
+-- Spend aggregate (WS2 §7.8): sum(total_cost_usd) over a started_at range, day and month.
+CREATE INDEX ix_sessions_started_at ON sessions (started_at DESC) INCLUDE (total_cost_usd)
+  WHERE started_at IS NOT NULL;
 ```
+
+**`ix_sessions_started_at` (added for WS2 §7.8 `GET /api/v1/spend`).** No pre-existing index serves "sum `total_cost_usd` over a `started_at` range": `ix_sessions_project_state_created_at` leads with `project_id`, `ix_sessions_active` is partial on the three non-terminal states while the Sessions that spent money are mostly `completed`, and `created_at` is the wrong column anyway (WS2 attributes cost to the day a Session *started*, not the day its row was created). The index is **partial on `started_at IS NOT NULL`** — the rows it excludes never ran and therefore carry no cost, so they are exactly the rows the aggregate ignores — and `INCLUDE (total_cost_usd)` makes the month-range scan index-only. It also serves any plain "Sessions started between X and Y" read without a second index.
 
 ### 3.10 `session_events` (supporting — F7 timeline)
 
@@ -496,6 +501,8 @@ Roles per F4.1: `user` / `assistant` / `system` / `tool`.
 
 **Content:** `content` holds the canonical rendered text (searchable, exportable); `content_blocks` holds the raw structured blocks (text/tool_use/tool_result JSON from the stream) for faithful re-rendering. Tool messages carry `tool_name`, `tool_use_id`, and `tool_payload` (input or result). Large values ride TOAST transparently; default `EXTENDED` storage is kept.
 
+**`tool_file_path` (added for WS2 §6.10.2 `GET /api/v1/sessions/{id}/files`).** The Session Files panel is a de-duplicated union of commit files and *tool activity*, and the tool half has to come from somewhere queryable. `tool_payload` is deliberately loose — "input or result", no discriminator, no index — so extracting `tool_payload->>'file_path'` at read time would push runtime-version knowledge into a SQL expression that cannot degrade gracefully when Claude Code's tool schema drifts, which is precisely what F1.5 isolates in an adapter module. Instead the ingester writes the absolute native path it already parsed into a dedicated nullable column, once, at write time; `tool_payload` remains the raw truth and is untouched. Only the five file-naming tools populate it (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` — WS2 §6.10.2 owns that list); everything else, including every conversation turn, leaves it `NULL` and is excluded from the partial index. An unrecognized tool or payload shape leaves it `NULL` and must never fail the ingest write. *(Rejected: a generated column — self-maintaining, but the extraction rule is runtime-version-dependent and a generated column cannot be version-tolerant, which is the same reason §4.6's generated `search_tsv` columns are safe and this one would not be. Rejected: a GIN index on `tool_payload` — indexes the whole payload to answer one narrow question, and still leaves the fragile extraction in the query.)*
+
 **Delivery status (TDS 02 §5.1):** cold pause needs two flags — user prompts queued but never sent to the runtime are persisted as `status = 'pending'` (redisplayed on resume, not auto-replayed), and partial assistant output cut off by `interrupt()` is persisted as `status = 'interrupted'`. A single `status` column covers both; default `'complete'` keeps the normal path untouched.
 
 ```sql
@@ -512,6 +519,7 @@ CREATE TABLE messages (
   tool_name          text,                  -- tool role
   tool_use_id        text,                  -- runtime tool-use correlation id
   tool_payload       jsonb,
+  tool_file_path     text,                  -- absolute native path from the tool input; NULL unless a file-naming tool
   runtime_message_id text,                  -- runtime message uuid, or synthesized 'hook:…' key (sole dedupe key)
   occurred_at        timestamptz NOT NULL DEFAULT now(),  -- runtime-reported time when available
   created_at         timestamptz NOT NULL DEFAULT now(),
@@ -523,6 +531,9 @@ CREATE UNIQUE INDEX ux_messages_session_ordinal ON messages (session_id, ordinal
 -- Dual-channel ingest idempotency:
 CREATE UNIQUE INDEX ux_messages_session_runtime_id ON messages (session_id, runtime_message_id)
   WHERE runtime_message_id IS NOT NULL;
+-- Session Files panel (WS2 §6.10.2): group tool touches by path within one Session.
+CREATE INDEX ix_messages_session_tool_file ON messages (session_id, tool_file_path)
+  WHERE tool_file_path IS NOT NULL;
 ```
 
 **Retention/archival note:** messages live and die with their Session (`ON DELETE CASCADE`); V1 defines no automatic pruning. Archived sessions retain full history (Export/Context Package need it). The Phase 3 memory retention settings (PRD §4.4.4) may later add a pruning job for archived sessions' messages — that is a job, not a schema change. If the table grows very large (>10M rows), `ix`/`ux` above remain the only required indexes; partitioning by `session_id` hash is explicitly **not** planned (queries are always session-scoped and index-selective).
@@ -1043,5 +1054,6 @@ Because `SKIP LOCKED` fetchers only ever see **committed** rows, a job can never
 - **Deletion philosophy:** V1 has almost no hard deletes — archival is a state (`sessions.state = 'archived'`, `projects.status = 'archived'`) or a timestamp, per F4.2. `ON DELETE` actions above exist for correctness of the rare administrative delete, not as a product feature.
 - **Volume reality check:** single user, single node. The largest tables are `messages`, `session_events`, `commits`, and `audit_log_entries` — all insert-mostly with narrow, session-/repo-scoped read paths; the listed indexes are sufficient and deliberately few (every index taxes the insert path). The §4.6 GIN index on `messages` is the one deliberate exception, bought for the Phase 2 search feature. No partitioning in V1; `audit_log_entries` BRIN + retention pruning is the only concession to unbounded growth.
 - **WS1 handoff (TDS 02 §12 note 2) — resolved here:** worker heartbeats → `service_heartbeats` (§4.4); transcript tail state → `transcript_tail_states` (§3.15); pending/interrupted message flags → `messages.status` (§3.11); timeline reasons (`backend_restart`, `observation_timeout`, …) → `sessions.failure_reason` + `session_events.payload`; transactional pg-boss enqueue → §7.2.
+- **WS7 §7.2 leaf endpoints (2026-08-12) — applied here:** `ix_sessions_started_at` (§3.9) for WS2 §7.8's `GET /spend` day/month aggregate, and `messages.tool_file_path` + `ix_messages_session_tool_file` (§3.11) for WS2 §6.10.2's `GET /sessions/{id}/files`. Both are additive and index-cheap: the first is a partial index whose excluded rows are exactly the rows the aggregate ignores, the second is a nullable column that is `NULL` on the overwhelming majority of `messages` rows and partial-indexed accordingly. WS2 §6.10.1's `GET /sessions/{id}/commits` needs **nothing** — `ix_commits_session_id` (§3.7) already serves it. WS2's new `costBudget.alertThresholdPercent` setting needs nothing either: it lives inside an object already stored whole as one `settings` JSONB row.
 - **WS7 Package 1 (`00-overview.md` §7) — applied here:** B1 `sync_runs` (§4.5); B2 full-text search (§4.6); B4 `pull_requests.state` = GitHub truth + `reviewed_at` (§3.8, A3); B7 `sessions.lineage_kind` + invariant (§3.9, A6); B8 `sessions.repository_id`, `sessions.notes`, `api_tokens.scopes`, `notifications.correlation_id`, `repositories.sync_status` (§3.9, §3.3, §4.2, §3.6); B10 `notifications.type` = WS2 enum with `payload.eventType` (§4.2, A8); B11a `projects.workflow_mode` (§3.5, A10). Non-blocking: **N1 — `sessions.kind` renamed to `sessions.session_type`** to mirror WS2's standardized `sessionType` (§3.9; a plain `snake_case`↔`camelCase` mapping, no translation rule); N2/N3 mappings stated (§3.9 mapping table, §3.11) with the API field names left exactly as WS2 has them and the translation living in `packages/shared`; N11 single ingest dedupe key (§3.11).
 - **Open items handed to other workstreams:** *(the settings-key registry is no longer one — WS2 §7.6 owns it as `packages/shared/src/settings/registry.ts`; it must carry `integrations.github.workflow_mode`, the global default that `projects.workflow_mode` overrides.)* Observed-session single-writer serialization per session (WS1 owns runtime behavior; the schema's dedupe/ordering contract in §3.11 assumes it); GitHub→`pull_requests` *event* mapping — which API transitions raise `pull_request.opened/reviewed/merged/closed` — now that `state` stores GitHub truth unmapped (WS1/WS2); Obsidian conflict-policy behavior over `obsidian_sync_states` and the `sync_runs` row lifecycle (WS1); computation of the derived `/schedule` read model from `sync_runs.created_at` + `repositories.last_synced_at` (WS2, arbitration A1 — no storage needed). *(Closed: the hook-ingest token hash lives in `api_tokens` with `scopes = ARRAY['ingest']`, §3.3.)*

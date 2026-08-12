@@ -1,8 +1,8 @@
 # TDS 04 — API Contracts & Event Models (WS2)
 
-- **Status:** Revised — WS7 integration-review package 2 applied (2026-08-11): blocking findings B3, B5, B6, B9, B11b, B12, B13 and non-blocking N1, N4, N5, N10, per arbitrations A1–A10 in `docs/tds/00-overview.md` §5.
+- **Status:** Revised — WS7 §7.2 leaf items closed (2026-08-12): item 1 spend aggregate (§7.8), item 2 Session-scoped Commits/Files (§6.10), the A13 session-title derivation contract (§6.11, with pointers from §6.1/§6.2/§6.4/§6.8), non-blocking N16 (§6.2) and N17 (§11). Earlier: WS7 integration-review package 2 applied (2026-08-11) — blocking findings B3, B5, B6, B9, B11b, B12, B13 and non-blocking N1, N4, N5, N10, per arbitrations A1–A11 in `docs/tds/00-overview.md` §5.
 - **Owner:** WS2 / backend-architect (instance B)
-- **Date:** 2026-08-11
+- **Date:** 2026-08-12
 - **Inputs:** `docs/tds/01-foundation-decisions.md` (Foundation Contract — consumed verbatim), `docs/tds/00-overview.md` (WS7 arbitrated decisions §5, blocking findings §7 — authoritative), `docs/tds/03-database-schema.md` (WS3 storage shapes this contract matches), `Requirements.md` (PRD v2.1, esp. §4, §5, §8, §12), `docs/project-plan.md` (WS2 row), `docs/research/claude-code-control-spike.md`
 - **Foundation decisions consumed:** F1.5 (wrapper/session facts), F4 (entities, ID/naming/timestamp conventions), F5 (API conventions), F6 (event grammar/envelope/delivery), F7 (session state machine), F9 (doc conventions)
 - **Non-goals:** process/deployment layout (WS1), table DDL (WS3), frontend consumption (WS4), UI layouts (WS5)
@@ -24,7 +24,7 @@ All conventions below restate or elaborate F4/F5 — none amend them.
 ### 1.2 Response envelopes
 
 - **Lists** (F5.3): `{ "data": [ … ], "meta": { "nextCursor": string|null, "limit": number } }`. Query params `limit` (default 50, max 200) and `cursor`. The cursor stays **opaque and base64-encoded** per F5.3; what it encodes is the *stated ordering key of that resource* — the UUIDv7 `id` by default, and the per-session `ordinal` for `GET /sessions/{id}/messages` (§6.6, arbitration A5). Default sort: ascending by `id` (UUIDv7 = time-ordered) unless the resource states otherwise; messages sort by `ordinal`, never by `id`.
-- **Fixed read models** (`/services/health` §7.5, `/schedule` §7.7): small, bounded, non-paginated results returned as `{ "data": … }` with no `meta` — F5.3 pagination applies to unbounded collections.
+- **Fixed read models** (`/services/health` §7.5, `/schedule` §7.7, `/spend` §7.8, `/sessions/{id}/files` §6.10.2): small, bounded, non-paginated results returned as `{ "data": … }` with no `meta` — F5.3 pagination applies to unbounded collections. Each of these states its bound explicitly (fixed cardinality, or a server-side cap plus a `truncated` flag); "bounded" is a claim the endpoint has to make good on, not a hope.
 - **Single resources / action results** (WS2 elaboration, applied uniformly): `{ "data": { … } }`.
 - **No body**: `204 No Content` for deletes, logout, and ingest acks.
 - **Errors** (F5.4, every non-2xx):
@@ -84,10 +84,13 @@ All routes require authentication except `POST /api/v1/auth/login`. There is no 
 | PullRequests | `/api/v1/pull-requests` (+ nested) | 1 | §5.3 |
 | Sessions | `/api/v1/sessions` | 1 | §6 |
 | Messages | `/api/v1/messages` (+ nested) | 1 | §6.6 |
+| Session commits (nested list) | `/api/v1/sessions/{id}/commits` | 1 | §6.10.1 |
+| Session files (computed read model) | `/api/v1/sessions/{id}/files` | 1 | §6.10.2 |
 | Hook events (observed-session ingest) | `/api/v1/hook-events` | 1 | §6.8 |
 | Settings | `/api/v1/settings` | 1 | §7 |
 | Service health | `/api/v1/services/health` | 1 | §7.5 |
 | Schedule (computed read model) | `/api/v1/schedule` | 1 | §7.7 |
+| Spend (computed read model) | `/api/v1/spend` | 1 | §7.8 |
 | AuditLogEntries | `/api/v1/audit-log-entries` | 1 | §12 |
 | Notifications | `/api/v1/notifications` | 2 | §8 |
 | Adrs | `/api/v1/adrs` | 2 | §9 |
@@ -293,6 +296,10 @@ interface Session {
 }
 ```
 
+**`title` is the primary human label for a Session, and the Backend fills it (arbitration A13).** WS4 §9.3 renders `title` first on every surface that shows a Session; WS3 §4.6 weights `sessions.title` as full-text rank class `A`, the highest; and the Phase 2 Telegram, Obsidian and export surfaces read nothing else. **§6.11 is the complete contract** — when the Backend derives a title from the first user Message, the exact derivation rule, the idempotence guard, the operator override, and the fallback.
+
+Wire representation: `title` is **always present and always a string**; the unset value is the empty string `''`, which maps to `sessions.title IS NULL` in storage (WS3 §3.9) — `title ?? ''` outbound, `'' → NULL` inbound. That mapping is what lets §16 keep `title` in `required` as `type: string` while the column stays nullable; WS7 N6 (which observed the mismatch) is unchanged by this section and stays open as recorded.
+
 ### 6.2 CRUD
 
 | Method & path | Purpose | Notes / errors |
@@ -300,7 +307,7 @@ interface Session {
 | `GET /api/v1/sessions` | Cursor list; filters `?state=`, `?projectId=`, `?sessionType=`, `?repositoryId=`; `order=desc` default | `INVALID_CURSOR` |
 | `POST /api/v1/sessions` | Create **managed** Session in state `created` → `201 { data: Session }` | Body below. Observed Sessions are created only by the system (§6.8) |
 | `GET /api/v1/sessions/{id}` | Fetch | `NOT_FOUND` |
-| `PATCH /api/v1/sessions/{id}` | `{ title?, notes?, projectId? }` | `VALIDATION_FAILED`, `NOT_FOUND` |
+| `PATCH /api/v1/sessions/{id}` | `{ title?, notes?, projectId? }` — `title` is the operator override and always wins over derivation; `title: null` or `''` clears it (§6.11.4) | `VALIDATION_FAILED`, `NOT_FOUND` |
 
 ```ts
 // POST /api/v1/sessions request
@@ -315,6 +322,8 @@ interface Session {
 ```
 
 Emits `session.created`.
+
+**No `?since=` time filter in V1 (resolves WS7 non-blocking N16).** WS5 §5.2's Needs Attention widget scopes itself to "Sessions that entered `failed` in the last 24 h", which this list cannot express server-side — the filter set is `state` / `projectId` / `sessionType` / `repositoryId` and stays that way. Deliberate, per WS7's handling: the list is ordered newest-first, so the widget fetches one page of `?state=failed` and drops rows older than 24 h client-side. At single-operator volumes the first page always contains every recent failure, and the widget caps at 8 rows regardless. Adding `?since=` would also want an index on `(state, created_at DESC)` that no other read path needs (WS3 §3.9 leads with `project_id`). The trigger for revisiting is concrete rather than aesthetic: **if more than `limit` Sessions can plausibly fail inside 24 h, the widget can miss an entry** — at that point add `?since=<ISO 8601 instant>` filtering `created_at >= since`, plus the matching index, and not before.
 
 #### 6.2.1 Launch at capacity — queued, never rejected (B3 / arbitration A2)
 
@@ -372,6 +381,8 @@ The partial assistant Message is persisted with `status = 'interrupted'` — the
 ```
 
 Emits `session.message.appended` (role `user`) immediately; assistant deltas flow as `session.message.delta_appended` (§14.5), and the final assistant Message emits `session.message.appended` on persist.
+
+**Title derivation on the prompt path (arbitration A13).** If this is the Session's first user Message and no title has been set, the Backend derives `sessions.title` from `content` **in the same transaction as the Message insert** — committed before the `202` is returned, so any subsequent `GET /sessions/{id}` already reflects it. Derivation happens at persist, while the Message is still `status = 'pending'`: the label must exist even if the prompt is never transmitted to the runtime. Full rule, guard and override in **§6.11**.
 
 **Message status on the prompt path (§6.6).** The user Message is persisted with `status = 'pending'` at acceptance and flips to `'complete'` once the runtime has received it; a second `session.message.appended` for the same `messageId` carries the new status (consumers are idempotent on event `id`, F6.3, and last-writer-wins on message state). If the session is paused or lost before transmission, the Message stays `pending` — it is redisplayed on resume and **never auto-replayed** (WS1 §5.1 cold-pause semantics; storage WS3 §3.11). This is what makes WS4/WS5's "pending prompt" affordance renderable from the API alone.
 
@@ -433,6 +444,8 @@ interface Message {
 Messages are content-immutable and have no write endpoints (user messages are created via prompt submission, all others by the wrapper/ingest pipeline). `status` is the one mutable field — it advances `pending → complete` / `interrupted` on the runtime's behalf, and each advance re-emits `session.message.appended` for the same `messageId`.
 
 ### 6.7 Timeline, export, context package (PRD §4.1, §8.3)
+
+This section covers the **Timeline** tab of WS4 §6.7's right panel; the **Commits** and **Files** tabs are §6.10, and **Notes** is a field on the Session resource (§6.1), written through `PATCH /sessions/{id}`.
 
 **`GET /api/v1/sessions/{id}/timeline`** — cursor list of lifecycle facts (F7 "recorded with timestamp + trigger"), read directly from `session_events` (WS3 §3.10):
 
@@ -501,6 +514,8 @@ The hooks profile written into `.claude/settings.json` (WS1 installer) registers
 
 Behavior: unknown `runtimeSessionId` + `SessionStart` ⇒ system creates an **observed** Session (`created` → `running` on attach; F7 trigger `system`) and starts transcript tailing (fidelity channel, F1.5); known id ⇒ event is folded into the Session record/timeline; duplicates are deduplicated on `(runtimeSessionId, hookEventName, occurredAt)`. Ingest must be tolerant: unrecognized `payload` shapes are stored raw, never rejected (version-drift rule, F1.5).
 
+**Title derivation on the ingest path (arbitration A13).** An observed Session is created by `SessionStart` with no title — Mission Control never sees a Launch modal for it — so its label comes from the **first user Message ingest persists**, by the identical rule and in the identical transaction as the managed path. Either channel may be the one that writes it (the `UserPromptSubmit` hook payload, or the transcript tailer's first `role: 'user'` line); because both converge on one row through WS3 §3.11's `(session_id, runtime_message_id)` dedupe key, exactly one transaction derives, and the loser of the race is a no-op. An observed Session that produces no user Message at all — hook-only fidelity that never captured a prompt, or a session ended before its first turn — keeps `title` unset and falls back per **§6.11.5**.
+
 ### 6.9 Observation fidelity and degradation (B12 / arbitration A9)
 
 Observed sessions run on two channels (F1.5, WS1 §6.3): hooks (push, supported surface) and transcript tailing (fidelity, version-sensitive). When the tailer's parse-drift counter crosses WS1's threshold it detaches and the session continues on **hooks only** — reduced message detail, no state change, no failure. That fact is user-visible (WS5's degraded-fidelity badge) and therefore contractual:
@@ -518,6 +533,182 @@ Phase 1, producer `backend`, relayed on `sessions` and `session:{id}`, and appen
 **Degradation is terminal for the life of the Session (WS7 arbitration A11).** There is no `session.observation_restored` event and no re-attachment contract. WS1 §6.3's degradation ladder is one-directional and `transcript_tail_states.degraded` is deliberately sticky across restarts so the badge cannot flap — so a "restored" event would have had no producer. It is also the honest model: re-attaching the tailer would not recover the transcript lines already skipped, so telling the operator fidelity was "restored" would overstate what they are actually seeing. The tail-state row dies with the Session, so the next Session starts clean.
 
 One further deliberate point: this is **not** `sync.failed` — that event belongs to Obsidian sync runs and its `syncRunId` payload is meaningless here (WS1 §6.3 and WS6 §5.4 adopt this name).
+
+### 6.10 Session panel data sources — Commits and Files (closes WS7 §7.2 item 2)
+
+WS4 §6.7 gives the Session detail view a right panel with tabs **Commits / Files / Timeline / Notes**, each owning its own query keyed `['sessions', id, …]`, and PRD §8.3 names Files explicitly. Timeline is §6.7 and Notes is a Session field (§6.1). The two remaining tabs had no Session-scoped source: Commits were reachable only as `GET /repositories/{id}/commits?sessionId=` — the wrong resource for a Session-scoped panel, and unusable when the Session has no `repositoryId` — and `files[]` existed only on `GET /commits/{id}`, so the Files tab would have been one request per commit *and* would still have missed tool activity entirely.
+
+#### 6.10.1 `GET /api/v1/sessions/{id}/commits`
+
+Nested convenience list, exactly the pattern of `GET /repositories/{id}/pull-requests` (§5.3). Cursor list per F5.3, `order=desc` default (newest `committedAt` first). Items are the `Commit` resource of §5.2 **without** `files[]` — that stays on the single-commit fetch, which is what makes the Files tab a separate read model rather than an N+1 walk.
+
+```ts
+// 200
+{ data: Commit[], meta: { nextCursor: string|null, limit: number } }
+// Errors: NOT_FOUND (404, unknown session), INVALID_CURSOR (400)
+```
+
+Storage: `commits.session_id` (WS3 §3.7), served by `ix_commits_session_id`. **No WS3 change** — a Session's commit set is tens of rows, so the `committed_at DESC` ordering is an in-memory sort over an index-selective read; widening that index would tax the commit-polling insert path for no measurable gain.
+
+#### 6.10.2 `GET /api/v1/sessions/{id}/files`
+
+The de-duplicated set of files the Session touched, from **both** sources WS5 §5.5 names — the Session's commits **and** its tool activity — with a per-file touch count. Bounded read model, so `{ data: { … } }` with no cursor and no `meta` (§1.2), the same shape family as `/services/health` (§7.5) and `/schedule` (§7.7).
+
+```ts
+// 200
+{ data: {
+    root: string,                    // resolved absolute native path that relative paths are relative to
+    files: SessionFileTouch[],       // ordered: touchCount desc, then path asc
+    totalFiles: number,              // distinct paths found, before the cap
+    truncated: boolean,              // true when totalFiles exceeded the 500-file cap
+    commitsAsOf: string | null,      // repositories.last_synced_at for the Session's repository; null when none
+    completeness: 'complete' | 'partial',
+    completenessReason: 'observation_degraded' | 'hooks_not_installed' | null
+} }
+// Errors: NOT_FOUND (404)
+
+interface SessionFileTouch {
+  path: string;                      // root-relative with '/' separators — or the absolute native path when outsideRoot
+  outsideRoot: boolean;              // true = touched outside the Session's root (surfaced, never hidden)
+  touchCount: number;                // toolTouchCount + commitCount
+  toolTouchCount: number;
+  commitCount: number;
+  sources: Array<'tool' | 'commit'>;
+  status: 'added'|'modified'|'deleted'|'renamed' | null;  // newest commit's status; null when tool-only
+  additions: number | null;          // summed over this Session's commits; null when tool-only
+  deletions: number | null;          // idem
+  lastTouchedAt: string;             // max(commit committedAt, tool Message occurredAt)
+}
+```
+
+**Derivation — the exact reads.**
+
+| Source | Reads | Path key |
+|---|---|---|
+| Commits | `commits.files` JSONB (`[{ path, status, additions, deletions }]`, WS3 §3.7) for rows with `commits.session_id = {id}`, expanded with `jsonb_array_elements`; index `ix_commits_session_id` | `f->>'path'` — already repository-relative with `/` separators (git's own form) |
+| Tool activity | `messages` rows for the Session with `tool_file_path IS NOT NULL` (WS3 §3.11, column added for this endpoint — below), grouped with `count(*)` and `max(occurred_at)` | `messages.tool_file_path` — an absolute native path as the runtime reported it |
+
+**De-duplication.** The two sources speak different path dialects; that is the whole problem, and ignoring it would list every edited file twice.
+
+1. **Root.** `root = repositories.local_path` when `sessions.repository_id` is set, otherwise `sessions.working_dir` (WS3 §3.9). It is echoed in the response so the UI labels the list from server truth instead of inferring it.
+2. **Tool paths** are normalized: already absolute → if under `root`, rewritten root-relative with `/` separators, `outsideRoot: false`. If **not** under `root`, kept verbatim as the absolute native path with `outsideRoot: true`. A tool that read `C:\Users\me\.ssh\config` must appear; silently dropping out-of-tree touches would make the panel a comfort blanket rather than a record.
+3. **Commit paths** are used verbatim with `outsideRoot: false` — git cannot report a path outside its own tree.
+4. Rows are grouped by the exact normalized string. **Accepted residual:** on case-insensitive filesystems (Windows 11 dev, F8) a tool that opened `Queue.ts` where git tracks `queue.ts` produces two rows. Case-folding on Windows only would make API behavior depend on which OS the server runs — a worse defect than a rare duplicate row — and git is case-sensitive and is the source of truth.
+5. `touchCount = toolTouchCount + commitCount`; a file edited four times and committed twice reads `6`. Each tool invocation counts once — repeated `Read`s of the same file *are* separate touches, and collapsing them would understate how much attention a file got, which is the only thing this count exists to convey.
+
+**Which tools count.** Only invocations whose input names a file: `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit` — a `MultiEdit` counts once per invocation, not once per inner edit. `Glob`/`Grep` take a directory or a pattern and `Bash` is opaque; including them would turn "files touched" into "paths mentioned". The list is runtime-version-dependent, so it lives in WS1's version-tolerant adapter (F1.5), never in SQL.
+
+**Storage (WS3 §3.11 — one column and one index added for this endpoint).** `messages.tool_payload` is documented as holding "input or result" with no discriminator and no index, so extracting `tool_payload->>'file_path'` at read time would push runtime-version knowledge into a SQL expression that cannot degrade gracefully when the payload shape drifts — exactly the coupling F1.5 isolates in an adapter. Added instead:
+
+```sql
+ALTER TABLE messages ADD COLUMN tool_file_path text;   -- absolute native path taken from the tool input
+CREATE INDEX ix_messages_session_tool_file ON messages (session_id, tool_file_path)
+  WHERE tool_file_path IS NOT NULL;
+```
+
+Written once by the ingester — managed SDK stream, `PostToolUse` hook payloads, and transcript lines alike — at the moment it already parses the tool input. `tool_payload` remains the raw truth and is not replaced or reshaped. Nullable and partial-indexed, so it costs nothing on the conversation turns that make up the bulk of the table. *(Rejected: a generated column — the extraction rule depends on the runtime's tool schema, and a generated column cannot be version-tolerant. Rejected: read-time JSON extraction — same knowledge, worse place, and it fails silently and invisibly.)*
+
+**Incompleteness is reported, never implied.** Managed Sessions stream every tool call through the Backend, so their file set is complete by construction. For **observed** Sessions the panel reports only what it can prove:
+
+| `Session.observation` (§6.9) | `completeness` | `completenessReason` |
+|---|---|---|
+| `null` (managed Session) | `complete` | `null` |
+| `channel: 'hooks_and_transcript'`, `degraded: false` | `complete` | `null` |
+| `degraded: true` (tailer detached, WS1 §6.3 — terminal per A11) | `partial` | `observation_degraded` |
+| `channel: 'transcript_only'` (no hooks profile installed) | `partial` | `hooks_not_installed` |
+
+Hooks (`PostToolUse`) and the transcript are *meant* to be redundant for tool activity, so a degraded tailer often loses nothing here — but Mission Control cannot prove the redundancy held for any specific skipped line, and A11 already establishes that those holes are permanent. Once fidelity is known to be reduced, the panel therefore says `partial` rather than asserting a completeness it cannot verify. **The UI must render `partial` visibly** (WS5 §5.5's degraded-fidelity treatment): a Files tab that merely looks short is indistinguishable from a Session that genuinely touched few files, and that is precisely the silent-empty failure this field exists to prevent.
+
+`commitsAsOf` applies the same honesty to the other source — commit-derived rows are only as fresh as the last repository sync (`repositories.last_synced_at`, §5.1), so the panel can say "commits as of 14:07" instead of implying real time. It is `null` when the Session has no `repositoryId`, in which case commit-sourced rows do not exist at all and the list is tool activity only.
+
+**Pagination: none — bounded read model, decided from real session sizes.** An ordinary Session touches tens of files and a large refactor a few hundred; the consumer is a ~340 px right-hand list the operator scans (WS4 §6.7), not a corpus. Two structural reasons make a cursor list actively worse here: (a) the ordering key is `touchCount`, a computed aggregate with heavy ties, so a keyset cursor over it is neither stable nor cheap; (b) the aggregate must be computed in full before it can be ranked at all, so paginating makes the server repeat the same work N times and the client pay N round-trips for the same bytes. The server therefore caps at **500 files** ordered `touchCount desc, path asc` and reports `totalFiles` + `truncated`. A Session that touched more than 500 distinct files has a problem the Files tab was never going to solve.
+
+**No caching, no new event.** Derived at read time from two Session-scoped, index-selective reads. The tab fetches lazily on first activation (WS4 §6.7) and is invalidated by `commit.recorded` and `session.message.appended` on `session:{id}` — both already relayed (§14.3) — so no event is added to the F6 catalog.
+
+### 6.11 Session title — derivation, override, fallback (arbitration A13)
+
+`sessions.title` is the **primary human label for a Session on every surface**: WS4 §9.3 leads with it in list rows, dashboard widgets, the shell open-sessions strip, the Live Session tab bar, command-palette results and links (UX finding MF1 — UUIDv7 prefixes are visually identical for same-hour Sessions and are therefore the *least* discriminating substring available). WS3 §4.6 weights it as full-text rank class `A`, the highest in the index. Phase 2 Telegram notifications, Obsidian notes, ADR backlink chips (WS5 §5.6.2) and `POST /sessions/{id}/export` all read it and nothing else.
+
+A13 therefore assigns derivation to the **Backend**, not the client: a client-only derivation would leave every non-browser surface reading "Untitled" while the browser alone showed the right label, and would leave rank class `A` indexing an empty string.
+
+The derivation is **deterministic string handling, not summarization.** There is no LLM call, no runtime round-trip and no background job — it must be computable inside the transaction that persists the message, and it must yield the same title on replay.
+
+#### 6.11.1 When it fires
+
+At the moment the Backend persists a Message with `role = 'user'`, **in the same transaction as that insert**, and only when the insert actually created a row: a replay collapsed by WS3 §3.11's `ON CONFLICT DO NOTHING` dedupe key derives nothing, because the title was already decided by the write it collapsed into.
+
+| Path | Trigger |
+|---|---|
+| **Managed** | `POST /sessions/{id}/prompts` (§6.4) and the transport-equivalent WS `prompt` frame (§14.4). Derivation runs at persist, while the Message is still `status = 'pending'` — the label must exist even if the prompt is never transmitted (cold pause, §6.4/WS1 §5.1) |
+| **Observed** | The first user Message written by ingest (§6.8), from whichever channel arrives first — the `UserPromptSubmit` hook payload or the transcript tailer's first `role: 'user'` line. Both converge on one row via the dedupe key, so exactly one transaction derives |
+
+**A Session created but never started derives nothing.** `POST /sessions` (§6.2) stores the operator's optional `title` and nothing more. A Session that is created, never prompted, and eventually `archived` keeps its title unset for its whole life — as does an observed Session whose only hook traffic is `SessionStart`/`SessionEnd`. Nothing retro-derives from a Session's metadata; §6.11.5 is the answer for those.
+
+#### 6.11.2 The derivation rule, exactly
+
+Input is the persisted Message's rendered text (WS3 `messages.content`) — equivalently, the `content[]` blocks of `type: 'text'` from §6.6 concatenated in order. `thinking`, `tool_use` and `tool_result` blocks are ignored.
+
+1. Normalize line endings (`\r\n`, `\r` → `\n`) and strip a leading BOM.
+2. Split on `\n`. Skip leading lines that are blank after trimming **or** that consist solely of a Markdown code fence (```` ``` ```` or `~~~`, with or without an info string). Take the **first surviving line** — A13's "first line", with the one refinement that a prompt opening with a fenced code block titles itself from the first line of code rather than from ```` ```ts ````.
+3. Within that line, collapse every run of whitespace (space, tab, U+00A0) to a single `U+0020`, drop remaining C0/C1 control characters, then trim. Only *this* line is collapsed; the newline handling is step 2's job, so nothing from later lines is ever folded in.
+4. If the result is **≤ 60 Unicode code points**, it is the title.
+5. Otherwise truncate: cut at the last space at or before code point 59; if the first 59 code points contain **no space** — a single long token such as a path, URL or minified line — hard-cut at 59. Trim trailing whitespace, then append `…` (U+2026). A derived title is therefore never longer than 60 code points.
+6. If step 3 produced the empty string, **write nothing** and leave the title unset (§6.11.5 applies).
+
+Length is counted in **Unicode code points**, never UTF-16 code units, so a cut can never split a surrogate pair and the rule produces byte-identical output in any runtime. The 60-code-point cap binds **derived titles only**; an operator-set title is bounded by the API's own `maxLength: 200` (§16) and is never ellipsised.
+
+| First user prompt | Derived title |
+|---|---|
+| `Refactor the queue port to batch enqueue` | `Refactor the queue port to batch enqueue` |
+| `Fix the TLS renewal` ⏎⏎ `It fails on the nginx reload step.` | `Fix the TLS renewal` |
+| ```` ```ts ```` ⏎ `export function enqueue(job: Job) {` ⏎ … | `export function enqueue(job: Job) {` |
+| A 400-character single line starting `Investigate why the Sync Worker keeps …` | `Investigate why the Sync Worker keeps…` (cut at the last space ≤ 59, ellipsised) |
+| `D:\Repos\MCS\apps\backend\src\sessions\manager\session-manager.ts` (no spaces) | first 59 code points + `…` |
+| `   ` ⏎ ```` ``` ```` ⏎ `   ` (whitespace and a bare fence) | none — title stays unset |
+
+#### 6.11.3 Idempotence — the guard is `title IS NULL`, and there is no flag
+
+Derivation is a **conditional update in the message-insert transaction**:
+
+```sql
+UPDATE sessions SET title = $derived, updated_at = now()
+WHERE id = $sessionId AND title IS NULL;
+```
+
+**No `title_derived` flag, and therefore no WS3 change** — `sessions.title` already exists and is already nullable (WS3 §3.9). A boolean flag would carry exactly the information `title IS NULL` already carries, while adding a column that can disagree with the value it describes (a flag left `true` after the operator renames, or `false` on a row whose title was cleared). The predicate is the literal question being asked — "has anyone named this Session yet?" — it is evaluated on a row the transaction already holds, and it cannot drift from the data. `POST /sessions` and `PATCH /sessions/{id}` normalize an empty or whitespace-only `title` to `NULL` at write, so "unnamed" has exactly one storage representation and the predicate stays total.
+
+Four consequences, all deliberate:
+
+- **An operator-set title is never overwritten** — the `WHERE` clause matches no row.
+- **At most one *successful* derivation per Session.** Once `title` is non-null every later user Message no-ops on the same predicate.
+- **A first prompt that derives nothing (step 6) leaves the next user Message eligible.** The rule is "derived once successfully", not "attempted once": a Session whose opening prompt was a bare code fence should not be condemned to `Untitled` for its lifetime, and the retry costs one predicate on a row the transaction is already touching.
+- **A concurrent `PATCH` is resolved by commit order, not by a lock.** If the rename commits first, derivation no-ops; if it commits second, it overwrites — which is precisely the intended "the operator wins thereafter".
+
+#### 6.11.4 Operator override
+
+`PATCH /api/v1/sessions/{id}` with `{ title }` (§6.2) is the override and always wins. It is legal in **every** state including `archived` — renaming a record is not a lifecycle action and performs no F7 transition. The value is stored trimmed and verbatim, bounded by `maxLength: 200`; the 60-code-point ellipsis rule is the derivation's, not the column's.
+
+`{ title: null }` — or `""`, or whitespace only, all normalized to `NULL` — **clears** the title.
+
+**Clearing does not re-trigger derivation, and the reason is worth stating precisely:** derivation is triggered *only* by the persist of a user Message, never by `PATCH`. Clearing restores the precondition, so it changes the outcome only for a Session that has **not yet** had a user Message persisted — e.g. a `created` Session the operator named at launch and then thought better of, which will derive from its first prompt as normal. For any Session that has already been prompted, clearing simply leaves it unnamed and hands the label to §6.11.5. This is the honest reading of "derived only when `title IS NULL`" and it needs no extra machinery to hold.
+
+#### 6.11.5 Fallback — referenced, not redefined
+
+The title can legitimately be unset, so every consumer needs a fallback, and **this contract introduces no new one**:
+
+- **Browser surfaces — WS4 §9.3 owns it** and is normative: `Untitled session · ‹…3f9a1c›`, where the tail is the last six hex characters of the id (random in UUIDv7, and therefore actually distinguishing). Not restated here.
+- **Search** — WS3 §4.6 already coalesces the `session` branch to `'(untitled session)'`.
+- **Phase 2 server-rendered surfaces** (Telegram bodies, Obsidian note titles, export filenames and headings) build their label the same way WS4 §9.3 does — the words `Untitled session` plus the six-hex id tail — rather than inventing a third constant.
+
+#### 6.11.6 Events — none added, and no channel widened
+
+**No new event, and no change to any existing event's payload or channel list.** The title changes at most once per Session, server-side, inside the transaction that already emits **`session.message.appended`** (role `user` — event #9, §15.2) on `session:{id}`. That event is the signal:
+
+- **Live Session view, Live tab bar and the shell open-sessions strip** hold `session:{id}` subscriptions for every Session in the open set (WS4 §5.2, §6.5), so they already receive it. WS4's handler gains one clause: **on `session.message.appended` where `role = 'user'` and the cached Session has no title, also invalidate `['sessions', id]`.** No payload field is needed — `role` is already carried.
+- **The sessions list and Dashboard widgets** subscribe to `sessions`, not `session:{id}`, and converge on their next `['sessions']` fetch. In the dominant flow they converge at once anyway: prompting a `created` Session is a start-with-prompt (WS4 §6.6), and the accompanying `session.state_changed` on `sessions` already invalidates `['sessions']` (WS4 §5.3). The residual is a Session prompted for the first time while already `running` (started via `[Start]`, typed into afterwards), where a list row can read `Untitled session · ‹…3f9a1c›` until the next refetch — a stale *label*, never a stale state, on a surface whose fallback already looks correct.
+- **Adding `sessions` to event #9's channel list is rejected.** It would relay every message of every Session to every connected client, on the one channel the whole shell subscribes to, in order to correct one label once per Session — a firehose bought with a cosmetic gain. A13 reaches the same conclusion from the other side: because WS4 §9.3's fallback is never blank, there is no interval during which the operator sees nothing.
+
+The derivation writes **no `session_events` row** and produces no timeline entry (§6.7): a title is not a lifecycle fact. It does bump `sessions.updated_at`, which is the only observable side effect beyond the column itself.
 
 ---
 
@@ -561,7 +752,11 @@ interface ClaudeCodeSettings {                          // PUT /api/v1/settings/
   cliPath: string;                                      // absolute path to claude / claude.exe
   defaultModel: string;
   maxConcurrentSessions: number;                        // F1.5 concurrency gate
-  costBudget: { dailyUsd: number | null, perSessionUsd: number | null };  // breach → notification type cost_budget_alert
+  costBudget: {                                         // breach → notification type cost_budget_alert
+    dailyUsd: number | null,                            // null = no daily budget
+    perSessionUsd: number | null,
+    alertThresholdPercent: number                       // 1–100, default 80 — see §7.8
+  };
 }
 
 interface TelegramSettings {                            // PUT /api/v1/settings/integrations/telegram
@@ -588,6 +783,8 @@ interface SecuritySettings {                            // PUT /api/v1/settings/
   allowedOrigins: string[];                             // extra WS/CSRF origins, §14.2 (default [])
 }
 ```
+
+**`costBudget.alertThresholdPercent` (added 2026-08-12 with §7.8).** WS5 §5.7.4 already renders the control (`alert at [ 80 ▾ ] %`) and WS5 §5.2's Dashboard progress rule is defined as "success under the alert threshold, warning at/over it, danger over 100 %" — so the threshold was a value the UI reads and no document stored. It is a field *inside* the existing `costBudget` object, which §7.6 rule 1 stores whole as one JSONB row (`('integrations', 'claude_code_cost_budget')`): **no new registry entry, no new `settings` row, no WS3 change.** Default `80`, validated `1–100` integer. The enable/disable of budget *alerting* stays where it already lives — `notifications.events.costBudgetAlert` — and is not duplicated here; `dailyUsd: null` means "no budget", which is a different statement from "alerts off" and the UI distinguishes them (WS5 §3.1, §5.2).
 
 > **Phase 3 — interface only.** This section is a placeholder/extension point.
 > Detailed design is out of TDS scope per the project-plan scope guard.
@@ -682,6 +879,7 @@ interface SettingKeyEntry {
 | `integrations.github.token` | `('integrations', 'github_token')` | — | **yes** → `secret_items` |
 | `integrations.claudeCode.costBudget` | `('integrations', 'claude_code_cost_budget')` | `object` | no |
 | `integrations.telegram.botToken` | `('integrations', 'telegram_bot_token')` | — | **yes** → `secret_items` |
+| `notifications.events` | `('notifications', 'events')` | `object` | no |
 | `notifications.quietHours` | `('notifications', 'quiet_hours')` | `object` | no |
 | `security.allowedOrigins` | `('security', 'allowed_origins')` | `array` | no |
 
@@ -713,6 +911,112 @@ Fixed cardinality (three kinds in Phase 1), so no cursor pagination and no `meta
 | `daily_report` | `notifications.dailyReport.enabled` **and** Telegram enabled | `createdAt` of the newest Notification with `type = 'daily_report'` | next occurrence of `dailyReport.time` in `general.timezone`, converted to UTC |
 
 `enabled: false` ⇒ `nextRunAt: null` (the row is still returned, so the UI can say *why* nothing is scheduled and link to Settings). A computed `nextRunAt` in the past means the run is due/overdue — the endpoint reports the schedule, not the queue, and does not clamp it. Phase 2 kinds (`obsidian_sync`, `daily_report`) are returned from Phase 1 with `enabled: false` until their workers exist, which is what makes the widget honest on day one rather than empty.
+
+### 7.8 Spend — computed read model (closes WS7 §7.2 item 1 / UX finding WC1)
+
+Four surfaces state the same spend number and must never disagree: the Dashboard **Spend** widget and its progress rule (WS5 §5.2), the shell **top-bar spend chip** `‹$3.42/$10.00›` (WS5 §3.1), the **Needs Attention** budget row (WS5 §5.2), and the current-spend line beside the budget field in Settings → Claude Code (WS5 §5.7.4). `Session.costUsd` is per-Session and `GET /sessions` is cursor-paginated (F5.3), so without this endpoint a client would have to walk every page of every day to add up one number. This endpoint is that number.
+
+**`GET /api/v1/spend`**
+
+```ts
+// 200
+{ data: {
+    timezone: string,                       // IANA name actually used (general.timezone, or 'UTC' fallback)
+    generatedAt: string,                    // ISO 8601 UTC
+    day: SpendPeriod,                       // current calendar day in `timezone`
+    month: SpendPeriod,                     // current calendar month in `timezone`
+    budget: {
+      dailyUsd: number | null,              // null = no daily budget configured
+      perSessionUsd: number | null,
+      alertThresholdPercent: number,        // 1–100, default 80
+      alertsEnabled: boolean                // notifications.events.costBudgetAlert
+    },
+    dayStatus: 'no_budget' | 'ok' | 'alert' | 'over'
+} }
+// Errors: UNAUTHORIZED (401)
+
+interface SpendPeriod {
+  periodStart: string;      // ISO 8601 UTC, inclusive
+  periodEnd: string;        // ISO 8601 UTC, exclusive
+  totalCostUsd: number;     // 0 when nothing ran
+  sessionCount: number;     // Sessions that contributed cost in the period
+}
+```
+
+Fixed shape, bounded, no pagination and no `meta` (§1.2 fixed read model). Read-only: there is no POST/PATCH, no persistence, and no event — the budget itself is changed in Settings (§7.2).
+
+**Setting keys (§7.6 registry, verbatim).**
+
+| Value | API path (§7.2) | Registry `(category, key)` |
+|---|---|---|
+| Period timezone | `general.timezone` | `('general', 'timezone')` — `string`, IANA name |
+| Daily budget | `integrations.claudeCode.costBudget.dailyUsd` | `('integrations', 'claude_code_cost_budget')` — one JSONB row, read whole (§7.6 rule 1) |
+| Per-session budget | `integrations.claudeCode.costBudget.perSessionUsd` | same row |
+| Alert threshold | `integrations.claudeCode.costBudget.alertThresholdPercent` | same row |
+| Alerts enabled | `notifications.events.costBudgetAlert` | `('notifications', 'events')` — one JSONB row |
+
+**Period semantics — the instance timezone, never UTC-by-accident.** "Today" means the calendar day in **`general.timezone`** (PRD §4.4.1 General → timezone). It is explicitly *not* the server's `TZ`, not PostgreSQL's session `TimeZone`, not the browser's zone, and not UTC. A Backend running UTC while the operator is in `Europe/Amsterdam` would roll "today" at 01:00 or 02:00 local — the Dashboard would read `$0.00` for the first two hours of every evening's work and the budget alert would fire against the wrong window, and nobody would notice until they went looking for a number they had already stopped trusting.
+
+Bounds are computed **in SQL, in the same statement as the aggregate**, so the boundary and the sum cannot disagree:
+
+```sql
+SELECT (date_trunc('day',   now() AT TIME ZONE $tz))                        AT TIME ZONE $tz AS day_start,
+       (date_trunc('day',   now() AT TIME ZONE $tz) + interval '1 day')     AT TIME ZONE $tz AS day_end,
+       (date_trunc('month', now() AT TIME ZONE $tz))                        AT TIME ZONE $tz AS month_start,
+       (date_trunc('month', now() AT TIME ZONE $tz) + interval '1 month')   AT TIME ZONE $tz AS month_end;
+```
+
+`date_trunc` runs on the local wall-clock timestamp and the result is converted back to an instant, so DST transitions yield correct 23-hour and 25-hour days. Adding `interval '1 day'` to the *local* timestamp before converting — rather than adding 24 hours to the UTC instant — is exactly what makes that true. `periodStart`/`periodEnd` are echoed as UTC instants so the client renders the window it was actually given instead of recomputing a boundary from the browser clock. An unset or unparseable `general.timezone` falls back to `UTC` and reports `timezone: "UTC"`: the endpoint neither fails nor silently adopts the host zone.
+
+**Attribution — cost lands on the day the Session started.** The aggregate reads `sessions.total_cost_usd` (WS3 §3.9, `numeric(12,6)`; API `Session.costUsd`, canonical for managed sessions per F1.5) and buckets each Session by **`sessions.started_at`**.
+
+- Not `created_at`: a Session can be created at 23:55 and started the next morning, and the money is spent when the runtime runs.
+- Not `completed_at`: a long-running Session would contribute nothing all day and then dump its entire cost into whichever day it happened to finish — the widget would read `$0.00` while three sessions burned the budget, which is the exact failure mode WC1 exists to close.
+- Cost on the Session row is cumulative (updated per SDK `ResultMessage`), so a Session spanning midnight keeps its whole cost on its start day. Stated rather than hidden: exact per-turn attribution would need cost on `messages`, which nothing stores, and adding a column to the largest table to make a midnight edge case precise is not a trade worth making for a single-operator dashboard.
+- `started_at IS NULL` implies nothing ran and therefore no cost — so no `COALESCE`, no special case.
+- **Every state counts**, `failed` and `archived` included: a failed Session spent real money, and archiving is retention housekeeping, not an accounting event.
+- Observed Sessions normally have `total_cost_usd IS NULL` (no `ResultMessage`); SQL `sum()` ignores NULLs so they contribute `0`. **`sessionCount` counts only Sessions with a non-NULL cost** — the ones that actually produced the number — which is what makes WS5's "Observed sessions report no cost" footnote true instead of an excuse for a mismatch.
+
+Because the day range is contained in the month range, one scan answers both:
+
+```sql
+SELECT coalesce(sum(s.total_cost_usd) FILTER (WHERE s.started_at >= b.day_start
+                                                AND s.started_at <  b.day_end), 0)   AS day_cost,
+       count(*) FILTER (WHERE s.started_at >= b.day_start AND s.started_at < b.day_end
+                          AND s.total_cost_usd IS NOT NULL)                          AS day_sessions,
+       coalesce(sum(s.total_cost_usd), 0)                                            AS month_cost,
+       count(*) FILTER (WHERE s.total_cost_usd IS NOT NULL)                          AS month_sessions
+  FROM b LEFT JOIN sessions s
+    ON s.started_at >= b.month_start AND s.started_at < b.month_end;
+```
+
+**Storage (WS3 §3.9 — one index added for this endpoint).** No existing index serves "sum cost over a `started_at` range": `ix_sessions_project_state_created_at` leads with `project_id`, `ix_sessions_active` is partial on the three non-terminal states (and the Sessions that spent money are mostly `completed`), and `created_at` is the wrong column. Added:
+
+```sql
+CREATE INDEX ix_sessions_started_at ON sessions (started_at DESC) INCLUDE (total_cost_usd)
+  WHERE started_at IS NOT NULL;
+```
+
+Partial — the rows it excludes are exactly the rows the aggregate ignores — and `INCLUDE (total_cost_usd)` makes the month scan index-only. **This is the only WS3 change this section needs.**
+
+**Status rule — computed server-side so four surfaces cannot disagree about when the bar turns amber.**
+
+| `dayStatus` | Condition |
+|---|---|
+| `no_budget` | `budget.dailyUsd` is `null` |
+| `ok` | `day.totalCostUsd` < `dailyUsd × alertThresholdPercent / 100` |
+| `alert` | at or over the threshold, and at or below `dailyUsd` |
+| `over` | `day.totalCostUsd` > `dailyUsd` |
+
+This is exactly WS5 §5.2's progress rule (success / warning / danger), so the colour comes from the server and only the percentage — `totalCostUsd / dailyUsd`, a display rounding — is computed client-side. `no_budget` is what drives WS5's `no budget set` rendering in place of the rule; `alertsEnabled: false` is what hides the top-bar chip (WS5 §3.1) while the Dashboard widget keeps showing spend (WS5 §5.2). **The endpoint always returns the numbers**: spend is never withheld because no limit was configured or because alerting is off — that was the WC1 gap in the first place.
+
+**This is not an alerting path.** The `cost_budget_alert` Notification remains the Backend's threshold evaluation on `session.completed`/usage updates producing `notification.created` (§15.2 notes). Same setting inputs, two consumers; a read of this endpoint raises nothing.
+
+**Caching: none, deliberately.** Derived on every call. For a single-operator instance the month-range aggregate is a bounded index-only scan over at most a few thousand rows, so a cache would buy microseconds and cost correctness at the two moments the number matters most — immediately after a Session completes, and at local midnight, which is precisely where a TTL keyed on the wrong clock produces a confidently stale number. If measurement ever disagrees, the escape hatch is F3's per-process LRU with a **≤ 15 s TTL keyed on `(timezone, dayStart)`** and explicit invalidation on `session.completed` — recorded here so nobody reintroduces the shared cache tier deviation D1 removed.
+
+**Client refresh.** No `spend.*` event exists and none is added: F6 payloads carry entity IDs, and a spend total is a derived aggregate, not an entity change. Clients refetch `GET /spend` on `session.completed` / `session.failed` from the `sessions` channel and otherwise on an interval no tighter than 60 s (§14.7).
+
+**Breakdown: not in V1 — decided, not omitted.** No Phase 1–2 surface renders per-project or per-day spend: the Dashboard widget shows one number plus month-to-date, the top-bar chip shows one number, Settings shows one number, and Needs Attention shows one number. Building `groupBy` now would add an index (`(project_id, started_at)`), a second caching question, and a response shape nothing consumes. If a spend-by-project or spend-over-time view is ever designed it arrives as an additive `?groupBy=project|day&days=<n>` returning a `breakdown[]` **alongside** the fields above — no path change, no breaking change — which is exactly why it is safe to leave out today.
 
 ---
 
@@ -791,7 +1095,7 @@ Scheduled runs are created by the Sync Worker per `obsidian.syncIntervalMinutes`
 
 ## 11. Search (Phase 2)
 
-**`GET /api/v1/search?q=<text>&types=sessions,adrs,commits,messages&limit=20`** — keyword search (PostgreSQL FTS; roadmap Phase 2 "search"). Semantic memory search is a Phase 3 concern (§13.1) and does not share this route.
+**`GET /api/v1/search?q=<text>&types=session,adr,commit,message&limit=20`** — keyword search (PostgreSQL FTS; roadmap Phase 2 "search"). Semantic memory search is a Phase 3 concern (§13.1) and does not share this route.
 
 ```ts
 // 200
@@ -801,6 +1105,8 @@ Scheduled runs are created by the Sync Worker per `obsidian.syncIntervalMinutes`
     occurredAt: string, rank: number
 }>, meta: { nextCursor: string|null, limit: number } }
 ```
+
+**`?types=` takes the singular discriminator values (resolves WS7 non-blocking N17).** The accepted values are `session`, `adr`, `commit`, `message`, `pull_request` — comma-separated, **exactly** the values of the response `type` field above and exactly WS3 §4.6's `UNION ALL` branch names. The earlier plural example (`types=sessions,adrs`) is withdrawn: plural forms are **not** accepted, because a query parameter whose values differ from the response discriminator they select guarantees that someone eventually sends one and gets the other. An unrecognized value is `VALIDATION_FAILED` (400) with the offending value in `details`; omitting `?types=` searches all five.
 
 **Cursor composition (matches WS3 §4.6).** Unlike every other list in this document, the search cursor is **not** a UUIDv7 keyset. Results are a `UNION ALL` across five entity types ordered by relevance, so the cursor encodes the triple **`(rank, occurredAt, id)`** — the same keyset WS3's query pins — base64url-encoded and opaque to clients per F5.3. Ranking uses `ts_rank_cd(search_tsv, query, 32)`, normalized to `(0,1)` precisely so ranks are comparable across the five branches; a cursor is therefore only valid for the `q`/`types` combination that produced it, and a client changing either must restart from the first page.
 
@@ -965,7 +1271,7 @@ Relay is **best-effort with no replay** in V1. Any reconnect must be treated as 
 2. On `hello`, re-send `subscribe` for all desired channels (server keeps no subscription state across connections).
 3. Refetch current state per channel before trusting new events:
    - `session:{id}` → `GET /sessions/{id}` (state, `observation` fidelity, and — after a queued launch — whether it started) + `GET /sessions/{id}/messages?cursor=<cursor for last known ordinal>` (gap backfill; the cursor is keyed on `ordinal`, §6.6); discard any in-flight delta stream and rely on the final `session.message.appended` + message refetch. Re-read `status` on the last few messages too: `pending → complete` and `interrupted` transitions may have been missed.
-   - `sessions` → `GET /sessions?state=running` (+ whatever list filters the view holds); sessions left in `created`/`paused` may be queued for launch (§6.2.1).
+   - `sessions` → `GET /sessions?state=running` (+ whatever list filters the view holds); sessions left in `created`/`paused` may be queued for launch (§6.2.1). Also `GET /spend` (§7.8) whenever the shell spend chip or the Dashboard Spend widget is mounted — a Session may have completed inside the loss window, and a stale spend total is a confidently-wrong number rather than a missing one.
    - `notifications` → `GET /notifications?unread=true`.
    - `sync` → `GET /sync-runs?limit=1`; `settings` → `GET /services/health`; `audit`/`adrs`/`repositories` → refetch the visible list.
 
@@ -1033,6 +1339,7 @@ Notes:
 - **#11/#12 are not F7 transitions**: observation fidelity changes emit no `session.state_changed` and leave `state` untouched (§6.9). Likewise a *queued* launch (§6.2.1) emits nothing at request time — `session.state_changed` + `session.started`/`session.resumed` fire only when the `session.launch` job actually launches.
 - The cost-budget check (PRD §4.4.2) runs in the Backend on `session.completed`/usage updates and produces `notification.created` with `notificationType: 'cost_budget_alert'`; the daily report is a scheduled pg-boss job in the Telegram Worker producing `notification.created` (`daily_report`) — no dedicated event types needed.
 - `session.launch` is a **pg-boss job name, not an event** (WS1 §4.3) — it never appears in this catalog and carries no F6 envelope.
+- **Server-side session-title derivation (A13, §6.11) has no event of its own and widens no channel.** It happens inside the transaction that emits #9 `session.message.appended` (role `user`), which is the signal every `session:{id}` subscriber already receives; §6.11.6 records why relaying #9 on the `sessions` channel was rejected.
 - Catalog size: **31 event types across Phases 1–2** (30 durable + 1 ephemeral), plus 9 reserved names below.
 
 ### 15.3 Payload example (fully-specified)
@@ -1065,7 +1372,7 @@ Notes:
 
 ## 16. Representative OpenAPI 3.1 Snippet — Sessions
 
-The full `openapi.yaml` is generated from Fastify route schemas (F5.1); this excerpt fixes the canonical patterns (envelopes, cursor pagination, error responses, sub-actions) every other resource follows mechanically.
+The full `openapi.yaml` is generated from Fastify route schemas (F5.1); this excerpt fixes the canonical patterns (envelopes, cursor pagination, error responses, sub-actions) every other resource follows mechanically. `/spend` is included even though it is not a Sessions path, because it is the one **bounded read model** (§1.2) spelled out here — `/services/health` and `/schedule` follow the identical `{ data: … }`-with-no-`meta` pattern.
 
 ```yaml
 openapi: 3.1.0
@@ -1141,7 +1448,8 @@ paths:
             schema:
               type: object
               properties:
-                title: { type: string, maxLength: 200 }
+                # Operator override; always wins over A13 auto-derivation. null or "" clears it (§6.11.4).
+                title: { type: [string, 'null'], maxLength: 200 }
                 notes: { type: [string, 'null'] }
                 projectId: { type: string, format: uuid }
       responses:
@@ -1254,6 +1562,64 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/Message' } }
                   meta: { $ref: '#/components/schemas/ListMeta' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /sessions/{sessionId}/commits:
+    get:
+      operationId: listSessionCommits
+      summary: Commits recorded during this Session (cursor-paginated, newest first)
+      description: >
+        Nested convenience list backing the Session detail right-panel Commits tab (§6.10.1).
+        Items omit files[]; the per-commit file list stays on GET /commits/{id}, and the
+        Session-wide de-duplicated file set is GET /sessions/{sessionId}/files.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string }, description: Opaque cursor from meta.nextCursor }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Commit' } }
+                  meta: { $ref: '#/components/schemas/ListMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /sessions/{sessionId}/files:
+    get:
+      operationId: getSessionFiles
+      summary: De-duplicated set of files touched during this Session (bounded read model)
+      description: >
+        Union of the Session's commit file lists and its file-touching tool activity, de-duplicated
+        on a root-normalized path (§6.10.2). Not paginated: the aggregate must be computed in full to
+        rank by touchCount, so the server caps at 500 files and reports totalFiles/truncated.
+        completeness is "partial" whenever observed-session fidelity is known to be reduced.
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionFilesData' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /spend:
+    get:
+      operationId: getSpend
+      summary: Spend for the current day and month against the configured budget (bounded read model)
+      description: >
+        Period boundaries are calendar day/month in general.timezone (IANA), never UTC-by-accident and
+        never the browser's zone; periodStart/periodEnd are echoed as UTC instants. Cost is attributed
+        to the day a Session started (sessions.started_at). Derived at read time, not cached (§7.8).
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SpendData' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
   schemas:
@@ -1373,6 +1739,90 @@ components:
         runtimeUuid: { type: [string, 'null'] }
         occurredAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
+    Commit:
+      type: object
+      required: [id, repositoryId, sha, message, authorName, committedAt, filesChanged, additions, deletions, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        repositoryId: { type: string, format: uuid }
+        sessionId: { type: [string, 'null'], format: uuid }
+        sha: { type: string }
+        message: { type: string }
+        authorName: { type: string }
+        authorEmail: { type: [string, 'null'] }
+        committedAt: { type: string, format: date-time }
+        filesChanged: { type: integer, minimum: 0 }
+        additions: { type: integer, minimum: 0 }
+        deletions: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+    SessionFileTouch:
+      type: object
+      required: [path, outsideRoot, touchCount, toolTouchCount, commitCount, sources, lastTouchedAt]
+      properties:
+        path:
+          type: string
+          description: Root-relative with '/' separators, or the absolute native path when outsideRoot is true
+        outsideRoot: { type: boolean }
+        touchCount: { type: integer, minimum: 1, description: toolTouchCount + commitCount }
+        toolTouchCount: { type: integer, minimum: 0 }
+        commitCount: { type: integer, minimum: 0 }
+        sources:
+          type: array
+          items: { type: string, enum: [tool, commit] }
+          minItems: 1
+        status: { type: [string, 'null'], enum: [added, modified, deleted, renamed, null] }
+        additions: { type: [integer, 'null'] }
+        deletions: { type: [integer, 'null'] }
+        lastTouchedAt: { type: string, format: date-time }
+    SessionFilesData:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [root, files, totalFiles, truncated, completeness]
+          properties:
+            root: { type: string, description: Resolved absolute native path relative paths are relative to }
+            files: { type: array, items: { $ref: '#/components/schemas/SessionFileTouch' } }
+            totalFiles: { type: integer, minimum: 0, description: Distinct paths found, before the 500-file cap }
+            truncated: { type: boolean }
+            commitsAsOf: { type: [string, 'null'], format: date-time }
+            completeness: { type: string, enum: [complete, partial] }
+            completenessReason:
+              type: [string, 'null']
+              enum: [observation_degraded, hooks_not_installed, null]
+    SpendPeriod:
+      type: object
+      required: [periodStart, periodEnd, totalCostUsd, sessionCount]
+      properties:
+        periodStart: { type: string, format: date-time, description: Inclusive, UTC instant }
+        periodEnd: { type: string, format: date-time, description: Exclusive, UTC instant }
+        totalCostUsd: { type: number, minimum: 0 }
+        sessionCount: { type: integer, minimum: 0, description: Sessions with a non-null cost in the period }
+    SpendData:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [timezone, generatedAt, day, month, budget, dayStatus]
+          properties:
+            timezone: { type: string, description: IANA name actually used; 'UTC' when general.timezone is unset/invalid }
+            generatedAt: { type: string, format: date-time }
+            day: { $ref: '#/components/schemas/SpendPeriod' }
+            month: { $ref: '#/components/schemas/SpendPeriod' }
+            budget:
+              type: object
+              required: [dailyUsd, perSessionUsd, alertThresholdPercent, alertsEnabled]
+              properties:
+                dailyUsd: { type: [number, 'null'], minimum: 0 }
+                perSessionUsd: { type: [number, 'null'], minimum: 0 }
+                alertThresholdPercent: { type: integer, minimum: 1, maximum: 100, default: 80 }
+                alertsEnabled: { type: boolean }
+            dayStatus:
+              type: string
+              enum: [no_budget, ok, alert, over]
+              description: Server-computed so every spend surface turns amber at the same point (§7.8)
     ListMeta:
       type: object
       required: [nextCursor, limit]
@@ -1431,11 +1881,11 @@ security:
 
 Hand-offs:
 
-- **WS1:** physical semantics of `pause`/`resume`/`end` for managed (SDK has no native pause) and observed sessions — the API reserves `OPERATION_NOT_SUPPORTED` (409) for inapplicable cases; hooks-profile installer targets `POST /api/v1/hook-events` with an `ingest`-scoped token; service-health derivation for §7.5. **Two renames to absorb:** §6.3's "`sync.failed`-family diagnostic event" is now `session.observation_degraded` (§6.9), and §5.2's provisional `UNSUPPORTED_FOR_SESSION_TYPE` is `OPERATION_NOT_SUPPORTED` (§1.3). WS1 §4.3's queued launch is now surfaced as `meta.launch` (§6.2.1). Per WS7 arbitration A11 there is **no** re-attachment contract: degradation is terminal for the life of the Session, so WS1 owes no re-attach policy.
-- **WS3:** storage this contract now assumes: `messages.ordinal` + `messages.status` (§6.6), `projects.workflow_mode` (§4), `sessions` lineage discriminator behind `resumedFromSessionId`/`clonedFromSessionId` (A6), `sync_runs` (§10), FTS index for §11, `notifications.correlation_id` + `payload`, and the transactional-enqueue mechanism (F6.3 / WS0 finding #4). Field-shape conflicts are resolved in the DB's favour: `AuditLogEntry` (§12), `Notification.telegram` (§8), `Adr.status = 'proposed'` (§9). The settings key registry WS3 §3.12 defers to is specified in §7.6 and owned here. `GET /api/v1/schedule` (§7.7) needs **no** storage.
-- **WS4:** reconnect/refetch contract in §14.7 is normative for the client real-time layer; prompt submission may use REST or the WS `prompt` frame — both are canonical. New client-visible surfaces: `meta.launch = 'queued'` (§6.2.1), `Message.ordinal`/`status` (§6.6), `Session.observation` (§6.9), `GET /api/v1/schedule` (§7.7), and the single session-type spelling `sessionType` (§6.1).
-- **WS5:** the degraded-fidelity badge reads `Session.observation.degraded` on load and updates on `session.observation_degraded`; it never auto-clears (A11 — degradation is terminal for the Session). The "Queued for launch" state is `state ∈ { created, paused }` after a `meta.launch = 'queued'` response; ADR copy uses `proposed`, never "draft".
-- **WS6:** contract tests should be generated against §16's schemas; the error-code registry (§1.3) is the assertion vocabulary. The §7.1 launch-queue tests assert `200` + `meta.launch`, never a 409.
+- **WS1:** physical semantics of `pause`/`resume`/`end` for managed (SDK has no native pause) and observed sessions — the API reserves `OPERATION_NOT_SUPPORTED` (409) for inapplicable cases; hooks-profile installer targets `POST /api/v1/hook-events` with an `ingest`-scoped token; service-health derivation for §7.5. **Two renames to absorb:** §6.3's "`sync.failed`-family diagnostic event" is now `session.observation_degraded` (§6.9), and §5.2's provisional `UNSUPPORTED_FOR_SESSION_TYPE` is `OPERATION_NOT_SUPPORTED` (§1.3). WS1 §4.3's queued launch is now surfaced as `meta.launch` (§6.2.1). Per WS7 arbitration A11 there is **no** re-attachment contract: degradation is terminal for the life of the Session, so WS1 owes no re-attach policy. **Added 2026-08-12:** the ingester populates `messages.tool_file_path` from the tool *input* for the five file-naming tools listed in §6.10.2 — managed SDK stream, `PostToolUse` hook payload, and transcript line alike. That extraction is runtime-version-dependent, so it belongs in F1.5's version-tolerant adapter: an unrecognized tool or payload shape leaves the column `NULL` and the Files panel simply misses that touch — it must never fail the ingest write. **Also added 2026-08-12 (arbitration A13):** the session manager and the observed ingester both perform **session-title derivation** — §6.11's rule, in the same transaction as the first user Message insert, guarded by `title IS NULL`, and skipped entirely when the insert is collapsed by the §3.11 dedupe key. It is deterministic string handling; it must never call a runtime or a model.
+- **WS3:** storage this contract now assumes: `messages.ordinal` + `messages.status` (§6.6), `projects.workflow_mode` (§4), `sessions` lineage discriminator behind `resumedFromSessionId`/`clonedFromSessionId` (A6), `sync_runs` (§10), FTS index for §11, `notifications.correlation_id` + `payload`, and the transactional-enqueue mechanism (F6.3 / WS0 finding #4). Field-shape conflicts are resolved in the DB's favour: `AuditLogEntry` (§12), `Notification.telegram` (§8), `Adr.status = 'proposed'` (§9). The settings key registry WS3 §3.12 defers to is specified in §7.6 and owned here. `GET /api/v1/schedule` (§7.7) needs **no** storage. **Two additions requested at the 2026-08-12 gate, both minimal and both stated in the sections that need them:** `ix_sessions_started_at` (partial, `INCLUDE (total_cost_usd)`) for the spend aggregate (§7.8), and `messages.tool_file_path` + `ix_messages_session_tool_file` for the Session Files read model (§6.10.2). `costBudget.alertThresholdPercent` (§7.2) needs **no** WS3 change — it is a field inside an object already stored whole as one JSONB row (§7.6 rule 1). **A13 session-title derivation (§6.11) needs no WS3 change either:** `sessions.title` exists and is nullable, and the idempotence guard is deliberately the `title IS NULL` predicate rather than a `title_derived` flag column, so nothing is added.
+- **WS4:** reconnect/refetch contract in §14.7 is normative for the client real-time layer; prompt submission may use REST or the WS `prompt` frame — both are canonical. New client-visible surfaces: `meta.launch = 'queued'` (§6.2.1), `Message.ordinal`/`status` (§6.6), `Session.observation` (§6.9), `GET /api/v1/schedule` (§7.7), and the single session-type spelling `sessionType` (§6.1). Added 2026-08-12: the §6.7 right-panel query keys now all have sources — `['sessions', id, 'commits']` → §6.10.1, `['sessions', id, 'files']` → §6.10.2 (**bounded**, so no `useInfiniteQuery`), `['sessions', id, 'timeline']` → §6.7, Notes → the Session resource. `GET /spend` (§7.8) backs the shell spend chip and the Dashboard widget; it is polled/invalidated, not event-driven, and its `dayStatus` — not a client-side comparison — decides the progress-rule colour. The Needs Attention 24 h window is filtered client-side by design (§6.2). **Added 2026-08-12 (A13, §6.11):** the Backend derives `Session.title` from the first user Message, so §9.3's derivation is a **display fallback only** and must never be written back through `PATCH`. One handler clause is required: on `session.message.appended` with `role = 'user'`, when the cached Session has no title, also invalidate `['sessions', id]`. No event was added and no channel widened — the rejected alternative (relaying #9 on the `sessions` channel) is argued in §6.11.6.
+- **WS5:** the degraded-fidelity badge reads `Session.observation.degraded` on load and updates on `session.observation_degraded`; it never auto-clears (A11 — degradation is terminal for the Session). The "Queued for launch" state is `state ∈ { created, paused }` after a `meta.launch = 'queued'` response; ADR copy uses `proposed`, never "draft". Added 2026-08-12: the Files panel (§5.5) must render `completeness: 'partial'` visibly — an incomplete file list that merely looks short is indistinguishable from a Session that touched few files. The §5.7.4 `alert at [ 80 ▾ ] %` control now has a home (`integrations.claudeCode.costBudget.alertThresholdPercent`, §7.2), and §5.2's progress-rule thresholds come from `dayStatus` (§7.8) so the widget, the chip, the Needs Attention row, and the Settings line cannot disagree.
+- **WS6:** contract tests should be generated against §16's schemas; the error-code registry (§1.3) is the assertion vocabulary. The §7.1 launch-queue tests assert `200` + `meta.launch`, never a 409. The two new Phase 1 endpoints inherit WS6's generative coverage rule; the two assertions worth writing by hand are (a) `GET /spend` period boundaries against a non-UTC `general.timezone` **across a DST transition**, and (b) `GET /sessions/{id}/files` de-duplicating a file that appears both as an absolute tool path and as a repo-relative commit path.
 
 Open questions (non-blocking):
 

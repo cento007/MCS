@@ -235,7 +235,7 @@ Per F8.1 (foreground process, stdout logs, nonzero exit on fatal — no systemd 
 | E2E — smoke subset, tag `@smoke` (login, launch-session-stream, settings save) | — | ✔ | blocking |
 | E2E — WebKit/Firefox full | scheduled | — | non-blocking |
 
-Rationale: unit/integration are where OS divergence actually bites (paths, process signals, file watching, PostgreSQL behavior) → full matrix. Full browser E2E on Windows roughly doubles the slowest job for little marginal signal; the Windows `@smoke` subset still proves the built stack boots, authenticates, streams, and persists on Windows every PR. Node 22 (F1.1) via `actions/setup-node`, pnpm store cached per OS.
+Rationale: unit/integration are where OS divergence actually bites (paths, process signals, file watching, PostgreSQL behavior) → full matrix. Full browser E2E on Windows roughly doubles the slowest job for little marginal signal; the Windows `@smoke` subset still proves the built stack boots, authenticates, streams, and persists on Windows every PR. Node per F1.2 via `actions/setup-node` — test the supported **floor (22)** and the **active-LTS target** as separate matrix entries, so a version-specific regression is attributed to a version rather than discovered in production; pnpm store cached per OS.
 
 ### 10.2 PostgreSQL provisioning per OS in CI (no Docker)
 
