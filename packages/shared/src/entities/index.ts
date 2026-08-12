@@ -11,6 +11,7 @@
  * entity names are PascalCase in types and docs. IDs are UUIDv7 strings.
  */
 
+export * from './notification.js';
 export * from './session-state.js';
 
 /** Every F4.1 entity, mapped to its table name. Phase tells you when it becomes real. */

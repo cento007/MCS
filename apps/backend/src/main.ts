@@ -103,21 +103,58 @@ async function main(): Promise<void> {
     await app.close();
   });
 
-  try {
-    await app.listen({ host: config.host, port: config.port });
-    log.info(
-      {
-        host: config.host,
-        port: config.port,
-        dataDir: config.dataDir,
-        env: config.nodeEnv,
-        maxConcurrentSessions,
-      },
-      'backend listening',
-    );
-  } catch (error) {
-    log.fatal({ err: error }, 'backend failed to start');
-    process.exit(1);
+  await listenWithRetry(app, config, log, { dataDir: config.dataDir, maxConcurrentSessions });
+}
+
+/**
+ * Bind the HTTP port, tolerating the brief window where a previous process still holds it.
+ *
+ * `tsx watch` starts the replacement as soon as a source file changes, and on Windows the
+ * outgoing process's listening socket can outlive it by a second or two. A single `listen`
+ * attempt therefore loses the race and — because the failure was fatal — the dev server
+ * stayed down until someone noticed. Observed: one edit to `http/index.ts` killed the backend
+ * for twenty minutes; every later edit re-ran the same doomed bind, and the only visible
+ * symptom in the browser was `MALFORMED_RESPONSE`, because Vite proxies a dead upstream as an
+ * empty 500 that no client can parse as an F5.4 envelope.
+ *
+ * Retrying is scoped to development on purpose. In production a busy port means another
+ * instance is already serving — silently waiting for it to disappear would be worse than
+ * failing loudly, so there the first `EADDRINUSE` is still fatal.
+ */
+async function listenWithRetry(
+  app: ReturnType<typeof buildAppWithServices>['app'],
+  config: { host: string; port: number; nodeEnv: string },
+  log: {
+    info: (o: object, m: string) => void;
+    warn: (o: object, m: string) => void;
+    fatal: (o: object, m: string) => void;
+  },
+  extra: Record<string, unknown>,
+): Promise<void> {
+  const retryable = config.nodeEnv === 'development';
+  const attempts = retryable ? 10 : 1;
+  const delayMs = 500;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await app.listen({ host: config.host, port: config.port });
+      log.info(
+        { host: config.host, port: config.port, env: config.nodeEnv, ...extra },
+        'backend listening',
+      );
+      return;
+    } catch (error) {
+      const busy = (error as NodeJS.ErrnoException).code === 'EADDRINUSE';
+      if (!busy || attempt === attempts) {
+        log.fatal({ err: error, attempt }, 'backend failed to start');
+        process.exit(1);
+      }
+      log.warn(
+        { port: config.port, attempt, attempts },
+        'port still held by the previous process, retrying',
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 }
 

@@ -4,19 +4,20 @@ import { PUBLIC_ROUTE } from '../auth/guard.js';
 import { dataEnvelope } from '../http/errors.js';
 
 /**
- * `health/` — process liveness plus (later) the Services health aggregator.
+ * `health/` — process liveness plus the Services health aggregator.
  *
  * TWO DISTINCT SURFACES, do not merge them:
  *
- *  1. `GET /api/v1/health` (implemented here) — process liveness. No database, no auth,
- *     no downstream checks. It answers "this Node process is up and serving HTTP", which
- *     is what a console operator, a smoke test, or a future reverse proxy needs. It is
- *     the ONE working endpoint in this scaffold and it must stay dependency-free.
+ *  1. `GET /api/v1/health` (this file) — process liveness. No database, no auth, no
+ *     downstream checks. It answers "this Node process is up and serving HTTP", which is
+ *     what a console operator, a smoke test, or a future reverse proxy needs. It must stay
+ *     dependency-free.
  *
- *  2. `GET /api/v1/services/health` (TDS 04 §7.5, NOT implemented) — the operator-facing
- *     read model behind Settings -> Services (PRD §4.4.7): PostgreSQL latency,
- *     Queue (PostgreSQL) depth, worker heartbeat ages (TDS 02 §7.2), Qdrant placeholder.
- *     Authenticated, DB-dependent, cached ~5 s. WS1/WS2 own it.
+ *  2. `GET /api/v1/services/health` (`services.ts`, TDS 04 §7.5) — the operator-facing read
+ *     model behind Settings -> Services (PRD §4.4.7): PostgreSQL latency, Queue (PostgreSQL)
+ *     depth, worker heartbeat ages (TDS 02 §7.2), Qdrant/Ollama placeholders. Authenticated,
+ *     DB-dependent, cached ~5 s, and it reports a broken dependency as `down` rather than
+ *     failing the request.
  *
  * NOTE FOR THE CONTRACT OWNER (WS2): `/api/v1/health` does not appear in the TDS 04 §2
  * resource catalog, and §1.4 says every route except `POST /auth/login` requires
@@ -52,3 +53,5 @@ export function registerHealthRoutes(app: FastifyInstance): void {
     dataEnvelope(buildHealthReport()),
   );
 }
+
+export * from './services.js';

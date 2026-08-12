@@ -2,8 +2,18 @@ import { type AppConfig, createNoopQueue, type Db, type LogLevel, type Queue } f
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { createEventBus, type EventBus, Outbox } from './events/index.js';
-import { registerHealthRoutes } from './health/index.js';
+import {
+  buildHealthReport,
+  createServiceHealthProbes,
+  registerHealthRoutes,
+  registerServiceHealthRoutes,
+  type ServiceHealthService,
+} from './health/index.js';
 import { generateRequestId, registerHttpConventions } from './http/index.js';
+import { type NotificationService, registerNotifications } from './notifications/index.js';
+import { registerProjects } from './projects/index.js';
+import { registerRepositories } from './repositories/index.js';
+import { registerSchedule, type ScheduleService } from './schedule/index.js';
 import {
   type AgentRuntimePort,
   registerSessions,
@@ -12,6 +22,7 @@ import {
 } from './sessions/index.js';
 import { type ObservedIngestModule, registerObservedIngest } from './sessions/observed/index.js';
 import { DEFAULT_MAX_CONCURRENT_SESSIONS } from './settings/claude-code.js';
+import { registerSpend } from './spend/index.js';
 import {
   type EventBusPort,
   type PromptPort,
@@ -88,6 +99,10 @@ export interface BuiltApp {
   readonly sessions: SessionModule;
   /** Observed-session ingest: `POST /hook-events` + the transcript tailer (TDS 02 §6). */
   readonly observed: ObservedIngestModule;
+  /** The four Phase 1 read models (TDS 04 §7.5, §7.7, §7.8, §8). */
+  readonly serviceHealth: ServiceHealthService;
+  readonly schedule: ScheduleService;
+  readonly notifications: NotificationService;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -181,6 +196,12 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
+  // The Project and Repository domains (TDS 04 §4/§5.1). Registered after the Session domain
+  // and before the hub purely for readability — both are plain CRUD over their own tables and
+  // depend on nothing here except the db handle (and, for `repository.discovered`, the outbox).
+  registerProjects(app, { db: options.db });
+  registerRepositories(app, { db: options.db, outbox });
+
   // After `registerAuth`, and that ordering is load-bearing: the guard's instance-level
   // `onRequest` hook must already be in place so it authenticates the upgrade before the
   // route's own Origin check runs (TDS 04 §14.1–§14.2, and the ordering note in `ws/index.ts`).
@@ -199,7 +220,54 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   // `createDeltaRelay` for why this is a late attach rather than a constructor argument.
   sessions.managed?.deltas.attach(hub);
 
-  return { app, auth, hub, bus, outbox, sessions, observed };
+  // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
+  // schedule (§7.7), spend (§7.8) and notifications (§8). Health is registered last because it
+  // self-reports the hub's connection count and the registry's slot usage (TDS 02 §7.1), and
+  // both of those exist only now.
+  const serviceHealth = registerServiceHealthRoutes(app, {
+    probes: createServiceHealthProbes({
+      db: options.db,
+      queue,
+      backend: () => {
+        const report = buildHealthReport();
+        return {
+          version: report.version,
+          uptimeSeconds: report.uptimeSeconds,
+          startedAt: report.startedAt,
+          wsConnections: hub.connectionCount,
+          activeSessions: sessions.registry.slotsInUse,
+          maxConcurrentSessions: sessions.registry.maxConcurrentSessions,
+        };
+      },
+    }),
+  });
+
+  const schedule = registerSchedule(app, { db: options.db });
+
+  registerSpend(app, {
+    db: options.db,
+    onTimezoneRejected: (timezone, error) => {
+      app.log.warn(
+        { err: error, timezone },
+        'general.timezone was rejected by PostgreSQL — spend fell back to UTC',
+      );
+    },
+  });
+
+  const notifications = registerNotifications(app, { db: options.db });
+
+  return {
+    app,
+    auth,
+    hub,
+    bus,
+    outbox,
+    sessions,
+    observed,
+    serviceHealth,
+    schedule,
+    notifications,
+  };
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {

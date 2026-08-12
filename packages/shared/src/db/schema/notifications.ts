@@ -9,22 +9,13 @@
 
 import { sql } from 'drizzle-orm';
 import { check, index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  NOTIFICATION_SEVERITIES,
+  NOTIFICATION_TYPES,
+  TELEGRAM_DELIVERY_STATUSES,
+} from '../../entities/notification.js';
 import { users } from './auth.js';
 import { createdAt, primaryKeyId, timestamptz, updatedAt, valueList } from './columns.js';
-
-const NOTIFICATION_TYPES = [
-  'session_completed',
-  'session_failed',
-  'sync_failed',
-  'repository_problem',
-  'daily_report',
-  'cost_budget_alert',
-] as const;
-
-const NOTIFICATION_SEVERITIES = ['info', 'warning', 'error'] as const;
-
-/** `skipped` when Telegram is disabled or the event type is toggled off (PRD §4.4.3). */
-const TELEGRAM_STATUSES = ['skipped', 'pending', 'sent', 'failed'] as const;
 
 /** Entity IDs for deep links plus `eventType` (F6.2: IDs, never full entities). */
 export interface NotificationPayload {
@@ -62,7 +53,7 @@ export const notifications = pgTable(
     ),
     check(
       'ck_notifications_telegram_status',
-      sql`${table.telegramStatus} IN (${valueList(TELEGRAM_STATUSES)})`,
+      sql`${table.telegramStatus} IN (${valueList(TELEGRAM_DELIVERY_STATUSES)})`,
     ),
     /** Unread badge/list: hot subset, partial index. */
     index('ix_notifications_unread')

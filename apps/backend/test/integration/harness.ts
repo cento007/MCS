@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -192,6 +193,9 @@ export async function truncateAll(): Promise<void> {
     'repositories',
     'projects',
     'workspaces',
+    'notifications',
+    'sync_runs',
+    'service_heartbeats',
     'users',
     'settings',
     'secret_items',
@@ -258,6 +262,138 @@ export async function setSecuritySetting(key: string, value: number): Promise<vo
   await testDatabase()
     .db.insert(schema.settings)
     .values({ id: newId(), category: 'security', key, value, valueType: 'number' });
+}
+
+/**
+ * Write any `settings` row directly, using the WS2 §7.6 storage coordinates.
+ *
+ * Same stand-in as `setSecuritySetting` above, generalised for the read models that consume
+ * `general` / `integrations` / `notifications`. `valueType` is derived from the value so the
+ * `ck_settings_value_matches_type` CHECK is satisfied by construction rather than by the
+ * caller remembering.
+ */
+export async function setSetting(
+  category: 'general' | 'integrations' | 'notifications' | 'memory' | 'agents' | 'security',
+  key: string,
+  value: unknown,
+): Promise<void> {
+  const valueType = Array.isArray(value)
+    ? 'array'
+    : value !== null && typeof value === 'object'
+      ? 'object'
+      : (typeof value as 'string' | 'number' | 'boolean');
+
+  await testDatabase()
+    .db.insert(schema.settings)
+    .values({ id: newId(), category, key, value, valueType });
+}
+
+/**
+ * A `secret_items` row with inert bytes.
+ *
+ * The read models only ever ask whether a secret **exists** (§7.1 `{ isSet }`), so the
+ * ciphertext here is deliberately not a real sealed value — nothing decrypts it, and there is
+ * no secret in this repository to leak.
+ */
+export async function setSecretPresent(
+  category: 'general' | 'integrations' | 'notifications' | 'memory' | 'agents' | 'security',
+  key: string,
+): Promise<void> {
+  await testDatabase()
+    .db.insert(schema.secretItems)
+    .values({
+      id: newId(),
+      category,
+      key,
+      // `ck_secret_items_ciphertext` requires > 16 bytes; `ck_secret_items_nonce` requires 12.
+      ciphertext: Buffer.alloc(32, 1),
+      nonce: Buffer.alloc(12, 2),
+    });
+}
+
+/** A `service_heartbeats` row (TDS 03 §4.4) at a chosen age — the Services health input. */
+export async function seedHeartbeat(
+  service: 'telegram_worker' | 'sync_worker',
+  lastHeartbeatAt: Date,
+): Promise<void> {
+  await testDatabase()
+    .db.insert(schema.serviceHeartbeats)
+    .values({
+      id: newId(),
+      service,
+      hostname: 'mc-test',
+      pid: 4242,
+      version: '0.0.0-test',
+      stats: { jobsProcessed: 1, jobsFailed: 0 },
+      startedAt: new Date(lastHeartbeatAt.getTime() - 60_000),
+      lastHeartbeatAt,
+    });
+}
+
+export interface SeedNotificationInput {
+  readonly userId: string;
+  readonly type?: string;
+  readonly severity?: 'info' | 'warning' | 'error';
+  readonly title?: string;
+  readonly body?: string;
+  readonly payload?: Record<string, unknown> | null;
+  readonly correlationId?: string;
+  readonly readAt?: Date;
+  readonly telegramStatus?: 'skipped' | 'pending' | 'sent' | 'failed';
+  readonly telegramSentAt?: Date;
+  readonly telegramError?: string;
+  readonly createdAt?: Date;
+}
+
+/**
+ * Insert a Notification row directly.
+ *
+ * Creation is system-only (TDS 04 §8) and its producers are Phase 2, so there is no API path
+ * a test could drive instead — this factory stands in for the Backend's threshold evaluation
+ * and the Telegram Worker until they exist.
+ */
+export async function seedNotification(input: SeedNotificationInput): Promise<string> {
+  const id = newId();
+  await testDatabase()
+    .db.insert(schema.notifications)
+    .values({
+      id,
+      userId: input.userId,
+      type: input.type ?? 'session_completed',
+      severity: input.severity ?? 'info',
+      title: input.title ?? 'Session completed',
+      body: input.body ?? '',
+      payload: input.payload ?? null,
+      ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
+      ...(input.readAt === undefined ? {} : { readAt: input.readAt }),
+      telegramStatus: input.telegramStatus ?? 'skipped',
+      ...(input.telegramSentAt === undefined ? {} : { telegramSentAt: input.telegramSentAt }),
+      ...(input.telegramError === undefined ? {} : { telegramError: input.telegramError }),
+      ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
+    });
+  return id;
+}
+
+/** A `sync_runs` row (TDS 03 §4.5) — the `obsidian_sync` schedule row's `lastRunAt` source. */
+export async function seedSyncRun(input: {
+  state?: 'queued' | 'running' | 'completed' | 'failed';
+  completedAt?: Date | null;
+  createdAt?: Date;
+}): Promise<string> {
+  const id = newId();
+  await testDatabase()
+    .db.insert(schema.syncRuns)
+    .values({
+      id,
+      kind: 'obsidian',
+      state: input.state ?? 'completed',
+      trigger: 'schedule',
+      ...(input.completedAt === undefined || input.completedAt === null
+        ? {}
+        : { completedAt: input.completedAt }),
+      ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
+    });
+  return id;
 }
 
 /** Extract a cookie value from a `Set-Cookie` header. Throws when the cookie is absent. */

@@ -25,6 +25,24 @@ export interface CreateDatabaseOptions {
   readonly connectionTimeoutMillis?: number;
 }
 
+/** PostgreSQL `unique_violation` (SQLSTATE 23505). */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * Is this error PostgreSQL rejecting a duplicate against a unique index?
+ *
+ * Needed because a pre-check plus an insert is not atomic: two concurrent registrations of the
+ * same `repositories.local_path` both pass the check and one of them has to become a `CONFLICT`
+ * rather than an `INTERNAL`. `constraint` narrows it to the index the caller expects, so an
+ * unrelated collision is not silently reported as the one the handler was guarding.
+ */
+export function isUniqueViolation(error: unknown, constraint?: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { readonly code?: unknown; readonly constraint?: unknown };
+  if (candidate.code !== UNIQUE_VIOLATION) return false;
+  return constraint === undefined || candidate.constraint === constraint;
+}
+
 export function createDatabase(options: CreateDatabaseOptions): DatabaseHandle {
   const pool = new pg.Pool({
     connectionString: options.connectionString,

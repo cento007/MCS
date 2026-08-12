@@ -242,6 +242,32 @@ Also fixed: the documented `pnpm auth:create-user --username <name>` failed with
 
 `/projects`, `/repositories`, `/services/health`, `/spend`, `/schedule`, `/notifications` all 404. The frontend deliberately ships **without** the spend chip and notification bell rather than rendering zeros from a 404 — and the launch modal cannot compose a session until `/projects` exists. Also unsourced: the working-tree disclosure needs the repository's current branch and dirty-file count, which no endpoint exposes (§5.4.1 mandates showing them); the UI treats "cannot verify" as a branch change and requires the acknowledgement.
 
+## 2026-08-13 — Projects, repositories, and the four read models
+
+The last Phase 1 endpoints. **861 unit tests** (still DB-free), **368 integration**, 366 files lint-clean.
+
+**Projects and repositories** — full CRUD, plus `GET /repositories/{id}/status`, the working-tree read model WS5 §5.4.1 mandates but no endpoint exposed. One `execFile` (no shell, per F8), `--no-optional-locks` so the probe can never take `index.lock` and break a `git commit` the operator is running in another terminal, `GIT_TERMINAL_PROMPT=0` so it cannot block on credentials, and `LC_ALL=C` so the "not a repository" classification is not locale-dependent. The 10 s bound was **measured, not guessed** — `git status` on this repo runs 3.3 s cold, so a 5 s guess would have degraded the modal back to "cannot verify" on the first repository an operator registers. Nothing throws: missing path, not-a-directory, not-a-repo and git-unavailable are all 200 with an `unavailableReason`. Verified live against this repository: branch `DEV`, 27 uncommitted files, matching `git status --porcelain` exactly.
+
+**Health, spend, schedule, notifications.** Spend's timezone handling was tested rather than asserted — `Pacific/Kiritimati` (UTC+14) for boundary placement, and DST pinned at fixed instants through a seam: `America/New_York` yields a **25-hour** day on 2026-11-01, a **23-hour** day on 2026-03-08, and a **721-hour** November, with a session inside the repeated 01:30 hour landing on the correct day. Health probes are bounded and never reject; a failed heartbeat *read* reports the workers `unknown` rather than `down`, because the broken dependency there is the database and blaming the worker would be a different lie.
+
+### One product decision made at review: never-ran ≠ stopped
+
+The agent implemented TDS 02 §7.2 verbatim — "down (older **or no row**)" — and flagged the consequence honestly: Phase 1 ships no workers, so a perfectly healthy install would show **two permanently red rows** in the Services panel and two standing entries in WS5's Needs Attention widget, forever, until Phase 2.
+
+Changed. Heartbeat rows are upserted and persist, so the absence of a row means the worker has *never started*, which is not a failure; a worker that ran and went silent leaves a row behind that still ages through `degraded` into `down`. Never-reported now reads `disabled` — the same reading already given to Qdrant and Ollama, "specified, not deployed yet" — with `heartbeatStatus: 'never_reported'` in `meta`. A panel that always shows failures is one operators learn to ignore, which costs more than the fidelity it buys. Both the unit and integration tests now assert the distinction in both directions.
+
+### Contract gaps found and handled
+
+- **§5.1 had no way to create a Repository at all** — only discovery through a settings service that does not exist. Without it no Repository could exist in Phase 1 and the launch picker would be permanently empty. `POST`/`DELETE /repositories` added and marked as additions.
+- **No `project.*` events and no `projects` WS channel**, so one tab's project change cannot invalidate another's. Escalated rather than invented — the F6 event vocabulary is not a single workstream's to extend.
+- **`last_sync_error` had no API surface** despite WS3 justifying the column with "so the Repositories view can explain a `failed` badge"; added to the resource.
+- **Frontend type drift**: `ServiceHealthRow.status` in the SPA declares `'ok'|'not_configured'|…` against the API's `'healthy'|'disabled'|…`, and lacks `label`/`meta`. Must be reconciled before the Settings → Services panel is wired.
+- Health status *changes* are specified to ride the `settings` channel; not implemented, and deliberately so — WS5 §5.2 specifies 10 s polling because health must stay observable when the socket is the sick component.
+
+### Dev-environment fix
+
+The backend exited fatally on `EADDRINUSE`. Under `tsx watch` the outgoing process can hold the port for a moment, so one edit killed the dev server and every later edit re-ran the same doomed bind — visible in the browser only as `MALFORMED_RESPONSE`, because Vite proxies a dead upstream as an empty 500 that no client can parse as an F5.4 envelope. Now retried in development with explicit log lines, still fatal on the first failure in production, where a busy port means another instance is already serving.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.
