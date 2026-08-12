@@ -53,6 +53,12 @@ function parseArgs(argv: readonly string[]): Args {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     switch (arg) {
+      // pnpm inserts a bare `--` when forwarding through a workspace script
+      // (`pnpm --filter … run auth:create-user --`), and it arrives in argv. Skipping it here
+      // rather than in the root script keeps the command working however it is invoked —
+      // directly, through pnpm, or through another layer that adds its own separator.
+      case '--':
+        break;
       case '--username':
         args.username = argv[++i] ?? null;
         break;

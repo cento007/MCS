@@ -84,6 +84,7 @@ export interface ManagedSessionsOptions {
   readonly cost?: SessionCostStore | undefined;
   readonly retries?: TurnRetryScheduler | undefined;
   readonly onError?: ((error: unknown, sessionId: string) => void) | undefined;
+  readonly spawnTimeoutMs?: number | undefined;
   readonly interruptTimeoutMs?: number | undefined;
   readonly disposeTimeoutMs?: number | undefined;
   readonly now?: (() => Date) | undefined;
@@ -128,6 +129,7 @@ export function createManagedSessions(options: ManagedSessionsOptions): ManagedS
     deltas,
     retries,
     onError: options.onError,
+    spawnTimeoutMs: options.spawnTimeoutMs,
     interruptTimeoutMs: options.interruptTimeoutMs,
     disposeTimeoutMs: options.disposeTimeoutMs,
     now: options.now,

@@ -79,6 +79,8 @@ export interface RegisterSessionsOptions {
    */
   readonly agentRuntime?: AgentRuntimePort;
   readonly maxConcurrentSessions: number;
+  readonly spawnTimeoutMs?: number | undefined;
+  readonly disposeTimeoutMs?: number | undefined;
   readonly onError?: (error: unknown, sessionId: string) => void;
 }
 
@@ -110,6 +112,12 @@ export function registerSessions(
           messages,
           stateMachine,
           agent: options.agentRuntime,
+          ...(options.spawnTimeoutMs === undefined
+            ? {}
+            : { spawnTimeoutMs: options.spawnTimeoutMs }),
+          ...(options.disposeTimeoutMs === undefined
+            ? {}
+            : { disposeTimeoutMs: options.disposeTimeoutMs }),
           ...(options.onError === undefined ? {} : { onError: options.onError }),
         });
 

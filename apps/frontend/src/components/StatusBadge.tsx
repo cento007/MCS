@@ -1,5 +1,5 @@
 import type { SessionState } from '@mc/shared/types';
-import { sessionStatePresentation } from '../../lib/session-state.js';
+import { sessionStatePresentation } from '../lib/session-state.js';
 
 /**
  * The canonical F7 state badge (TDS 06 §2.5 Badge, §2.1.6).
@@ -7,19 +7,21 @@ import { sessionStatePresentation } from '../../lib/session-state.js';
  * Recipe, one for all six states: subtle ground + full-strength colour as text and dot,
  * the state glyph, and the verbatim F7 state name as visible text AND as `aria-label` /
  * `title`. Colour is never the only channel.
- *
- * SCAFFOLD STATE: this is the one component the skeleton ships, because it is what proves
- * the token pipeline resolves end to end. The rest of the TDS 06 §2.5 component inventory
- * is WS4's.
  */
-export function StatusBadge({ state }: { state: SessionState }) {
+export function StatusBadge({ state, muted = false }: { state: SessionState; muted?: boolean }) {
   const { label, glyph, colorVar, subtleVar, pulses } = sessionStatePresentation(state);
 
   return (
     <span
       title={label}
       className="inline-flex items-center gap-1 rounded-xs px-2 py-05 font-medium text-2xs"
-      style={{ backgroundColor: `var(${subtleVar})`, color: `var(${colorVar})` }}
+      style={{
+        backgroundColor: `var(${subtleVar})`,
+        color: `var(${colorVar})`,
+        // TDS 06 §3.3: while the socket is not `live`, state marks drop to reduced emphasis
+        // rather than continuing to assert a condition nobody can currently verify.
+        opacity: muted ? 0.6 : 1,
+      }}
     >
       {/* The glyph is hidden from assistive tech HERE because the verbatim state name is
           already visible text beside it. In the glyph-only contexts (session tabs, mobile

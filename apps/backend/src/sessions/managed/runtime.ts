@@ -19,6 +19,18 @@ import type {
 import type { AgentRuntimePort } from './runtime-events.js';
 
 /**
+ * How long to wait for the runtime to confirm spawn before timing out and failing the launch
+ * (TDS 04 §6.3). A spawn that never responds is worse than one that errors: the operator cannot
+ * tell "working" from "broken", and the frontend has no failure to render.
+ *
+ * 30 seconds is long enough for a cold-start Claude Code install on a slow disk, and short enough
+ * that a hung request becomes an actionable 503 before an operator's patience runs out. The
+ * interrupt and dispose timeouts (5s, 2s) are deliberately shorter: those operations are signaling
+ * a running process, not waiting for one to appear.
+ */
+const DEFAULT_SPAWN_TIMEOUT_MS = 30_000;
+
+/**
  * `ManagedRuntime` — the `SessionRuntimePort` implementation the Session domain has been calling
  * into a placeholder for (`createUnavailableRuntimePort`), now backed by real controllers.
  *
@@ -42,6 +54,8 @@ export interface ManagedRuntimeOptions {
   /** PRD §4.1 session metadata. Defaults: this host, and `NODE_ENV`. */
   readonly machine?: string | null | undefined;
   readonly environment?: string | null | undefined;
+  /** How long to wait for `session_started` before failing the spawn (§6.3). */
+  readonly spawnTimeoutMs?: number | undefined;
   readonly interruptTimeoutMs?: number | undefined;
   readonly disposeTimeoutMs?: number | undefined;
   readonly now?: (() => Date) | undefined;
@@ -51,6 +65,7 @@ export class ManagedRuntime implements SessionRuntimePort {
   readonly #options: ManagedRuntimeOptions;
   readonly #machine: string | null;
   readonly #environment: string | null;
+  readonly #spawnTimeoutMs: number;
   readonly #controllers = new Map<string, ManagedSessionController>();
 
   constructor(options: ManagedRuntimeOptions) {
@@ -60,6 +75,7 @@ export class ManagedRuntime implements SessionRuntimePort {
       options.environment === undefined
         ? (process.env['NODE_ENV'] ?? 'development')
         : options.environment;
+    this.#spawnTimeoutMs = options.spawnTimeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS;
   }
 
   get activeSessionCount(): number {
@@ -129,7 +145,18 @@ export class ManagedRuntime implements SessionRuntimePort {
     this.#controllers.set(request.sessionId, controller);
 
     try {
-      const facts = await controller.ready();
+      // Bound the spawn: a runtime that never confirms is worse than one that errors (§6.3).
+      // A timeout here means "Claude Code is unreachable, not authenticated, or so slow that
+      // waiting longer is operationally useless". The session transitions to `failed` and the
+      // API returns 503, which is what the contract says a spawn failure does.
+      const facts = await withTimeout(
+        controller.ready(),
+        this.#spawnTimeoutMs,
+        new SpawnTimeoutError(
+          'The runtime did not confirm spawn within the timeout',
+          request.sessionId,
+        ),
+      );
       return {
         runtimeSessionId: facts.runtimeSessionId,
         runtimeVersion: facts.claudeVersion,
@@ -203,4 +230,36 @@ function asRuntimeUnavailable(error: unknown, sessionId: string): ApiError {
   const message =
     error instanceof Error ? error.message : 'The Claude Code runtime failed to start';
   return new ApiError('RUNTIME_UNAVAILABLE', message, { sessionId });
+}
+
+class SpawnTimeoutError extends Error {
+  readonly sessionId: string;
+
+  constructor(message: string, sessionId: string) {
+    super(message);
+    this.name = 'SpawnTimeoutError';
+    this.sessionId = sessionId;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T | Error): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve, reject) => {
+        timer = setTimeout(() => {
+          if (fallback instanceof Error) {
+            reject(fallback);
+          } else {
+            resolve(fallback);
+          }
+        }, ms);
+        // Never the reason a process stays alive (F8.1).
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

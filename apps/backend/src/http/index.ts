@@ -1,6 +1,6 @@
 import { newId } from '@mc/shared';
 import type { FastifyError, FastifyInstance } from 'fastify';
-import { ApiError, errorEnvelope } from './errors.js';
+import { ApiError, type ErrorCode, errorEnvelope } from './errors.js';
 
 /**
  * `http/` — Fastify wiring: route plugins per domain, the F5.4 error envelope, request-id,
@@ -46,6 +46,21 @@ export function registerHttpConventions(app: FastifyInstance): void {
       );
   });
 
+  /**
+   * HTTP status → F5.4 registry code, for framework rejections that carry their own 4xx.
+   * `VALIDATION_FAILED` is the fallback: an unmapped client error is, by definition, a request
+   * the server would not accept as sent.
+   */
+  const CLIENT_ERROR_CODES: Readonly<Record<number, ErrorCode>> = {
+    400: 'VALIDATION_FAILED',
+    401: 'UNAUTHORIZED',
+    403: 'FORBIDDEN',
+    404: 'NOT_FOUND',
+    409: 'CONFLICT',
+    413: 'PAYLOAD_TOO_LARGE',
+    429: 'RATE_LIMITED',
+  };
+
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof ApiError) {
       request.log.warn({ err: error, code: error.code }, 'request failed');
@@ -74,6 +89,27 @@ export function registerHttpConventions(app: FastifyInstance): void {
           issues: error.validation,
         }),
       );
+      return;
+    }
+
+    // Every *other* framework rejection that already knows it is the caller's fault.
+    //
+    // Fastify raises these before any handler runs and stamps a real 4xx `statusCode` on them:
+    // an empty body under `content-type: application/json` (`FST_ERR_CTP_EMPTY_JSON_BODY`),
+    // malformed JSON, an unsupported media type, and so on. Falling through to `INTERNAL`
+    // told the caller "the server broke" for a request only they can fix — indistinguishable
+    // from a genuine fault, and it trips retry and alerting logic that should stay quiet.
+    // Observed: `POST /sessions/{id}/start` with an empty JSON body answered 500 while the
+    // underlying error carried `statusCode: 400`.
+    //
+    // The status is the framework's; the code comes from the F5.4 registry so the envelope
+    // stays closed. Fastify's messages describe the malformed request and contain no
+    // server internals, so they are safe to pass through — unlike the 5xx branch below.
+    const status = typeof error.statusCode === 'number' ? error.statusCode : 500;
+    if (status >= 400 && status < 500) {
+      const code = CLIENT_ERROR_CODES[status] ?? 'VALIDATION_FAILED';
+      request.log.warn({ err: error, code }, 'request rejected');
+      void reply.code(status).send(errorEnvelope(code, error.message, request.id));
       return;
     }
 

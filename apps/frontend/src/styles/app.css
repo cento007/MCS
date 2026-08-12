@@ -40,7 +40,10 @@
      remove it without providing an equivalent visible indicator. */
   :focus-visible {
     outline: 2px solid var(--color-border-focus);
-    outline-offset: 2px;
+    /* TDS 06 §7.2 specifies 1px. On an accent-filled button the ring would otherwise sit
+       directly on the accent fill (1:1 against itself, §7.1 row 29); the offset is the gap
+       that makes it visible there. */
+    outline-offset: 1px;
     border-radius: var(--radius-xs);
   }
 
@@ -63,5 +66,57 @@
       /* biome-ignore lint/complexity/noImportantStyles: accessibility reset must win the cascade */
       scroll-behavior: auto !important;
     }
+  }
+}
+
+/*
+ * The three permitted animations (TDS 06 §2.4).
+ *
+ * "The only looping animations permitted are the `running` state dot pulse and the
+ * streaming-cursor blink in live chat" — plus the reconnecting chip's slow spin, which §3.3
+ * specifies explicitly ("`--mc-warning` dot with slow spin (static under reduced motion)")
+ * and the skeleton shimmer, which §2.5 lists and requires be disabled under reduced motion.
+ *
+ * All four are class-based rather than inline so the `prefers-reduced-motion` reset in the
+ * base layer above flattens every one of them without a per-component opt-in.
+ */
+@layer components {
+  .mc-pulse {
+    animation: mc-pulse 1.8s var(--mc-ease) infinite;
+  }
+
+  .mc-spin-slow {
+    display: inline-block;
+    animation: mc-spin 2.4s linear infinite;
+  }
+
+  .mc-shimmer {
+    animation: mc-shimmer 1.4s var(--mc-ease) infinite;
+  }
+}
+
+@keyframes mc-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes mc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes mc-shimmer {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
   }
 }

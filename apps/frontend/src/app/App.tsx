@@ -1,12 +1,20 @@
-import { AppShell } from './shell/AppShell.js';
+import { useState } from 'react';
+import { RouterProvider } from 'react-router';
+import { Providers } from './providers.js';
+import { createRouter } from './router.js';
 
 /**
- * Application root.
+ * Application root: providers, then the router.
  *
- * SCAFFOLD STATE: no router yet. TDS 05 §2.2 specifies React Router v7 in library (data)
- * mode with lazy route modules as the code-split points, and TDS 05 §3 specifies TanStack
- * Query + Zustand for state; both land with WS4.
+ * The router is created once and held in state rather than at module scope, so a test can
+ * mount `<App />` twice without two mounts sharing history state.
  */
 export function App() {
-  return <AppShell />;
+  const [router] = useState(() => createRouter());
+
+  return (
+    <Providers>
+      <RouterProvider router={router} />
+    </Providers>
+  );
 }

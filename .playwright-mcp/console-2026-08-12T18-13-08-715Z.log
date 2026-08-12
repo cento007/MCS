@@ -1,0 +1,55 @@
+[      91ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[     120ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[     138ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
+[     150ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:5173/api/v1/auth/me:0
+[     163ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:5173/api/v1/auth/me:0
+[  447820ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[  447832ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 1689408ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 1689423ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 1708245ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 1708256ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 1906005ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 1906014ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3385084ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3385096ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3448810ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3448822ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3475081ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3475088ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3507472ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3507482ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3525840ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3525857ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3537287ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3537294ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3553877ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3553886ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3570839ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3570851ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3589066ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3589073ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3608720ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3608728ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 3646907ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=91ca9c8d:20102
+[ 3646915ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=91ca9c8d:651
+[ 4015168ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4015200ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4471813ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4471833ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4484769ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4484776ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4523823ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4523832ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4690306ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4690319ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4706543ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4706551ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4742969ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4742977ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 4763739ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 4763750ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651
+[ 5743640ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5173/@vite/client:963
+[ 5743643ms] [ERROR] WebSocket connection to 'ws://localhost:5173/' failed: Error in connection establishment: net::ERR_NETWORK_IO_SUSPENDED @ http://localhost:5173/@vite/client:1034
+[ 9937921ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=64073e64:20102
+[ 9937932ms] [WARNING] No `HydrateFallback` element provided to render during initial hydration @ http://localhost:5173/node_modules/.vite/deps/react-router.js?v=64073e64:651

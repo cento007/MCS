@@ -54,6 +54,13 @@ export interface BuildAppOptions {
   /** `integrations.claudeCode.maxConcurrentSessions` (§7.2), read from settings by `main.ts`. */
   readonly maxConcurrentSessions?: number | undefined;
   /**
+   * How long to wait for the runtime to confirm spawn before timing out (§6.3). Tests use a
+   * short timeout (100ms) to avoid waiting 30s when testing the timeout itself.
+   */
+  readonly spawnTimeoutMs?: number | undefined;
+  /** How long to wait when disposing a controller. Tests use short timeouts. */
+  readonly disposeTimeoutMs?: number | undefined;
+  /**
    * `Secure` on the session cookie. Defaults to "derive from the request scheme", which under
    * sanctioned deviation D10 (loopback HTTP, no TLS in V1) means off in a dev/loopback
    * deployment and on the moment the same server is fronted by TLS.
@@ -151,6 +158,10 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     ...(options.agentRuntime === undefined ? {} : { agentRuntime: options.agentRuntime }),
     maxConcurrentSessions: options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS,
+    ...(options.spawnTimeoutMs === undefined ? {} : { spawnTimeoutMs: options.spawnTimeoutMs }),
+    ...(options.disposeTimeoutMs === undefined
+      ? {}
+      : { disposeTimeoutMs: options.disposeTimeoutMs }),
     onError: (error, sessionId) => {
       app.log.error({ err: error, sessionId }, 'session runtime error');
     },

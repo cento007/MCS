@@ -135,6 +135,10 @@ export function createTestApp(
     ...(options.maxConcurrentSessions === undefined
       ? {}
       : { maxConcurrentSessions: options.maxConcurrentSessions }),
+    ...(options.spawnTimeoutMs === undefined ? {} : { spawnTimeoutMs: options.spawnTimeoutMs }),
+    ...(options.disposeTimeoutMs === undefined
+      ? {}
+      : { disposeTimeoutMs: options.disposeTimeoutMs }),
     ...(options.cookieSecure === undefined ? {} : { cookieSecure: options.cookieSecure }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.loginRateLimiter === undefined

@@ -218,6 +218,30 @@ Backpressure is two-tier: drop ephemeral deltas first (self-healing — the turn
 - **Close code `4002` (slow consumer)** adopted into WS2 §14.6 with its rationale, plus the malformed-frame vs refused-`ack` distinction (answering a refused `subscribe` with an `error` frame would leave the client's pending-request map waiting forever), Origin enforcement across both credential types, and the note that Phase 3/4 channels are subscribable and silent.
 - **Resume from `failed` — a genuine cross-document contradiction.** WS2 §6.3 allowed resume only from `completed`/`archived`, while WS1 §4.4 marks restart-orphaned sessions `failed(backend_restart)` and offers one-click resume as *the* recovery path, and both WS4 §6.6 and WS5 §5.5 render `[Resume as new session]` on the `failed` composer. WS2 was the outlier; corrected, and the implementation updated with tests. **F7 is untouched** — resume-as-new does not transition the source Session, so which states permit it is an API policy question, not a state-machine one. Refusing `failed` would have made the restart-recovery story unimplementable, which is exactly how the contradiction surfaced.
 
+## 2026-08-12 — Frontend: shell, auth, and the sessions screens
+
+Mission Control is now operable in a browser. **750 unit tests** (still DB-free), **253 integration tests**, 315 files lint-clean.
+
+**Foundation:** routing, API client with F5.4 envelope mapping, TanStack Query + three Zustand stores, the `SocketClient` (refcounted channels, equal-jitter backoff, dedupe, app-level ping/pong, and reconnect → **resubscribe-then-invalidate**, with the ordering asserted because the reverse leaves a window where the refetch completed but the subscription had not), login with deep-link preservation, and the shell with ConnectionChip and OpenSessionsStrip.
+
+**The dead-socket rule is implemented once, centrally:** `socketStore` records `frozenAt` on the falling edge of `open` and `useLiveClock` stops advancing, so every duration freezes together and renders `~00:42:10`. Freezing at the leaf would guarantee some future component forgets. Finished durations never freeze — a completed session's duration is server truth about the past.
+
+**Sessions screens:** list with F7 filters and cursor pagination; the live view with a virtualized transcript, streaming buffer rendered *outside* the measured set (it resizes every frame), composer × F7 state matrix, `[Stop]`, tool-call blocks, the four-tab right panel, and the launch modal with its working-tree disclosure. Two anti-blanking mechanisms were added that the contracts did not call for but the running app demanded: a settling hold so `commit` does not blank the turn for a round trip, and pending-prompt retirement only after the refetch lands, so the operator's own words never vanish.
+
+Running it caught three defects unit tests did not: `Ctrl+K` crashed the shell because the palette's query key was structurally identical to the list's but held a different shape; the palette never merged its background fetch (imperative cache read inside a `useMemo`); and the detail view did not fill the viewport. All fixed with regression cover.
+
+### Two backend bugs, both verified by hand rather than by report
+
+**`POST /sessions/{id}/start` hung forever.** Root cause: when the runtime is unreachable the SDK iterator never yields `session_started`, and `ready()` awaited it with no bound — while interrupt and dispose already had timeouts. Now bounded (30 s default), failing the session with `spawn_error` and returning `503 RUNTIME_UNAVAILABLE`. **Verified live: HTTP 503 after 32 s with a proper envelope.** The slot leak I was worried about is covered twice — `launch()` releases in a `catch` on any throw, and a state-change listener releases whenever a session leaves `running`; `#release` is idempotent so they cannot double-release.
+
+**Framework rejections were reported as server faults.** Found while reproducing the above: `POST …/start` with an empty JSON body answered `500 INTERNAL` while the underlying Fastify error carried `statusCode: 400`. The handler special-cased oversized bodies and schema validation, but every *other* 4xx framework rejection — empty body, malformed JSON, unsupported media type — fell through to the unclassified branch. That tells a caller "the server broke" about a request only they can fix, and it trips retry and alerting logic that should stay quiet. Generalised: any framework error carrying a 4xx now answers with that status and an F5.4 registry code, passing through the framework's message (which describes the malformed request and leaks no internals). 5xx and unknown still disclose nothing beyond the requestId. Verified live and covered by `http/error-handler.test.ts`.
+
+Also fixed: the documented `pnpm auth:create-user --username <name>` failed with `Unknown argument: --` because pnpm forwards a bare separator into argv. Fixed in the parser rather than the script, so it works however it is invoked.
+
+### Known gaps (specified, not yet built)
+
+`/projects`, `/repositories`, `/services/health`, `/spend`, `/schedule`, `/notifications` all 404. The frontend deliberately ships **without** the spend chip and notification bell rather than rendering zeros from a 404 — and the launch modal cannot compose a session until `/projects` exists. Also unsourced: the working-tree disclosure needs the repository's current branch and dirty-file count, which no endpoint exposes (§5.4.1 mandates showing them); the UI treats "cannot verify" as a branch change and requires the acknowledgement.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

@@ -115,6 +115,8 @@ beforeEach(async () => {
     agentRuntime: agent,
     cookieSecure: false,
     maxConcurrentSessions: 1,
+    spawnTimeoutMs: 100,
+    disposeTimeoutMs: 100,
   });
   app = built.app;
   // The slot-release listener and the launch consumer (`main.ts` does this at boot). Without it
@@ -170,6 +172,27 @@ describe('launch (F7 "system confirms spawn")', () => {
 
   it('fails the Session with 503 when the runtime cannot spawn (§6.3)', async () => {
     agent.script(spawnFailure);
+    const created = await request('POST', '/api/v1/sessions', { projectId, workingDirectory });
+    const id = created.json<{ data: { id: string } }>().data.id;
+
+    const response = await request('POST', `/api/v1/sessions/${id}/start`);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json<{ error: { code: string } }>().error.code).toBe('RUNTIME_UNAVAILABLE');
+    const row = await sessionRow(id);
+    expect(row?.state).toBe('failed');
+    expect(row?.failureReason).toBe('spawn_error');
+  });
+
+  it('times out and returns 503 when the runtime is slow to start', async () => {
+    // Reproduce slow spawn: a script that delays before emitting session_started. The spawn
+    // timeout (100ms in this test) should fire first, returning 503 without hanging.
+    const { started } = await import('../../../test/support/runtime-scripts.js');
+    const slowStart: readonly ScriptStep[] = [
+      { emit: started(), delayMs: 500 }, // Delay session_started by 500ms (> 100ms timeout)
+      ...happySingleTurn.slice(1),
+    ];
+    agent.script(slowStart);
     const created = await request('POST', '/api/v1/sessions', { projectId, workingDirectory });
     const id = created.json<{ data: { id: string } }>().data.id;
 

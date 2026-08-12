@@ -12,16 +12,25 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-virtual": "3.13.12",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-router": "7.18.2",
+    "zustand": "5.0.14"
   },
   "devDependencies": {
     "@mc/shared": "workspace:*",
     "@tailwindcss/vite": "4.3.3",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.4",
     "@types/node": "22.20.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "5.2.0",
+    "jsdom": "30.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "6.4.3",
