@@ -1,0 +1,2 @@
+ALTER TABLE "audit_log_entries" ALTER COLUMN "request_id" SET DATA TYPE text;--> statement-breakpoint
+ALTER TABLE "audit_log_entries" ADD CONSTRAINT "ck_audit_log_entries_request_id" CHECK ("audit_log_entries"."request_id" IS NULL OR length("audit_log_entries"."request_id") BETWEEN 1 AND 128);

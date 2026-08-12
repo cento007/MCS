@@ -1,6 +1,7 @@
 import process from 'node:process';
 import { createLoggerFromConfig, createShutdownController, loadConfigOrExit } from '@mc/shared';
 import { buildApp } from './app.js';
+import { createDatabase } from './db/index.js';
 
 /**
  * Backend process entry (TDS 02 §2).
@@ -16,9 +17,15 @@ async function main(): Promise<void> {
   const config = loadConfigOrExit();
   const log = createLoggerFromConfig('backend', config);
 
-  const app = buildApp({ config });
+  const database = createDatabase({ connectionString: config.databaseUrl });
+  const app = buildApp({ config, db: database.db });
   const shutdown = createShutdownController({ logger: log });
 
+  // Hooks run in REVERSE registration order, so the pool is registered first and drained
+  // last — nothing can still be querying it once the HTTP server has closed.
+  shutdown.onShutdown('database-pool', async () => {
+    await database.close();
+  });
   shutdown.onShutdown('http-server', async () => {
     await app.close();
   });

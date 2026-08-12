@@ -166,6 +166,26 @@ Other deviations recorded by the agent: the `search_tsv` columns were folded int
 
 All gates green after the fix: typecheck across 5 packages, Biome clean on 97 files, 57 tests passing, and `db:generate` reports no drift.
 
+## 2026-08-12 — Phase 1: authentication + integration harness (Task #16)
+
+Login/logout/me, password change, API token CRUD, a global authenticated-by-default guard, and audit logging — implemented to the WS2 contract. Orchestrator re-ran every gate: **100 unit tests passing with no database present** (that property is now *enforced* rather than assumed — the health unit test builds the app with a `Proxy` that throws on any DB property access), **59 integration tests**, typecheck across 5 packages, Biome clean on 124 files.
+
+**argon2 dependency chosen for deployability, not popularity.** `@node-rs/argon2` ships NAPI prebuilds for Windows and both Linux libc variants plus a WASM fallback — no `node-gyp`, no build script, nothing that works on the dev box and fails on the server. The obvious `argon2` package compiles from source and was rejected for exactly that reason. OWASP argon2id parameters, stored per-row in the PHC string so they can be raised later without a migration.
+
+**The `ingest` scope is a real authorization decision.** Tested: an `ingest` token is rejected with 403 on full-access routes and accepted only on the ingest policy route; a cookie is rejected *on* the ingest route. The constant is exported so the future hook endpoint declares the same decision rather than re-deriving it — which is what stops the hook profile installed on a dev machine from quietly holding full API access.
+
+**Integration tier stood up** (WS6 §3): a migrated `mc_test_template` rebuilt only when a content hash of the migration set changes, per-file `CREATE DATABASE ... TEMPLATE` clones, orphan sweep, dropped `WITH (FORCE)`. Verified behaviourally rather than by inspection — a planted orphan database was swept, a corrupted template hash triggered a re-migration, and three files ran in parallel on separate databases.
+
+### Contract defect found and fixed: `audit_log_entries.request_id`
+
+The column was `uuid`, but F5.4 deliberately honours an inbound `X-Request-Id` so an external caller can supply its own correlation id — and those are frequently not UUIDs. That left only two options, both wrong: fail the audit insert, or store `NULL`. The implementation had chosen `NULL`, which loses the correlation in **exactly the externally-originated case that most needs it** — a Claude Code hook POST. Widened to `text` bounded 1–128 (matching the request-id generator's own cap), in the document, the schema and the writer; migration `0003` applied and the live column verified as `text`. The test that asserted the old behaviour now asserts the correlation survives, plus a new case clamping an over-long id rather than failing the insert.
+
+Also corrected: WS3's audit-action comment exemplified `auth.login_succeeded` while WS2 — which owns the registry — specifies `auth.login`. The schema comment now points at WS2 rather than offering a competing example.
+
+### First-run bootstrap — the TDS was silent, and the gap is recorded
+
+No document said where the first account's credentials come from, and there is no answer a server can invent: auto-seeding needs a default password, and omitting it leaves a migrated database with no way in, since login is the only public route. Implemented as an explicit operator command, `pnpm auth:create-user`, with the gap flagged in a header comment. Password from `MC_BOOTSTRAP_PASSWORD` (tooling-only, so the F8.2 bootstrap set stays locked), then piped stdin, then a hidden TTY prompt — **never from argv**, which is rejected explicitly. Re-running reports `already_exists` and changes nothing; `--reset-password` is the deliberate lockout escape hatch. Runs under `pg_advisory_xact_lock`, so concurrent invocations create exactly one account.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

@@ -31,13 +31,27 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 
 # 2. Create the database and role (adjust to taste; run once).
 #    From an elevated shell with psql on PATH:
-#      psql -U postgres -c "CREATE ROLE mission_control LOGIN PASSWORD '...';"
+#      psql -U postgres -c "CREATE ROLE mission_control LOGIN PASSWORD '...' CREATEDB;"
 #      psql -U postgres -c "CREATE DATABASE mission_control OWNER mission_control;"
+#    CREATEDB is only needed to run the integration test tier (`pnpm test:int`), which
+#    creates and drops throwaway `mc_test_*` databases (TDS 07 §3.1).
 
 # 3. Apply migrations. Requires PostgreSQL running — the script checks first and tells you
 #    what is wrong rather than throwing a stack trace.
 pnpm db:migrate
+
+# 4. Create the single local account (F4.1). The database starts empty and
+#    POST /api/v1/auth/login is the only public route, so without this there is no way in.
+#    The password is read from stdin or MC_BOOTSTRAP_PASSWORD, never from argv.
+pnpm auth:create-user --username operator      # prompts, hidden
+#    Non-interactive equivalents:
+#      $env:MC_BOOTSTRAP_PASSWORD='…'; pnpm auth:create-user --username operator
+#      'my passphrase' | pnpm auth:create-user --username operator
 ```
+
+Re-running step 4 never overwrites the existing account — it reports it and exits nonzero.
+Locked out? `pnpm auth:create-user --username operator --reset-password` is the explicit
+escape hatch, and it must name the account that already exists.
 
 `MC_DATA_DIR` can be omitted in development: it defaults to `%LOCALAPPDATA%\MissionControl`
 and the `exports/`, `hooks/` and `tmp/` subtree is created on first start.
@@ -50,6 +64,7 @@ and the `exports/`, `hooks/` and `tmp/` subtree is created on first start.
 | `pnpm dev:workers` | Telegram + Sync workers (Phase 2 — not needed for Phase 1 work) |
 | `pnpm --filter @mc/backend dev` | One process, for focused work |
 | `pnpm typecheck` / `pnpm lint` / `pnpm test` | Quality gates; none of them need a database |
+| `pnpm test:int` | Integration tier — needs PostgreSQL and `TEST_DATABASE_URL` (TDS 07 §3.1) |
 | `pnpm build` | Builds shared, then the apps, then the SPA into `apps/frontend/dist` |
 
 The Vite dev server proxies `/api` to `127.0.0.1:8710` **with WebSocket upgrade proxying**,

@@ -169,7 +169,7 @@ erDiagram
         uuid entity_id
         jsonb before
         jsonb after
-        uuid request_id
+        text request_id
     }
 ```
 
@@ -604,17 +604,21 @@ Audit entries for secret writes record **that** the value changed (`action = 'se
 
 Append-only. `actor_id` is deliberately **not** an FK: it is polymorphic (`users.id` today, `agents.id` in Phase 4, `NULL` for `system`) and audit rows must survive actor deletion. `request_id` is the F5.4 `requestId` / `X-Request-Id`, correlating an audit row with API logs and the F6.2 `correlationId` chain.
 
+> **Corrected 2026-08-12 — `text`, not `uuid`.** This column was originally `uuid`, which silently defeated its own purpose. F5.4 accepts an inbound `X-Request-Id` so an external caller can supply its own correlation id, and such ids are frequently not UUIDs. With a `uuid` column the only options were to fail the audit insert or to store `NULL` — and `NULL` loses the correlation in precisely the case that most needs it, an externally-originated call such as a Claude Code hook POST. The column is now `text` with a 1–128 length bound matching the request-id generator's own cap. Ids we generate remain UUIDv7 strings; ids we are given are preserved as sent.
+
 ```sql
 CREATE TABLE audit_log_entries (
   id          uuid PRIMARY KEY,
   actor_type  text NOT NULL CHECK (actor_type IN ('user', 'agent', 'system')),
   actor_id    uuid,                          -- users.id / agents.id (Phase 4); NULL for system
-  action      text NOT NULL,                 -- '<domain>.<verb-past>', e.g. 'setting.updated', 'auth.login_succeeded'
+  action      text NOT NULL,                 -- '<domain>.<verb-past>', e.g. 'setting.updated', 'auth.login'
+                                             -- (WS2 §3.1 owns the action registry; this column stores it verbatim)
   entity_type text,                          -- F4 table name, e.g. 'settings', 'sessions'
   entity_id   uuid,
   before      jsonb,                         -- relevant field subset; NULL for creates
   after       jsonb,                         -- relevant field subset; NULL for deletes
-  request_id  uuid,                          -- F5.4 requestId correlation
+  request_id  text CHECK (request_id IS NULL OR length(request_id) BETWEEN 1 AND 128),
+                                             -- F5.4 requestId correlation; text, not uuid — see note
   ip_address  inet,
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()   -- convention only; rows are append-only

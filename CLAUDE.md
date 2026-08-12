@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-**Design phase — no application code exists yet.** The repository contains `Requirements.md` (PRD v2.1) for **Mission Control**, a self-hosted AI Engineering Operating System, plus the Technical Design Specification in `docs/tds/`.
+**Phase 1 in progress.** The Technical Design Specification (`docs/tds/`) is complete and approved; the monorepo, database schema and authentication are implemented and tested. `Requirements.md` (PRD v2.1) remains the product source of truth.
+
+Built so far: pnpm monorepo scaffold, the full database schema (23 tables, migrated), and authentication (local account with argon2id, DB-backed cookie sessions, hashed scoped API tokens, route guards, audit logging). Next in Phase 1: session tracking and the Claude Code wrapper, then GitHub integration, then the dashboard.
 
 Remote: https://github.com/cento007/MCS. Development work happens on the `DEV` branch; `main` is the stable branch.
 
@@ -32,7 +34,7 @@ Read `Requirements.md` in full before making design or implementation decisions 
 
 TypeScript throughout, in a pnpm monorepo: `apps/{backend,frontend,telegram-worker,sync-worker}` + `packages/shared` + `deploy/{systemd,windows}`.
 
-- **Backend:** Node.js 22 LTS + Fastify 5. **Frontend:** React 19 + Vite SPA + Tailwind 4 (no SSR; the Backend serves the built SPA in production).
+- **Backend:** Node.js (floor ≥22; production runs whichever release is active LTS at deploy time — F1.2) + Fastify 5. **Frontend:** React 19 + Vite SPA + Tailwind 4 (no SSR; the Backend serves the built SPA in production).
 - **Data:** PostgreSQL 16+ via Drizzle ORM + drizzle-kit over `pg`. IDs are app-generated UUIDv7; tables/columns plural snake_case; API JSON camelCase; all timestamps `timestamptz` UTC.
 - **Realtime:** a single multiplexed WebSocket at `/api/v1/ws` (SSE was rejected — live session chat is bidirectional).
 - **Claude Code runtime:** the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) embedded in the Backend for managed sessions; observed sessions ingest via Claude Code hooks posting to `POST /api/v1/hook-events` plus version-tolerant transcript JSONL tailing.
@@ -63,6 +65,8 @@ These require a running PostgreSQL and fail with an actionable message if it is 
 | `pnpm db:generate` | drizzle-kit: schema → SQL migrations in `packages/shared/drizzle/` |
 | `pnpm db:migrate` | Apply pending migrations |
 | `pnpm db:studio` | drizzle-kit studio |
+| `pnpm test:int` | Vitest integration tier (`*.int.test.ts`) against per-worker template-clone databases; also needs `TEST_DATABASE_URL` and a role with CREATEDB (TDS 07 §3.1) |
+| `pnpm auth:create-user --username <name>` | Create the single local account on a fresh install; password from stdin or `MC_BOOTSTRAP_PASSWORD`, never argv. Never overwrites an existing account — `--reset-password` is the explicit escape hatch |
 
 First run: copy `.env.example` → `.env` at the repo root and generate `MC_ENCRYPTION_KEY` with
 `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`.

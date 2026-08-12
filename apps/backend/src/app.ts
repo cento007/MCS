@@ -1,5 +1,6 @@
-import type { AppConfig, LogLevel } from '@mc/shared';
+import type { AppConfig, Db, LogLevel } from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { registerHealthRoutes } from './health/index.js';
 import { generateRequestId, registerHttpConventions } from './http/index.js';
 
@@ -7,18 +8,36 @@ import { generateRequestId, registerHttpConventions } from './http/index.js';
  * Builds the Fastify 5 application without listening (TDS 02 §2).
  *
  * Exported separately from `main.ts` so integration tests can drive it through
- * `app.inject()` with no socket and no database (TDS 07 §2.1).
+ * `app.inject()` with no socket (TDS 07 §2.1). A `db` handle is required because
+ * authentication is DB-backed (F5.5) and the guard covers every route: an app built without
+ * one could serve nothing.
  *
- * SCAFFOLD STATE: request-id, the F5.4 error envelope and `GET /api/v1/health` are wired.
- * The database pool, queue, auth, WebSocket hub, domain routes and static SPA serving are
+ * SCAFFOLD STATE: request-id, the F5.4 error envelope, `GET /api/v1/health` and `auth/` are
+ * wired. The queue, WebSocket hub, remaining domain routes and static SPA serving are
  * registered here by their owning workstreams.
  */
 export interface BuildAppOptions {
   readonly config?: AppConfig;
   readonly logLevel?: LogLevel;
+  readonly db: Db;
+  /**
+   * `Secure` on the session cookie. Defaults to "derive from the request scheme", which under
+   * sanctioned deviation D10 (loopback HTTP, no TLS in V1) means off in a dev/loopback
+   * deployment and on the moment the same server is fronted by TLS.
+   */
+  readonly cookieSecure?: boolean | undefined;
+  /** Injectable clock for the auth layer — expiry tests move time instead of sleeping. */
+  readonly now?: (() => Date) | undefined;
+  readonly loginRateLimiter?: FixedWindowRateLimiter | undefined;
 }
 
-export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
+export interface BuiltApp {
+  readonly app: FastifyInstance;
+  readonly auth: AuthService;
+}
+
+/** Build the app and return it together with the services tests need to reach into. */
+export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   const level = options.logLevel ?? options.config?.logLevel ?? 'info';
 
   const app = Fastify({
@@ -42,7 +61,21 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
 
   registerHttpConventions(app);
+
+  // Registered before any route so the guard's onRequest hook covers all of them, including
+  // the ones later workstreams add (TDS 04 §1.4: authenticated by default).
+  const auth = registerAuth(app, {
+    db: options.db,
+    cookieSecure: options.cookieSecure,
+    now: options.now,
+    loginRateLimiter: options.loginRateLimiter,
+  });
+
   registerHealthRoutes(app);
 
-  return app;
+  return { app, auth };
+}
+
+export function buildApp(options: BuildAppOptions): FastifyInstance {
+  return buildAppWithServices(options).app;
 }

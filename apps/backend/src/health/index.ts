@@ -1,5 +1,6 @@
 import process from 'node:process';
 import type { FastifyInstance } from 'fastify';
+import { PUBLIC_ROUTE } from '../auth/guard.js';
 import { dataEnvelope } from '../http/errors.js';
 
 /**
@@ -20,7 +21,9 @@ import { dataEnvelope } from '../http/errors.js';
  * NOTE FOR THE CONTRACT OWNER (WS2): `/api/v1/health` does not appear in the TDS 04 §2
  * resource catalog, and §1.4 says every route except `POST /auth/login` requires
  * authentication. This unauthenticated liveness probe is therefore a scaffold addition
- * that WS2 should either adopt into the catalog or replace.
+ * that WS2 should either adopt into the catalog or replace. It is the ONLY route besides
+ * `POST /api/v1/auth/login` that declares `PUBLIC_ROUTE` — a liveness probe that needs a
+ * credential cannot answer the question it exists to answer.
  */
 
 /** Set by the build; `0.0.0` in a dev console. */
@@ -45,5 +48,7 @@ export function buildHealthReport(now: Date = new Date()): HealthReport {
 }
 
 export function registerHealthRoutes(app: FastifyInstance): void {
-  app.get('/api/v1/health', async () => dataEnvelope(buildHealthReport()));
+  app.get('/api/v1/health', { config: { auth: PUBLIC_ROUTE } }, async () =>
+    dataEnvelope(buildHealthReport()),
+  );
 }

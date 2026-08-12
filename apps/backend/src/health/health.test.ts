@@ -1,3 +1,4 @@
+import type { Db } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.js';
@@ -6,12 +7,25 @@ import { buildApp } from '../app.js';
  * These tests run with NO database and NO listening socket — `app.inject()` only
  * (TDS 07 §2.1). That is the point of `GET /api/v1/health`: it proves the process serves
  * HTTP without depending on PostgreSQL.
+ *
+ * The database handle is a proxy that throws on ANY property access, so "no database" is
+ * enforced rather than asserted: if the liveness probe or the 404 path ever grows a query,
+ * these tests fail loudly instead of quietly requiring PostgreSQL to run `pnpm test`.
  */
+const NO_DATABASE = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('unit tests must not touch the database');
+    },
+  },
+) as Db;
+
 describe('GET /api/v1/health', () => {
   let app: FastifyInstance;
 
   beforeEach(() => {
-    app = buildApp({ logLevel: 'silent' });
+    app = buildApp({ logLevel: 'silent', db: NO_DATABASE });
   });
 
   afterEach(async () => {
@@ -64,7 +78,7 @@ describe('F5.4 error envelope', () => {
   let app: FastifyInstance;
 
   beforeEach(() => {
-    app = buildApp({ logLevel: 'silent' });
+    app = buildApp({ logLevel: 'silent', db: NO_DATABASE });
   });
 
   afterEach(async () => {
