@@ -146,6 +146,26 @@ Six workspace projects: `apps/{backend,frontend,telegram-worker,sync-worker}`, `
 
 `CLAUDE.md` now carries the real command table, replacing the "no build/lint/test commands yet" placeholder.
 
+## 2026-08-12 — Phase 1 begins: database schema live (Task #15)
+
+WS3's DDL authored as Drizzle definitions in `packages/shared/src/db/schema/` (12 files by domain), migrated and **verified against the live database by introspection, not by assertion**. Orchestrator independently confirmed the counts: **23 tables, 49 named indexes, 60 CHECK constraints, 18 foreign keys, 5 generated `tsvector` columns** — matching the document exactly, nothing missing, nothing extra. Index shapes in the DB: 66 btree, 5 GIN, 1 BRIN; 10 partial, 2 expression, 1 covering.
+
+Only **two** items needed hand-written SQL (`0001_include_and_fillfactor.sql`) — `INCLUDE (total_cost_usd)` on the spend index, which Drizzle's index builder cannot express, and `fillfactor = 90` as an `ALTER TABLE ... SET`. Everything the brief flagged as risky turned out expressible declaratively, including the table-level lineage invariant, all 10 partial indexes, the stored generated `tsvector` columns, the partial GIN, and the BRIN. Raw `sql` was used for descending index columns rather than Drizzle's `.desc()`, which would have emitted `DESC NULLS LAST` and diverged from the document.
+
+The F7 vocabulary is **imported rather than restated** — the state CHECKs render from `SESSION_STATES`, and `ix_sessions_active`'s predicate is derived by subtracting the terminal states, so the index cannot drift from the state machine.
+
+### A real defect found and fixed
+
+`ck_api_tokens_scopes` did not do what it claimed. The guard read `array_length(scopes, 1) >= 1` with the stated intent "never an empty (= powerless) token" — but `array_length('{}'::text[], 1)` evaluates to **NULL**, not 0, and a CHECK constraint **passes** when its expression is NULL. An empty-scope token inserted successfully; confirmed against the live database before fixing. `cardinality('{}')` returns 0 and fails the comparison, so `cardinality` is the correct function. Fixed in the schema and the document (migration `0002`), and re-verified: the empty array is now rejected while a valid `['ingest']` scope still inserts.
+
+### A second finding, documented rather than discovered later
+
+WS3 §3.11 said "every ingest write is `ON CONFLICT DO NOTHING`" against the dedupe key — but that index is **partial**, so the conflict target must repeat the predicate. Omitting it does not silently skip deduplication; PostgreSQL raises *"no unique or exclusion constraint matching the ON CONFLICT specification"* and the write fails outright. The correct form is now written into the document, along with the same caveat for `ux_sync_runs_active`.
+
+Other deviations recorded by the agent: the `search_tsv` columns were folded into `CREATE TABLE` rather than following the document's separate additive-migration sequence (identical end state, zero rewrite cost on a greenfield database); the 57 inline unnamed CHECKs were given stable `ck_<table>_<subject>` names, which the document's own "widened by CHECK alter" evolution story requires; and `numeric(12,6)` maps to TypeScript `string` in Drizzle, so the serializer must convert explicitly for WS2's `numeric → JSON number` mapping.
+
+All gates green after the fix: typecheck across 5 packages, Biome clean on 97 files, 57 tests passing, and `db:generate` reports no drift.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

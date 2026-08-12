@@ -238,7 +238,7 @@ CREATE TABLE api_tokens (
   created_at   timestamptz NOT NULL DEFAULT now(),
   updated_at   timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_api_tokens_scopes CHECK (
-    array_length(scopes, 1) >= 1                       -- never an empty (= powerless) token
+    cardinality(scopes) >= 1                           -- never an empty (= powerless) token
     AND scopes <@ ARRAY['full', 'ingest']::text[]      -- closed value set; widened by CHECK alter
     AND array_position(scopes, NULL::text) IS NULL     -- no NULL elements
   )
@@ -247,6 +247,8 @@ CREATE TABLE api_tokens (
 CREATE UNIQUE INDEX ux_api_tokens_token_hash ON api_tokens (token_hash);
 CREATE INDEX ix_api_tokens_user_id ON api_tokens (user_id);
 ```
+
+> **Corrected 2026-08-12.** The emptiness guard originally read `array_length(scopes, 1) >= 1`, which does **not** do what it says: `array_length('{}'::text[], 1)` evaluates to `NULL` rather than `0`, a CHECK constraint passes when its expression is `NULL`, and an empty-scope token therefore inserted successfully — verified against the live database before the fix. `cardinality('{}')` returns `0` and fails the comparison, so `cardinality` is the correct function here. The containment and NULL-element clauses were always sound.
 
 No index on `scopes`: authorization reads the row by `token_hash` first (unique index) and evaluates the scope in the app on the fetched row — the set is never a search predicate. The hook-ingest token (TDS 02 §6.1) is an ordinary row here with `scopes = ARRAY['ingest']`; that resolves the §9 open item about where its hash lives.
 
@@ -489,7 +491,7 @@ Roles per F4.1: `user` / `assistant` / `system` / `tool`.
 
 **Ordering — decision:** an application-assigned, per-session monotonic `ordinal bigint` with `UNIQUE (session_id, ordinal)`. Each Session has exactly **one writer** at any moment — the Backend session manager owns a managed session's stream, and the observation ingester (hooks + tailer) is serialized per session in WS1's design — so the writer can assign `last_ordinal + 1` without cross-process coordination. Gaps are permitted (failed turns); order is what matters. *(Rejected: ordering by `created_at` — hook posts and transcript tailing can deliver the same burst with identical or out-of-order timestamps. Rejected: global sequence — pointless contention and no per-session semantics. Rejected: ordering by UUIDv7 PK — encodes ingest time, not conversation order, and dual-channel observation can ingest out of order.)*
 
-**Deduplication — one key, pinned (WS7 N11).** Observed sessions ingest through two channels (hooks push + transcript tailing, F1.5) that will see the same content, and hook POSTs may be retried. **`(session_id, runtime_message_id)` is the single ingest idempotency key**, enforced by the partial unique index below; every ingest write is `ON CONFLICT DO NOTHING` against it. WS2 §6.8's `(runtimeSessionId, hookEventName, occurredAt)` triple is *not* a second key — it is the API-level description of the same rule, and it is rejected as the storage key because (a) `occurredAt` is optional there, so the key can be undefined exactly when a retry needs it, and (b) it dedupes hooks against hooks only, never hooks against the transcript, which is the duplicate that actually occurs. Concretely:
+**Deduplication — one key, pinned (WS7 N11).** Observed sessions ingest through two channels (hooks push + transcript tailing, F1.5) that will see the same content, and hook POSTs may be retried. **`(session_id, runtime_message_id)` is the single ingest idempotency key**, enforced by the partial unique index below; every ingest write is `ON CONFLICT DO NOTHING` against it. **The index is partial, so the conflict target must repeat its predicate** — `ON CONFLICT (session_id, runtime_message_id) WHERE runtime_message_id IS NOT NULL DO NOTHING`. Omitting the `WHERE` clause does not silently skip deduplication; PostgreSQL raises *"there is no unique or exclusion constraint matching the ON CONFLICT specification"* and the write fails outright. The same applies to any upsert targeting `ux_sync_runs_active` (§4.5). WS2 §6.8's `(runtimeSessionId, hookEventName, occurredAt)` triple is *not* a second key — it is the API-level description of the same rule, and it is rejected as the storage key because (a) `occurredAt` is optional there, so the key can be undefined exactly when a retry needs it, and (b) it dedupes hooks against hooks only, never hooks against the transcript, which is the duplicate that actually occurs. Concretely:
 
 - `runtimeSessionId` resolves to `session_id` via `ux_sessions_runtime_session_id` (§3.9) before any message is written, so the key is stated in our ID space, not the runtime's.
 - When the runtime supplies a message/event UUID (transcript line `uuid`, and hook payloads that echo it), that value **is** `runtime_message_id` — both channels therefore converge on the same row.

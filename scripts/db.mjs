@@ -10,7 +10,11 @@
  * shell, no `NODE_ENV=x cmd` prefixes, no bash-isms. Behaves identically on Windows 11 and
  * Ubuntu.
  *
- * Usage: node scripts/db.mjs <generate|migrate|push|studio|check>
+ * Usage: node scripts/db.mjs <generate|migrate|push|studio|check> [drizzle-kit flags...]
+ *
+ * Extra arguments are forwarded verbatim, which is what makes hand-written SQL reachable
+ * through this entry point rather than around it (TDS 03 §8):
+ *   node scripts/db.mjs generate --custom --name=include_and_fillfactor
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -159,4 +163,4 @@ if (NEEDS_DATABASE.has(command)) {
 }
 
 // drizzle.config.ts lives in packages/shared (schema source + migration output, TDS 03 §8).
-runDrizzleKit([command, '--config', 'drizzle.config.ts']);
+runDrizzleKit([command, '--config', 'drizzle.config.ts', ...process.argv.slice(3)]);

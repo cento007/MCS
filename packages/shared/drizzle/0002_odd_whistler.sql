@@ -1,0 +1,2 @@
+ALTER TABLE "api_tokens" DROP CONSTRAINT "ck_api_tokens_scopes";--> statement-breakpoint
+ALTER TABLE "api_tokens" ADD CONSTRAINT "ck_api_tokens_scopes" CHECK (cardinality("api_tokens"."scopes") >= 1 AND "api_tokens"."scopes" <@ ARRAY['full', 'ingest']::text[] AND array_position("api_tokens"."scopes", NULL::text) IS NULL);
