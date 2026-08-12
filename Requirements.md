@@ -1,6 +1,6 @@
 # Mission Control — Product Requirements Document (PRD)
 
-- **Document Version:** 2.0
+- **Document Version:** 2.1
 - **Product Type:** Self-Hosted AI Engineering Operating System
 - **Target Platform:** Ubuntu Home Server (production); Windows 11 (local development)
 - **Primary Runtime:** Claude Code CLI
@@ -139,6 +139,33 @@ Current AI-assisted development suffers from:
 - **Manual** — full user control
 - **Assisted** — system assists with PR creation, descriptions, and review summaries
 - **Future** — automated merges
+
+### 4.4 Settings Management
+
+**Objective:** A single Settings page providing every configuration item required for the product to operate. No integration should require manual database edits or config-file changes to enable (bootstrap settings excepted, see below).
+
+**Settings Categories:**
+
+1. **General** — instance name, timezone, date/time format, theme (dark mode default), default landing page
+2. **Integrations** (secrets encrypted at rest, per Section 10):
+   - **GitHub:** personal access token, account/organizations, repository discovery root paths, sync/polling interval
+   - **Claude Code:** CLI executable path, default model, max concurrent sessions, cost budget alerts
+   - **Telegram:** bot token, chat ID, enable/disable
+   - **Obsidian:** vault path, sync mode (two-way / one-way / paused), sync interval, conflict policy
+   - **Qdrant:** host, port, API key, embedding model
+   - **Ollama (optional):** host, port, default model, enable/disable
+3. **Notifications** — per-event toggles (session complete, daily report + delivery time, alerts), quiet hours
+4. **Memory** — retention policy per memory tier, indexed sources (sessions, commits, ADRs, notes, PRs, docs)
+5. **Agents** — default runtime, default permission template
+6. **Security** — change password, session timeout, API token management, audit log retention
+7. **Services** — read-only health/status view of PostgreSQL, Redis (or dev substitute), Qdrant, Telegram Worker, Sync Worker
+
+**Behaviors:**
+
+- **Test Connection** action per integration (GitHub, Telegram, Obsidian path, Qdrant, Ollama) with clear success/failure feedback
+- Secrets are write-only in the UI (masked after save)
+- Setting changes are recorded in the audit log
+- Settings are stored in the database — except **bootstrap settings** (PostgreSQL connection, listen port, encryption key), which must live in an environment/config file since they are required before the database is reachable
 
 ---
 
@@ -297,6 +324,10 @@ Semantic search interface.
 ### 8.5 Agents
 
 Manage: global agents, project agents, teams, permissions.
+
+### 8.6 Settings
+
+Full product configuration per Section 4.4: general, integrations, notifications, memory, agents, security, service health.
 
 ---
 
