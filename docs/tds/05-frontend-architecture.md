@@ -400,23 +400,35 @@ WS4 defines the token **structure**; WS5 owns the **values**. Components consume
   --color-bg: …;            /* app background */
   --color-surface: …;       /* cards, panels */
   --color-surface-raised: …;/* popovers, modals */
-  --color-border: …;
+  --color-border: …;            /* card/panel edges — decorative */
+  --color-border-control: …;    /* input & control boundaries — SC 1.4.11, ≥3:1 */
   --color-text: …;
   --color-text-muted: …;
+  --color-text-disabled: …;     /* NOT a text colour — disabled/non-text marks only */
   --color-accent: …;        /* primary interactive */
   --color-danger / --color-warning / --color-success / --color-info: …;
 
   /* Session state colors — keyed verbatim to F7 states */
   --color-state-created / -running / -paused / -completed / -failed / -archived: …;
 
-  /* Structure tokens: type scale, spacing scale, radius, shadow — names fixed here,
-     values from WS5 (docs/tds/06-wireframes-and-design-system.md) */
+  /* Structure tokens: type scale, line-height, weight, tracking, spacing scale,
+     radius, shadow — names fixed here, values from WS5
+     (docs/tds/06-wireframes-and-design-system.md). Line-height, weight and tracking
+     are separate axes, not fused into the size token: the scale carries one size at
+     two line-heights (heading vs body at 18px), which a fused token cannot express. */
 }
 ```
 
+Two consumption rules that follow from WS5's palette and are enforceable in review:
+
+- **`--color-accent` marks operator intent and position** — actionable, selected, focused, current. It never reports a system condition. A component that would use the accent to say "healthy" or "under budget" uses a status token instead (WS5 §2.1.4).
+- **Control boundaries must come from `--color-border-control`, never from the field's own fill.** On a near-black canvas no darker fill can reach the 3:1 identification floor — black against the surface tops out at 1.29:1 — so the border is the only element that can carry it.
+
 The `StatusBadge` component maps a Session's state string (F7, lowercase) directly to `--color-state-<state>` — one source of truth for state color across list rows, the active-sessions strip, the Live Session tab bar, timeline, and dashboard widgets.
 
-**Fonts are self-hosted, always.** Both families in the token structure (`--font-ui`, `--font-mono`; families and stacks per WS5) ship as **`woff2` files inside `apps/frontend`** (`src/styles/fonts/`, imported via `@font-face` in `theme.css`, bundled and fingerprinted by Vite). No Google Fonts link, no CDN, no runtime font fetch of any kind. Mission Control is a self-hosted product that must render correctly on an offline LAN server with no egress — an external font request would produce invisible-then-shifting text (a CLS source) on exactly the machine the product targets. Each `@font-face` sets `font-display: swap` and the stack always names a system fallback, so first paint is never blocked; only the weights actually used are shipped (UI 400/500/600, mono 400/500), subset to Latin.
+**Fonts are self-hosted, always.** Both families in the token structure (`--font-ui`, `--font-mono`; families and stacks per WS5) ship as **`woff2` files inside `apps/frontend`** (`src/styles/fonts/`, imported via `@font-face` in `theme.css`, bundled and fingerprinted by Vite). No Google Fonts link, no CDN, no runtime font fetch of any kind. Mission Control is a self-hosted product that must render correctly on an offline LAN server with no egress — an external font request would produce invisible-then-shifting text (a CLS source) on exactly the machine the product targets. Each `@font-face` sets `font-display: swap` and the stack always names a system fallback, so first paint is never blocked; only the weights actually used are shipped (**UI 400/500, mono 400/500** — weight 600 is retired; the display tier gets its presence from size and negative tracking at weight 500, per WS5 §2.2), subset to Latin.
+
+**Circular is not licensable for this product.** WS5's type scale is derived from a brand reference (`Design.md`) that specifies Circular, which is a commercial Lineto face and cannot be self-hosted without purchase — and this product ships to an offline LAN server, so the CDN escape hatch does not exist. The scale, weights and negative tracking are reproduced on the self-hosted open face named in WS5 §2.2. Do not re-introduce Circular into the stack.
 
 ### 9.2 Responsive / mobile monitoring strategy
 

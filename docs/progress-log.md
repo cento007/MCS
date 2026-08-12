@@ -84,6 +84,30 @@ All 12 blocking findings verified closed **by reading the revised files, not the
 
 `docs/tds/00-overview.md` §9 — **WS7 architect-reviewer: APPROVED, 2026-08-11**, with four standing conditions: the remaining §7.2 leaf items land before the sprints that need them; A13 gets transcribed into WS1; any change to an arbitrated value set must land across all affected documents in one revision or it re-opens what this gate closed; and `pgboss` stays vendored while `MC_ENCRYPTION_KEY` stays backed up out-of-band.
 
+## 2026-08-12 — Brand direction supplied
+
+The user added `Design.md`, a Supabase-inspired token set (white canvas, near-black ink, single emerald CTA, Circular display type). Assessed against the approved TDS before adoption; three findings drove the decision:
+
+1. **The emerald is unusable as a foreground on white.** Computed: `#3ecf8e` on `#ffffff` = **2.00:1**, failing even the 3:1 non-text floor — which is why the source design only ever uses it as a button fill. On the dark canvas `#1c1c1c` it is **8.54:1**. The palette therefore performs *better* in the dark-first direction PRD §14 already mandates.
+2. **Circular is commercially licensed** (Lineto) and cannot be self-hosted, which WS5/WS4 require because the product runs on an offline LAN server; the fallback chain would silently degrade to Helvetica/Arial and lose the character that defines the look.
+3. **The component vocabulary is a landing page** — pricing cards, feature cards, hero nav, footer — not the dense operator console the TDS needs. Geometry transfers; components do not.
+
+Also flagged: an emerald brand accent collides with the F7 `running` state green `#3FB950`, so a running badge would read as a primary button.
+
+**User decisions:** dark-first with the emerald accent (adopting Design.md's neutral near-black canvas, radii, spacing and type metrics), and substitute an open-licensed humanist face rather than buying Circular.
+
+**COMPLETE — `06-wireframes-and-design-system.md` rev. 2.** Neutral near-black canvas (`#1c1c1c`/`#202020`/`#2b2b2b`) replaces the cool blue-blacks; emerald accent (`#3ecf8e`, 8.54:1 on canvas); Design.md's radii, spacing and type ladder adopted verbatim on self-hosted Inter. **74 contrast ratios recomputed from the shipped file with zero mismatches** — orchestrator independently verified three samples (`#ededed` 14.56:1, `running #4fa8bd` 6.225:1, `--mc-border-control` on raised 3.297:1); all matched exactly.
+
+Notable decisions beyond the brief:
+
+- **Accent/state collision resolved by rule, not just hue:** "`--mc-accent` marks operator intent and position — actionable, selected, focused, current. It never reports a system condition." `--mc-success` was moved off green too, on the reasoning that "emerald means CTA except when it means healthy" fails on the one screen operators watch constantly. Two accent-as-state usages were removed (the spend meter's under-threshold fill and the `live` connection dot).
+- **Colourblind distinctness verified by simulation, not assumption.** Viénot–Brettel–Mollon simulation scored by ΔE *in simulated space*. The agent's first pick — a rose-red `failed` chosen on the theory that added blue helps deuteranopes — was **disproved by its own test** (ΔE 7.4 against the emerald under deuteranopia, 5.4 against `archived` under protanopia); the warmer coral `#f47460` scores 23.5/23.7. Recorded in §2.1.6 so it is not "corrected" back.
+- **A genuine a11y finding the brief missed:** rev. 1 used one `--mc-border` for both card edges and input outlines with no stated floor. SC 1.4.11 needs 3:1 for control boundaries, and on a near-black canvas *no darker fill can ever reach it* (black on `#202020` tops out at 1.29:1), so the field's fill mathematically cannot carry identification — the border must. New `--mc-border-control` `#7a7a7a`. Only visible once the palette was rebased.
+- **Sharpest implementation trap, recorded:** `--mc-radius-sm` changed *meaning* (4px badges → 6px buttons/inputs). Every badge must repoint to `--mc-radius-xs` or it silently grows — and both names still compile.
+- **Rejected beyond the three flagged:** Design.md's six unused accent hues (admitting them contradicts the restraint principle taken from the same file), its hairlines as control boundaries (`#dfdfdf` on white is 1.33:1 — landing-page decoration), `ink-mute #707070` as body text (3.44:1), and `accent-yellow #ffdb13` for `paused` (12.49:1 — passes, but the loudest possible mark for the calmest state).
+
+**WS4 absorbed the changes** (`05-frontend-architecture.md` §9.1): added `--color-border-control` and `--color-text-disabled` to the token structure, split line-height/weight/tracking into separate axes (the scale carries 18px at two line-heights, which a fused token cannot express), retired weight 600, recorded the two consumption rules (accent never reports state; control boundaries never come from the fill), and recorded the Circular licensing rejection so it is not re-introduced. (Task #12 ✓)
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.
