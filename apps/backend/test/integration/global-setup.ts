@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
+import { PgBoss } from 'pg-boss';
 import type { TestProject } from 'vitest/node';
 import {
   databaseExists,
@@ -72,9 +73,16 @@ export default async function setup(project: TestProject): Promise<() => Promise
 }
 
 /**
- * Drop every `mc_test_*` database except the template. Run IDs in the names plus this sweep
- * are what make a crashed run self-healing (TDS 07 §3.1) — no developer ever has to know that
- * `mc_test_9f3e_w2_a1b2` exists.
+ * Drop every abandoned `mc_test_*` database except the template. Run IDs in the names plus this
+ * sweep are what make a crashed run self-healing (TDS 07 §3.1) — no developer ever has to know
+ * that `mc_test_9f3e_w2_a1b2` exists.
+ *
+ * **Databases with a live connection are left alone.** The startup sweep is deliberately
+ * un-scoped (it has to collect the droppings of runs whose ids it never knew), which without
+ * this filter makes it hostile to any *concurrent* run: `DROP DATABASE … WITH (FORCE)` would
+ * terminate that run's connections mid-test and it would fail with a bewildering
+ * "terminating connection due to administrator command". A crashed run leaves no connections
+ * behind, so the self-healing property is untouched; a live one is now simply not our business.
  */
 async function sweepOrphans(client: pg.Client, onlyRunId?: string): Promise<void> {
   const pattern =
@@ -83,7 +91,11 @@ async function sweepOrphans(client: pg.Client, onlyRunId?: string): Promise<void
       : `${TEST_DATABASE_PREFIX}${onlyRunId}\\_%`;
 
   const result = await client.query<{ datname: string }>(
-    'SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2',
+    `SELECT d.datname
+     FROM pg_database d
+     WHERE d.datname LIKE $1
+       AND d.datname <> $2
+       AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)`,
     [pattern, TEMPLATE_DATABASE],
   );
 
@@ -111,7 +123,8 @@ async function templateMatches(adminUrl: string, wantedHash: string): Promise<bo
 }
 
 async function migrateTemplate(adminUrl: string, hash: string): Promise<void> {
-  const pool = new pg.Pool({ connectionString: withDatabaseName(adminUrl, TEMPLATE_DATABASE) });
+  const connectionString = withDatabaseName(adminUrl, TEMPLATE_DATABASE);
+  const pool = new pg.Pool({ connectionString });
 
   try {
     await migrate(drizzle(pool), { migrationsFolder: migrationsFolder() });
@@ -120,5 +133,39 @@ async function migrateTemplate(adminUrl: string, hash: string): Promise<void> {
     await pool.query(`INSERT INTO ${HASH_TABLE} (hash) VALUES ($1)`, [hash]);
   } finally {
     await pool.end();
+  }
+
+  await installQueueSchema(connectionString);
+}
+
+/**
+ * Install pg-boss's vendored `pgboss` schema into the template (TDS 07 §3.1).
+ *
+ * Doing it once here rather than per test file is the whole point: pg-boss's own migration set
+ * is by far the most expensive part of provisioning, and a `CREATE DATABASE … TEMPLATE` copy
+ * carries it for free. Startup order matches production (TDS 03 §7.1) — app migrations first,
+ * then `start()`.
+ *
+ * Maintenance and cron are off: this instance exists to create a schema and then die.
+ */
+async function installQueueSchema(connectionString: string): Promise<void> {
+  const boss = new PgBoss({
+    connectionString,
+    schema: 'pgboss',
+    supervise: false,
+    schedule: false,
+    useListenNotify: false,
+    max: 2,
+  });
+
+  boss.on('error', () => {
+    /* a failure here surfaces from start(); the listener only stops Node making it fatal */
+  });
+
+  try {
+    await boss.start();
+  } finally {
+    // MUST close: `CREATE DATABASE … TEMPLATE` refuses while a session is connected.
+    await boss.stop({ graceful: false, close: true });
   }
 }

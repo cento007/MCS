@@ -350,7 +350,9 @@ Every transition below emits `session.state_changed` **plus** the specific event
 | Start | `POST /api/v1/sessions/{id}/start` | `created` | `200 { data: Session, meta: { launch: 'started' \| 'queued' } }` — `running` after spawn/attach confirm, or still `created` while queued (§6.2.1); spawn failure → session `failed` + `503 RUNTIME_UNAVAILABLE` |
 | Pause | `POST /api/v1/sessions/{id}/pause` | `running` | `200 { data: Session }` (`paused`) |
 | Resume (in-place) | `POST /api/v1/sessions/{id}/resume` | `paused` | `200 { data: Session, meta: { launch: 'started' \| 'queued' } }` — `running`, or still `paused` while queued (§6.2.1) |
-| Resume (new record) | `POST /api/v1/sessions/{id}/resume` | `completed`, `archived` | `201 { data: Session }` — **new** Session, state `created`, `resumedFromSessionId` set, runtime-native `resume` used at start (F1.5/F7). States never move backward |
+| Resume (new record) | `POST /api/v1/sessions/{id}/resume` | `completed`, `failed`, `archived` | `201 { data: Session }` — **new** Session, state `created`, `resumedFromSessionId` set, runtime-native `resume` used at start (F1.5/F7). States never move backward |
+
+> **`failed` added 2026-08-12 — cross-document contradiction resolved.** This row previously listed `completed` and `archived` only, which contradicted three other documents: WS1 §4.4 marks sessions orphaned by a backend restart as `failed(backend_restart)` and offers one-click resume as the recovery path; WS4 §6.6 and WS5 §5.5 both render `[Resume as new session]` on the `failed` composer. WS2 was the outlier and is corrected here. Nothing in **F7** changes: resume-as-new-record does not transition the source Session at all — it creates a new one linked by `resumedFromSessionId` — so which source states permit it is an API policy question, not a state-machine one. Refusing `failed` would have made the restart-recovery story unimplementable, which is precisely how the contradiction was found.
 | End | `POST /api/v1/sessions/{id}/end` | `running`, `paused` | `200 { data: Session }` (`completed`, trigger `user`) |
 | Archive | `POST /api/v1/sessions/{id}/archive` | `completed`, `failed` | `200 { data: Session }` (`archived`) |
 | Clone | `POST /api/v1/sessions/{id}/clone` | any state with a `runtimeSessionId` except `archived` | `201 { data: Session }` — new Session, state `created`, `clonedFromSessionId` set; SDK `forkSession: true` at start (F1.5). Body: `{ title?: string }` |
@@ -1225,6 +1227,12 @@ type ClientFrame =
 
 Max client frame size 256 KiB (prompt ceiling, matching §6.4). Malformed/oversized frames get an `error` frame; repeated violations close the socket with code `4000`.
 
+**`error` frame vs. refusing `ack` — the distinction is load-bearing.** A **malformed** frame (unparseable, wrong shape, oversized) gets an `error` frame and counts toward the violation budget. A **well-formed** frame refused on its merits — `subscribe` naming an unknown channel, a `session:{id}` the caller cannot read — gets `ack { ok: false, error }` and is **not** a violation. Both cases must be distinguishable by the client: an `ack` resolves the pending-request map keyed on the frame's `id`, which an `error` frame cannot do, so answering a refused `subscribe` with `error` would leave the client waiting forever. A semantic refusal is also not misconduct and must not accumulate toward a `4000` close.
+
+**Origin is checked on every credential type.** The §14.2 rule is unconditional: a bearer-authenticated upgrade carrying an `Origin` header is allowlisted exactly as a cookie-authenticated one is. Only an upgrade with **no** `Origin` at all is treated differently — refused for cookies (a browser always sends one, so its absence means the request is not what it claims), accepted for bearer tokens (non-browser clients legitimately omit it).
+
+**Phase 3/4 channels are subscribable and silent.** `memory` and `agents` appear in the §14.3 registry; a client may subscribe to them today and will receive nothing until those phases ship. This is deliberate — it keeps a Phase 3 client from being blocked by a Phase 1 decision — and is not a defect.
+
 ### 14.5 Server → client frames
 
 ```ts
@@ -1261,7 +1269,11 @@ All domain traffic uses `event` frames carrying the F6.2 envelope unchanged (F5.
 ### 14.6 Heartbeat & limits
 
 - Server sends protocol pings every 30 s; connection closed after 2 missed pongs. Clients may also send `ping` frames.
-- Close codes: `1000` normal, `1001` server restart/shutdown, `4000` protocol violation, `4001` auth session expired or token revoked (client must re-authenticate and reconnect).
+- Close codes: `1000` normal, `1001` server restart/shutdown, `4000` protocol violation, `4001` auth session expired or token revoked (client must re-authenticate and reconnect), **`4002` slow consumer** — the connection was dropped for sustained backpressure.
+
+> **`4002` added 2026-08-12.** A connection dropped for being too slow is none of the original four: it is not normal, not a shutdown, not an auth failure, and reusing `4000` would blame the client for a protocol violation it did not commit. It is deliberately **not** `4001` — WS4 §5.1 makes `4001` the single code a client must *not* retry, whereas a slow consumer must reconnect and refetch. Any code other than `4001` reconnects with backoff, which is the intended recovery.
+>
+> **Backpressure policy** (implemented in `ws/connection.ts`, two tiers): past the first buffered threshold the hub **drops ephemeral events** — `session.message.delta_appended` only — for that socket, without a marker frame. Deltas are the correct droppable class because they are self-healing: the turn ends with a durable `session.message.appended`, and WS4 §6.2 renders the committed Message from the API rather than from the delta stream, so the recovery signal is already in the protocol and pushing more bytes at a congested socket only worsens it. Past the second threshold the hub **closes with `4002`**: with deltas already dropped the peer is not draining at all, and the durable events now backing up cannot be silently discarded without lying about what the client has seen. F6.3 provides exactly one recovery mechanism — reconnect and refetch — and closing is how it is invoked. A client that believes it is live while its state is stale is the one failure mode an operator console must not have.
 
 ### 14.7 Reconnect & refetch-on-reconnect (F6.3)
 

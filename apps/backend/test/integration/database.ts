@@ -95,7 +95,14 @@ export function quoteIdentifier(name: string): string {
   return `"${name}"`;
 }
 
-/** A content hash of the migration set — the template is rebuilt when this changes. */
+/**
+ * A content hash of the migration set — the template is rebuilt when this changes.
+ *
+ * The pg-boss version is mixed in because the template also carries pg-boss's vendored
+ * `pgboss` schema (TDS 07 §3.1: "run drizzle-kit migrations + pg-boss schema init, once").
+ * Without it, upgrading pg-boss would leave every worker cloning a template whose queue schema
+ * is a version behind, and the first `boss.start()` of each run would silently migrate it.
+ */
 export function migrationSetHash(): string {
   const folder = migrationsFolder();
   const hash = createHash('sha256');
@@ -109,7 +116,17 @@ export function migrationSetHash(): string {
   const journal = join(folder, 'meta', '_journal.json');
   if (existsSync(journal)) hash.update(readFileSync(journal));
 
+  hash.update(`pg-boss@${pgBossVersion()}`);
+
   return hash.digest('hex');
+}
+
+function pgBossVersion(): string {
+  const manifest = join(repoRoot(), 'packages', 'shared', 'package.json');
+  const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as {
+    dependencies?: Record<string, string>;
+  };
+  return parsed.dependencies?.['pg-boss'] ?? 'unknown';
 }
 
 export async function databaseExists(client: pg.Client, name: string): Promise<boolean> {
@@ -117,10 +134,33 @@ export async function databaseExists(client: pg.Client, name: string): Promise<b
   return result.rowCount === 1;
 }
 
+/**
+ * Drop a disposable database.
+ *
+ * `WITH (FORCE)` terminates leftover connections (PostgreSQL 13+), which is what makes a
+ * crashed run self-healing instead of requiring a manual cleanup. Two transient failures are
+ * retried rather than propagated:
+ *
+ *   - **55006** — a session is still attached (a worker mid-teardown).
+ *   - **42501** — "permission denied to terminate process". The applications connect as a
+ *     plain role, not a superuser, and an **autovacuum worker** on the database being dropped
+ *     runs as the bootstrap superuser, so `FORCE` cannot signal it. That is a race against a
+ *     background process that finishes in milliseconds, not a misconfiguration, and failing the
+ *     run over it would be pure flake (TDS 07 §11.3).
+ */
 export async function dropDatabase(client: pg.Client, name: string): Promise<void> {
-  // WITH (FORCE) terminates leftover connections (PostgreSQL 13+), which is what makes a
-  // crashed run self-healing instead of requiring a manual cleanup.
-  await client.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(name)} WITH (FORCE)`);
+  const statement = `DROP DATABASE IF EXISTS ${quoteIdentifier(name)} WITH (FORCE)`;
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await client.query(statement);
+      return;
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if ((code !== '55006' && code !== '42501') || attempt >= 30) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100 + attempt * 50));
+    }
+  }
 }
 
 /**

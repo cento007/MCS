@@ -6,6 +6,7 @@ import {
   cookieValueFrom,
   createTestApp,
   type SeededUser,
+  seedProject,
   seedUser,
   testDatabase,
   truncateAll,
@@ -55,6 +56,15 @@ async function createToken(
   };
 }
 
+/** A minimal, valid `POST /hook-events` body (TDS 04 §6.8) for the authorized cases. */
+function hookEvent(runtimeSessionId = '11111111-1111-4111-8111-111111111111'): {
+  hookEventName: string;
+  runtimeSessionId: string;
+  payload: Record<string, unknown>;
+} {
+  return { hookEventName: 'SessionStart', runtimeSessionId, payload: {} };
+}
+
 async function bearerMe(token: string): Promise<ReturnType<FastifyInstance['inject']>> {
   return app.inject({
     method: 'GET',
@@ -67,9 +77,9 @@ beforeEach(async () => {
   await truncateAll();
   ({ app } = createTestApp({ cookieSecure: false }));
 
-  // A stub for the future `POST /api/v1/hook-events` (TDS 04 §6.8), declaring the very
-  // policy that route will declare. Registering it here proves the guard grants `ingest`
-  // exactly where it should, without inventing the ingest endpoint's body contract.
+  // `POST /api/v1/hook-events` (TDS 04 §6.8) is now real, and it declares this very policy.
+  // The stub survives only for the case where this file runs against a build without it — the
+  // subject here is the guard's scope decision, not the ingest body contract.
   if (!app.hasRoute({ method: 'POST', url: '/api/v1/hook-events' })) {
     app.post('/api/v1/hook-events', { config: { auth: INGEST_ROUTE } }, async (_request, reply) =>
       reply.code(204).send(),
@@ -77,6 +87,9 @@ beforeEach(async () => {
   }
 
   user = await seedUser();
+  // The real ingest route binds a first-seen runtime session to a Project (TDS 04 §6.8), so the
+  // authorized cases below need one to exist. The rejected cases never reach the handler.
+  await seedProject();
 
   const login = await app.inject({
     method: 'POST',
@@ -272,7 +285,7 @@ describe('scope enforcement (TDS 04 §1.4, §6.8)', () => {
       method: 'POST',
       url: '/api/v1/hook-events',
       headers: { authorization: `Bearer ${body.token}` },
-      payload: {},
+      payload: hookEvent(),
     });
 
     expect(response.statusCode).toBe(204);
@@ -285,7 +298,7 @@ describe('scope enforcement (TDS 04 §1.4, §6.8)', () => {
       method: 'POST',
       url: '/api/v1/hook-events',
       headers: { authorization: `Bearer ${body.token}` },
-      payload: {},
+      payload: hookEvent('22222222-2222-4222-8222-222222222222'),
     });
 
     expect(response.statusCode).toBe(204);

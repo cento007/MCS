@@ -1,0 +1,8 @@
+{"type":"user","message":{"role":"user","content":"Rename the queue module"},"uuid":"bbbbbbb1-0000-4000-8000-000000000001","timestamp":"2026-08-12T11:00:00.000Z"}
+{"type":"assistant","thinkingBudget":4096,"experimentalRouting":{"tier":"fast"},"message":{"id":"msg_10","role":"assistant","model":"claude-opus-4-20250514","content":[{"type":"text","text":"On it."}],"citations":[],"newFieldFromANewerRuntime":true},"uuid":"bbbbbbb1-0000-4000-8000-000000000002","timestamp":"2026-08-12T11:00:02.000Z"}
+{"type":"telemetry_ping","payload":{"latencyMs":12},"uuid":"bbbbbbb1-0000-4000-8000-000000000003","timestamp":"2026-08-12T11:00:03.000Z"}
+{"type":"x-experimental-plan-block","plan":{"steps":3},"uuid":"bbbbbbb1-0000-4000-8000-000000000004"}
+{"type":"assistant","message":{"id":"msg_11","role":"assistant","content":[{"type":"text","text":"tru
+{"type":"assistant","message":"a string where an object used to be","uuid":"bbbbbbb1-0000-4000-8000-000000000006"}
+{"type":"assistant","message":{"id":"msg_12","role":"assistant","model":"claude-opus-4-20250514","content":[{"type":"text","text":"Renamed it."}]},"uuid":"bbbbbbb1-0000-4000-8000-000000000007","timestamp":"2026-08-12T11:00:31.000Z"}
+{"type":"user","message":{"role":"user","con

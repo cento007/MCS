@@ -55,6 +55,17 @@ export function registerHttpConventions(app: FastifyInstance): void {
       return;
     }
 
+    // Fastify rejects an oversized body itself, before any handler runs — the prompt route caps
+    // at 256 KiB (§6.4). Without this mapping it would surface as a 500 `INTERNAL`, hiding a
+    // condition the caller can act on behind one it cannot.
+    if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      request.log.warn({ err: error }, 'request body too large');
+      void reply
+        .code(413)
+        .send(errorEnvelope('PAYLOAD_TOO_LARGE', 'Request body is too large', request.id));
+      return;
+    }
+
     // Fastify's own schema validation failures (F5.4 / TDS 04 §1.3).
     if (error.validation !== undefined) {
       request.log.warn({ err: error }, 'request validation failed');

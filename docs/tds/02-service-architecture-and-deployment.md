@@ -102,7 +102,10 @@ apps/backend/src/
   auth/                    # local account login, DB-backed sessions, cookie issuance,
                            #   bearer API tokens (F5.5); password hashing (argon2id)
   ws/                      # WebSocket hub: single multiplexed /api/v1/ws endpoint (F5.6),
-                           #   channel registry (session:{id}, notifications, services:health),
+                           #   channel registry per WS2 §14.3 (sessions, session:{id},
+                           #   repositories, settings, audit, notifications, sync, adrs;
+                           #   memory/agents reserved) — note there is NO services:health
+                           #   channel: health changes ride `settings` (corrected 2026-08-12),
                            #   subscribe/unsubscribe frames, F6-envelope relay, backpressure
   sessions/                # Session domain (F7 state machine owner)
     state-machine.ts       #   the ONLY code path that mutates sessions.state; emits
@@ -347,7 +350,7 @@ The Backend's `health/` aggregator produces the read-only Services view. Per F2.
 
 ### 7.2 Worker heartbeats
 
-Each worker upserts one row (supporting table, WS3 — e.g., `service_heartbeats`: service name, pid, version, `started_at`, `heartbeat_at`, small JSON stats like jobs processed/failed since start) every **30 s** via `packages/shared` `heartbeat`. Status derivation: `healthy` (< 90 s), `stale` (90 s–5 min), `down` (older/no row). Heartbeat rows also give the view "last seen" and version-skew visibility after partial upgrades. Health snapshots are served over the WS2 health endpoint and pushed on the `services:health` WS channel on status *changes* only.
+Each worker upserts one row (supporting table, WS3 — e.g., `service_heartbeats`: service name, pid, version, `started_at`, `heartbeat_at`, small JSON stats like jobs processed/failed since start) every **30 s** via `packages/shared` `heartbeat`. Status derivation: `healthy` (< 90 s), `stale` (90 s–5 min), `down` (older/no row). Heartbeat rows also give the view "last seen" and version-skew visibility after partial upgrades. Health snapshots are served over the WS2 health endpoint and pushed on the **`settings`** WS channel on status *changes* only. (Corrected 2026-08-12: this document previously named a `services:health` channel, which WS2 §14.3 — authoritative for channel naming — does not define. There is no such channel.)
 
 Liveness vs. this view: process-level restart is systemd's job (§9.1, `Restart=on-failure`); §4.4.7 is operator observability, not an orchestrator.
 

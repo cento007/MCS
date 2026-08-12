@@ -186,6 +186,38 @@ Also corrected: WS3's audit-action comment exemplified `auth.login_succeeded` wh
 
 No document said where the first account's credentials come from, and there is no answer a server can invent: auto-seeding needs a default password, and omitting it leaves a migrated database with no way in, since login is the only public route. Implemented as an explicit operator command, `pnpm auth:create-user`, with the gap flagged in a header comment. Password from `MC_BOOTSTRAP_PASSWORD` (tooling-only, so the F8.2 bootstrap set stays locked), then piped stdin, then a hidden TTY prompt — **never from argv**, which is rejected explicitly. Re-running reports `already_exists` and changes nothing; `--reset-password` is the deliberate lockout escape hatch. Runs under `pg_advisory_xact_lock`, so concurrent invocations create exactly one account.
 
+## 2026-08-12 — Phase 1: session domain, WebSocket hub, managed wrapper, observed ingest
+
+Four workstreams landed. **Note on provenance:** the managed-wrapper and observed-ingest agents were killed by a process exit before they could report, so their work was verified by inspection and by running the gates — not from their own summaries. Everything below is what the tree actually demonstrates.
+
+**Gates (orchestrator-run):** typecheck clean across 5 packages · **491 unit tests** (13 files → 38 files since auth; the no-database property still holds) · **252 integration tests** · Biome clean on 215 files.
+
+### Session domain, queue and outbox
+
+pg-boss behind `QueuePort` with a **second, deliberately separate job surface** — `session.launch` is a pg-boss job name, not an F6 event, and giving it the event API would have made that distinction unenforceable. The outbox emits on the caller's transaction and publishes the in-process relay only *after* commit, with ephemeral event types refused at both layers.
+
+**The single-writer rule on `sessions.state` is enforced three ways**, not asserted: `SessionUpdate` is typed `Omit<…, 'state'>` so a state write is a compile error; `insertSession` writes the literal initial state and takes no state parameter; and a guard test scans every `src/**/*.ts` for a state-setting update outside `state-machine.ts`, carrying positive *and* negative control cases so the regex cannot quietly become vacuous.
+
+Three defects found in its own work, all worth keeping: pg-boss relaxes a notify-enabled queue's poll to 30 s on the assumption that NOTIFY announces new work — but for `session.launch` the trigger is a *freed concurrency slot*, which nothing announces, so a queued launch could sit up to 30 s after capacity appeared; `offWork` waits for the in-flight handler, so shutting down with a launch parked on the semaphore hung shutdown forever; and the test harness's orphan sweep was dropping databases belonging to concurrently-running suites.
+
+### WebSocket hub
+
+Single multiplexed endpoint with cookie/bearer auth at upgrade and an **Origin allowlist that is tested end-to-end** — real login, real cookie, real socket, `Origin: https://evil.example` → 403 — because `SameSite=Lax` does not protect the upgrade handshake. The DB-sourced half of the allowlist can only *widen* it, so a failed settings read can never admit an untrusted origin.
+
+It also found and fixed a genuine resource leak: `@fastify/websocket` only destroys the hijacked socket when *its own* hook has run, but the auth guard runs earlier by design, so a **rejected upgrade left a TCP connection open and `server.close()` waited on it forever** — one unauthenticated attempt hung graceful shutdown. Regression test named for the symptom.
+
+Backpressure is two-tier: drop ephemeral deltas first (self-healing — the turn ends with a durable message the client renders from the API), then close with the new `4002` code if durable events back up, because a client that believes it is live while its state is stale is the one failure mode an operator console must not have.
+
+### Managed wrapper and observed ingest
+
+`@anthropic-ai/claude-agent-sdk@^0.3.228` installed and confined to a **single import site** (`managed/claude-agent-runtime.ts`), so an SDK change has one blast radius. Managed side: controller, normalizer with contract tests against real stream shapes, cost accumulation, retry/backoff, restart recovery. Observed side: hook-events endpoint, session binding, hooks installer, transcript tailer with a parse/degradation path, and tail-state persistence.
+
+### Contract corrections applied
+
+- **`services:health` was never a channel.** WS1 §2 named one; WS2 §14.3 — authoritative for channel naming — does not. Health rides `settings`. Corrected in WS1.
+- **Close code `4002` (slow consumer)** adopted into WS2 §14.6 with its rationale, plus the malformed-frame vs refused-`ack` distinction (answering a refused `subscribe` with an `error` frame would leave the client's pending-request map waiting forever), Origin enforcement across both credential types, and the note that Phase 3/4 channels are subscribable and silent.
+- **Resume from `failed` — a genuine cross-document contradiction.** WS2 §6.3 allowed resume only from `completed`/`archived`, while WS1 §4.4 marks restart-orphaned sessions `failed(backend_restart)` and offers one-click resume as *the* recovery path, and both WS4 §6.6 and WS5 §5.5 render `[Resume as new session]` on the `failed` composer. WS2 was the outlier; corrected, and the implementation updated with tests. **F7 is untouched** — resume-as-new does not transition the source Session, so which states permit it is an API policy question, not a state-machine one. Refusing `failed` would have made the restart-recovery story unimplementable, which is exactly how the contradiction surfaced.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.
