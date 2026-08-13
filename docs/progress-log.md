@@ -427,3 +427,69 @@ Tier and scope, provenance (row id *or* vault-relative ref, never both), the chu
 - **Ollama silently truncates over-long input.** A 108 000-character string returned a 200 and a normal 768-dimensional vector against a 2048-token context — no warning, no error, and a vector representing only the first fraction of the text. Chunking must bound input by tokens; the ingestion follow-up cannot rely on the runtime complaining.
 - **Test Connection still answers `INTEGRATION_NOT_CONFIGURED` for Qdrant and Ollama**, and `VectorCards.tsx` still tells the operator that "semantic memory arrives in Phase 3" and that nothing is indexed. Both are now understatements: the clients exist and the health rows are real. Deliberately left — Test Connection was not in this task's scope — but the copy and the two executors should land together.
 - **`TDS 04 §7.5`'s Services table lists Qdrant/Ollama as "Phase 3+ placeholder".** That row is now real; the TDS text is stale.
+
+---
+
+## 2026-08-13 — Phase 3: ingestion, retrieval, and a relevance floor that was measured
+
+**2012 unit tests, 754 integration**, lint and typecheck clean. Qdrant left at 0 collections. The pipeline that fills the index and the route that queries it, on top of the previous section's ports and stamp.
+
+**The relevance floor is the substance of this work.** Cosine similarity always returns something: an unfiltered top-5 over an unrelated corpus is five confident irrelevancies, and the operator cannot tell them from five good answers. So retrieval has a floor, and an empty result is a first-class answer carrying a **reason** rather than an empty array the client must interpret.
+
+The floor was **measured, not guessed**, over 758 chunks of this repository's own documentation. On-topic queries bottom out at **0.552**; off-topic ones top out at **0.509** — *"What is the best recipe for sourdough bread?"* scores 0.509, *"Which football team won the league in 1997?"* 0.472. The usable gap is **0.043 wide**. The first guess of 0.45 sat *below* the off-topic ceiling and returned five confident irrelevancies for the bread query. `DEFAULT_MIN_SCORE = 0.52` sits inside the band, and a regression test pins it there against both edges — a future edit that drifts the floor out of the band silently restores the failure, and nothing else would catch it.
+
+**Chunking is bounded by tokens because the runtime will not complain.** The previous section's finding — Ollama silently truncating a 108 000-character input to a normal-looking 768-dimensional vector — is what shapes the budget, derived from the model's declared context window rather than a constant.
+
+**Settings stopped lying.** The Qdrant and Ollama Test Connection executors are real (reachability *and* stamp agreement), and the copy telling the operator that "semantic memory arrives in Phase 3" is gone — it had become an understatement rather than a promise.
+
+---
+
+## 2026-08-13 — The Memory screen, session export, and context packages
+
+**2159 unit tests, 775 integration**, lint and typecheck clean across 699 files. Databases and Qdrant left as found. Commit `ad9cc51`.
+
+### Four empty screens, because they mean four different things
+
+The backend distinguishes not-configured, nothing-indexed, nothing-above-the-floor and index-cannot-be-trusted. Rendering all four as "No results" would be actively misleading, because in three of them the operator's next action is completely different — and it would throw away the entire point of the previous section's floor and stamp work. Each state gets its own words, its own affordance and its own ARIA role:
+
+- **`not_configured`** — a link to Settings, and *no* backfill button, because there is nothing to backfill into. Shown before a query is typed, not after one fails.
+- **`index_empty`** — offers a backfill, and says plainly that **rephrasing will not help**, since there is nothing to match against.
+- **`below_threshold`** — the one empty answer where rephrasing *does* help, and the only one offering "show the closest matches anyway" (`floor=0`).
+- **`stamp_mismatch` / `unavailable`** — `role="alert"`, not a quiet empty list. The mismatch screen says the index **cannot be trusted** and offers a rebuild; the unavailable one says *"this is not an empty result — nothing was searched."*
+
+A live run exposed one contradiction between panels: the index panel showed a green "Indexed with nomic-embed-text" directly above the red refusal. Both statements were true and the pair was incoherent — the rows are real, but the *vectors* are the index. It now reads "rows stored, none queryable".
+
+### Scores are cosine, and are not dressed up as confidence
+
+Raw cosine to two decimals, never a percentage. "65% match" claims a probability cosine does not carry, and rescaling 0–1 onto 0–100% puts every honest answer this system can produce between 52 and 66 — a bar permanently two-thirds full. Three decimals were rejected for the opposite reason: with 0.043 of total separation, a 0.001 gap invites a comparison the embedding cannot support. A floor-relative meter carries the discrimination instead, with a **stated unit** (floor → best observed on-topic score, captioned `0.52–0.66`), and rank leads each card as the one compressed-list property that is unambiguously meaningful.
+
+### Session export omits things and says so
+
+Markdown only. The specified `format: 'json'` was **narrowed to one value** rather than accepted and answered with Markdown: `GET /sessions/{id}` and `/messages` are already the canonical paginated JSON, nothing in V1 imports a session, and a second JSON shape would exist only to drift out of agreement with the first.
+
+**Tool inputs and outputs are excluded, with counts stated in the document.** They are the two unbounded columns — a `Write` input is a whole file, an image arrives base64-inlined — and the only place a credential from a shell command could reach a document designed to leave the machine. The one thing read out of `tool_payload` is `isError`, projected to a boolean in SQL. Proven rather than asserted: an integration test seeds `AWS_SESSION_TOKEN=canary-value-that-must-not-be-exported` into real JSONB and scans both documents for it.
+
+Three format hazards are handled and **announced in the document**: control characters escaped as `<U+001B>` rather than stripped (ANSI from terminal captures is routine), unterminated code fences closed with a note saying the exporter closed them, and prompts block-quoted so stray fences and `---` are inert by construction.
+
+### Context packages justify every inclusion, and never invent
+
+Nine sections, each tested against *"would someone resuming abandoned work be worse off without it?"* rather than "is this true". Notably the **working tree as of now** — the only fact not in the transcript at all, and the one that decides whether resuming is safe, stamped "true at that instant and no longer". Prompts use a first-3 + last-9 window rather than a blind head, because original intent and current thread are different things, and the middle is counted rather than hidden. ADRs are **pointers, not copies**: an ADR is a live two-way-synced document and a paste would be a second version.
+
+Deliberately absent: a summary and next steps. There is no model in this request path, and inventing either is exactly what the ADR generator refuses to do with "Alternatives considered". Degraded memory is never silently omitted — eight named reasons, each a warning callout with an actionable sentence, plus a machine-readable `relatedContext.gapReason` so the UI never has to parse the prose.
+
+### A Phase 3 bug the UI work surfaced
+
+**`MemoryRuntime.invalidate()` was never called.** `runtime.ts` documented that a `setting.updated` naming qdrant or ollama "is how changing the embedding model takes effect without a restart, and how it is *caught* without a restart" — and no module subscribed. `invalidate()` appeared only in failure paths.
+
+The consequence is the exact scenario the stamp exists to refuse, in its most silent form: an operator who changes the embedding model in Settings keeps being served ten confident results retrieved from the collection the **previous** model built, and `stamp_mismatch` is unreachable until the process restarts. Demonstrated by tampering a collection's stamp against a running backend, then restarting to see the same query correctly refuse.
+
+Fixed by subscribing in `registerMemory` — at registration rather than in `start()`, since dropping a cached object does no I/O while the routes it protects go live immediately, and the integration tier builds an app per test without ever calling `start()`. The regression test was verified to **fail against the old code** before being accepted.
+
+*Correction recorded:* the fix's `changedKeys` branch was initially justified as covering a full-category `PUT /settings/integrations`. That route does not exist — `integrations` is deliberately excluded from `DOCUMENT_CATEGORIES` because it is written one integration at a time. The branch is kept as defence in depth and is now labelled as such in both the code and its tests, and the same slug-only check in the GitHub module is correct as written rather than the parallel bug it briefly appeared to be.
+
+### Contract problems raised
+
+- **`GET /memory-items/backfill` cannot distinguish "not configured" from "configured but never indexed."** Both answer `indexedModels: []` with an all-null run, yet the operator's next action differs completely. Worked around by projecting `GET /services/health`; the natural home is a `configured` boolean on the backfill document (task #28).
+- **A check/unique violation on sync-run insert surfaces as an opaque `500 INTERNAL`.** Found because the dev database was one migration behind (`0005_memory_index_runs`, since applied) and `ck_sync_runs_kind` rejected the insert. Same class as the earlier `isUniqueViolation` fix — Drizzle puts the pg error on `cause` (task #30).
+- **Export and Generate Context Package are served but unreachable from the SPA** — `overflowActions()` still omits them with a comment saying the backend does not serve them (task #29).
+- `TDS 04 §6.7`'s `format` enum and its `MC_DATA_DIR/exports` note are both now inaccurate; `openapi.yaml` records the narrowing. No file is written to disk — §6.7 returns the document in the response, no route reads such a file back, and nothing would delete one.
