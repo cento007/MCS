@@ -80,10 +80,18 @@ import {
  *
  * The producer subscribes to the Backend's own post-commit event bus (F3.2). That is the
  * cheapest correct wiring for Backend-produced events and it introduces no second consumer on
- * `events`. `sync.failed` is mapped here and unreachable today: it is produced by the Sync
- * Worker (Phase 2, not built), and §15.1's LISTEN/NOTIFY arm that would relay worker events
- * into this process does not exist yet. The mapping is complete so that wiring is the only
- * work left, not a redesign.
+ * `events`.
+ *
+ * `sync.failed` is produced by the **Sync Worker**, and it reaches this subscription through
+ * §15.1's `LISTEN/NOTIFY` arm: `events/relay.ts` injects worker-produced envelopes into the same
+ * in-process bus, so this producer needs no notion of where an event came from. That relay is
+ * fan-out rather than a queue subscription, which is what keeps point 2 above true — nothing
+ * here competes with the Telegram Worker for a job.
+ *
+ * One consequence worth stating, because it is load-bearing: `handleEvent` is **not** idempotent
+ * on `event.id` — a repeated `sync.failed` would produce a second Notification. De-duplication
+ * therefore lives in the relay (a bounded LRU on envelope `id`, `events/relay.ts`), which is the
+ * one place every cross-process envelope passes through.
  */
 
 /** The event types this producer listens for (TDS 04 §15.2 "Notif." column). */

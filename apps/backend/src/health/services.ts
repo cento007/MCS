@@ -109,6 +109,22 @@ const HEARTBEAT_SERVICES: readonly { readonly row: string; readonly name: Servic
 
 // ------------------------------------------------------------------------------- probe ports
 
+/**
+ * The worker -> hub event relay's own health (`events/relay.ts`).
+ *
+ * Structurally typed rather than imported so `health/` keeps depending on shapes instead of on
+ * `events/`; `EventRelayStatus` satisfies it.
+ */
+export interface EventRelayReport {
+  readonly state: 'stopped' | 'connecting' | 'listening' | 'reconnecting';
+  readonly channel: string;
+  readonly listeningSince: string | null;
+  readonly reconnects: number;
+  readonly gaps: number;
+  readonly relayed: number;
+  readonly lastError: string | null;
+}
+
 export interface BackendSelfReport {
   readonly version: string;
   readonly uptimeSeconds: number;
@@ -116,6 +132,11 @@ export interface BackendSelfReport {
   readonly wsConnections: number;
   readonly activeSessions: number;
   readonly maxConcurrentSessions: number;
+  /**
+   * Absent when no relay is wired (an app built without a database URL, or a test). Present and
+   * not `listening` is a real, operator-visible degradation — see `backendRow`.
+   */
+  readonly eventRelay?: EventRelayReport | undefined;
 }
 
 export interface DatabaseProbeResult {
@@ -197,6 +218,26 @@ function backendRow(result: Settled<BackendSelfReport>, checkedAt: string): Serv
   // TDS 02 §7.1: "always (it answered)". A self-report that throws is a bug in this file,
   // not a service outage, and it is reported rather than hidden.
   if (!result.ok) return row('backend', 'down', checkedAt, describe(result.error), null);
+
+  const relay = result.value.eventRelay;
+
+  // §7.1's "healthy means it answered" is not the whole truth once the Backend owns a
+  // background connection whose failure is silent. A dead `LISTEN` looks exactly like a quiet
+  // system: worker events — `sync.*`, `notification.sent/failed` — simply stop reaching the
+  // browser, with nothing anywhere saying why. The same reasoning already applies to the
+  // `down`-on-throw branch above: this row reports what is *known* about the Backend, and
+  // "its worker event relay is not connected" is known and actionable.
+  if (relay !== undefined && relay.state !== 'listening') {
+    return row(
+      'backend',
+      'degraded',
+      checkedAt,
+      `Worker event relay is ${relay.state} — worker-produced events are not reaching browsers${
+        relay.lastError === null ? '' : ` (${relay.lastError.slice(0, 200)})`
+      }`,
+      { ...result.value },
+    );
+  }
 
   return row('backend', 'healthy', checkedAt, null, { ...result.value });
 }

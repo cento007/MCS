@@ -4,13 +4,14 @@ import {
   type DbTransaction,
   deliveryBackoffSeconds,
   type EventType,
+  emitWorkerEvent,
   enqueueNotificationDispatch,
   MAX_DELIVERY_ATTEMPTS,
   type NotificationDispatchJob,
-  QUEUE_NAMES,
   type Queue,
   schema,
   telegramSkipMessage,
+  type UndeliverableEvent,
 } from '@mc/shared';
 import { and, asc, eq, lte } from 'drizzle-orm';
 import { type BotTokenRead, createBotTokenReader, readTelegramSettings } from './settings.js';
@@ -89,6 +90,8 @@ export interface DeliveryServiceOptions {
   /** Aborted on shutdown; passed into every outbound request. */
   readonly signal?: AbortSignal;
   readonly onError?: (error: unknown, context: string) => void;
+  /** The best-effort relay could not carry an envelope (TDS 04 §15.1). Logged, never fatal. */
+  readonly onUndeliverable?: (info: UndeliverableEvent) => void;
 }
 
 export class DeliveryService {
@@ -98,6 +101,7 @@ export class DeliveryService {
   readonly #readBotToken: (db: Db) => Promise<BotTokenRead>;
   readonly #now: () => Date;
   readonly #signal: AbortSignal | undefined;
+  readonly #onUndeliverable: ((info: UndeliverableEvent) => void) | undefined;
 
   constructor(options: DeliveryServiceOptions) {
     this.#db = options.db;
@@ -106,6 +110,7 @@ export class DeliveryService {
     this.#readBotToken = createBotTokenReader({ encryptionKey: options.encryptionKey });
     this.#now = options.now ?? (() => new Date());
     this.#signal = options.signal;
+    this.#onUndeliverable = options.onUndeliverable;
   }
 
   /**
@@ -379,17 +384,29 @@ export class DeliveryService {
     return rows[0] ?? null;
   }
 
-  /** An F6 envelope on the caller's transaction — the outbox, by construction (F6.3). */
+  /**
+   * An F6 envelope on the caller's transaction — the outbox, by construction (F6.3) — plus the
+   * best-effort `LISTEN/NOTIFY` relay to the Backend's WebSocket hub (TDS 04 §15.1).
+   *
+   * Both halves ride the same transaction, so `notification.sent` reaches a browser only if the
+   * row that says the message went out is also committed. This is the only emit path in this
+   * class: `queue.enqueue` on its own would put the envelope on a durable queue whose only
+   * consumer drains and discards it, which is precisely how `notification.sent` and
+   * `notification.failed` came to be "emitted by the Telegram Worker and consumed by nobody".
+   */
   async #emit(
     tx: DbTransaction,
     type: EventType,
     payload: Record<string, unknown>,
     occurredAt: Date,
   ): Promise<void> {
-    await this.#queue.enqueue(
+    await emitWorkerEvent(
       tx,
-      QUEUE_NAMES.EVENTS,
+      this.#queue,
       createEvent(type, 'telegram-worker', payload, { occurredAt }),
+      {
+        ...(this.#onUndeliverable === undefined ? {} : { onUndeliverable: this.#onUndeliverable }),
+      },
     );
   }
 }

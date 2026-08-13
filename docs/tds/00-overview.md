@@ -238,6 +238,43 @@ WS2 §7.1 defined the masked read shape as `{ isSet: boolean }`. WS5 §4.4/§5.7
 
 Recorded 2026-08-13; WS2 §7.1 updated, and the Frontend's provisional `SecretFieldRead` (which already anticipated this, optionally) can now import the shared type.
 
+### A16 — One queue, one consuming process: §15.2's "Queue consumers" column is **not** a subscription list
+
+WS2 §15.2 lists both the Telegram Worker and the Sync Worker as queue consumers of the same events. Taken literally that is **not implementable on the chosen substrate**, and the failure is silent.
+
+**pg-boss is competing-consumer.** Subscribers to one queue name share the work: each envelope is delivered to exactly one of them. Two workers subscribing to a shared `events` queue therefore do not both receive an event — they take it from each other, with no error raised in either process. A system built to the literal reading loses events under load and is close to undebuggable, because each worker's logs look correct in isolation.
+
+This surfaced during the Telegram Worker's implementation: its `events` subscription was, at that moment, the **only drain** on that queue, so `pgboss.job` would have grown without bound had it been removed — and adding the Sync Worker as a second subscriber would have started the theft. The Sync Worker was warned mid-build and never subscribed.
+
+**Decision — three rules, and they are structural rather than advisory:**
+
+1. **The Backend produces.** It subscribes to its own in-process, post-commit bus and enqueues to a consumer-specific queue **inside the same transaction as the domain write**. Row-and-job atomicity requires an open transaction handle, which the Backend has and a worker does not — so production belongs there on its own merits, independent of this problem.
+2. **Each worker consumes exactly one queue, and no queue has two consuming processes.** A worker never subscribes to a general `events` queue.
+3. **Fan-out is `LISTEN/NOTIFY` (§15.1), never pg-boss.** It is the only mechanism in the design with broadcast semantics; the queue deliberately has the opposite.
+
+Read §15.2's column as *which process acts on this event*. A future consumer gets its own queue and a Backend producer — it does not join an existing subscription.
+
+This is **not** a Foundation change: F3 chose pg-boss behind a `QueuePort` and says nothing about consumer topology. It is the missing sentence about how that port may be used. Recorded 2026-08-13 with the note added to WS2 §15.2.
+
+### A17 — Obsidian sync V1 covers ADRs and Session Notes; PRD §7.2's other two have **no source entity**
+
+PRD §7.2 lists four things the vault should receive: Session Notes, Feature Notes, ADRs and Requirements. V1 delivers **two**, and the omission is structural rather than a shortfall of effort.
+
+**There is no Feature entity and no Requirements entity in F4.1.** Nothing in the database projects to those notes, so building them would mean inventing an entity the Foundation Contract does not have — which is exactly the kind of local amendment workstreams are told to escalate rather than make. They are recorded here so §7.2 is not read as half-delivered.
+
+**What V1 does, precisely:**
+
+| Direction | Covered |
+|---|---|
+| Export | ADRs → `ADRs/`; Sessions → `Sessions/`, only `completed`/`failed`/`archived` (a running session would rewrite its note every sync), most recent 500 |
+| Import | **ADRs only** — title, status, and the four §7.3 sections |
+
+Session Notes are deliberately **export-only**: a vault-side edit is recorded as `pending_pull` and then left alone — neither imported nor overwritten. Notes without an `mcId` front-matter key are invisible to sync entirely: never touched, never imported, never deleted, and counted as `unmanaged` in the preview. Deletions propagate in **neither** direction, and Mission Control never renames a note it has already written — Obsidian maintains its `[[wikilink]]` index on rename, so moving a file underneath it breaks links we never saw. Sync follows the operator's renames, not the reverse.
+
+Only two of §7.1's six folders are created. The other four are named in code and never written, because an empty folder for a feature that does not exist is noise rather than layout.
+
+**The unlock is an entity, not sync work.** If Features or Requirements become F4.1 entities, their export is a projection function alongside the existing two — the engine, ledger, conflict matrix and atomic writer are all entity-agnostic. Recorded 2026-08-13.
+
 ---
 
 ## 6. Acceptance-Criteria Checklist (project plan §4)

@@ -61,13 +61,27 @@ let limiter: FixedWindowRateLimiter;
 let app: FastifyInstance;
 let user: SeededUser;
 
+/**
+ * The login body, and nothing else.
+ *
+ * `SeededUser` also carries `id`, and passing the whole object used to work because Ajv
+ * silently deleted the extra field. It is a 400 now (`http/body-strictness.ts`), which is the
+ * point: a field the route never declared is a field the caller should not believe was read.
+ */
+function credentials(of: { username: string; password: string } = user): {
+  username: string;
+  password: string;
+} {
+  return { username: of.username, password: of.password };
+}
+
 async function login(
-  credentials: { username: string; password: string } = user,
+  of: { username: string; password: string } = user,
 ): Promise<ReturnType<FastifyInstance['inject']>> {
   return app.inject({
     method: 'POST',
     url: '/api/v1/auth/login',
-    payload: credentials,
+    payload: credentials(of),
   });
 }
 
@@ -468,7 +482,7 @@ describe('audit log (PRD §10, TDS 04 §12)', () => {
       method: 'POST',
       url: '/api/v1/auth/login',
       headers: { 'x-request-id': 'inbound-correlation-id' },
-      payload: user,
+      payload: credentials(),
     });
 
     expect(response.statusCode).toBe(200);
@@ -488,7 +502,7 @@ describe('audit log (PRD §10, TDS 04 §12)', () => {
       method: 'POST',
       url: '/api/v1/auth/login',
       headers: { 'x-request-id': overLong },
-      payload: user,
+      payload: credentials(),
     });
 
     expect(response.statusCode).toBe(200);

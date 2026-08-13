@@ -821,8 +821,11 @@ export function normalizeSetting<T>(path: string, raw: unknown): T {
  * `additionalProperties: false` into *silently delete the unknown field* rather than *reject
  * the body*. Under full-replace semantics a silently deleted field is not a no-op — it is a
  * **reset to default**: `PUT { "instanceNam": "…" }` would strip the typo, see `instanceName`
- * as omitted, and quietly overwrite the operator's instance name. So unknown fields are left
- * for the write planner, which rejects them by name (`documents.ts`, `planWrite`).
+ * as omitted, and quietly overwrite the operator's instance name. So unknown fields are
+ * rejected by name instead of being deleted: over HTTP by the global body-field guard
+ * (`apps/backend/src/http/body-strictness.ts`, which treats an undeclared name as a 400 at
+ * every level of the document — including the nested objects below, which the planner never
+ * saw), and for any other caller by the write planner (`documents.ts`, `planWrite`).
  */
 export function writeSchemaFor(entriesInScope: readonly SettingKeyEntry[]): JsonSchema {
   return {

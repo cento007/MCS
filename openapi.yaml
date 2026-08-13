@@ -1,0 +1,2651 @@
+openapi: '3.1.0'
+info:
+  title: 'Mission Control API'
+  version: '1.0.0'
+  description: |-
+    Generated from the Backend’s Fastify route table by `pnpm api:spec` (F5.1). Do not edit
+    by hand: `pnpm api:spec:check` fails when this file and the routes disagree.
+
+    PARTIAL BY CONSTRUCTION, AND HONESTLY SO. Request shapes here are the schemas Ajv actually
+    enforces, so they are exact. RESPONSE shapes are absent: no route in this Backend declares
+    a Fastify response schema today, so there is nothing to generate from and nothing is
+    invented. Every operation is marked `x-mc-response-schema: undeclared`; the response
+    contracts are prose in docs/tds/04-api-contracts-and-events.md, and §16 of that document
+    holds the hand-written reference for the Sessions resource.
+
+    Consequence for consumers: types generated from this document cover requests, path and
+    query parameters, and the error envelope. They do not yet cover success payloads.
+
+    One entry is not an HTTP resource: GET /ws is the single multiplexed WebSocket upgrade
+    endpoint (F5.6, TDS 04 §14). It is listed because it is a registered route — omitting it
+    would make this document quietly incomplete — but it speaks the WS frame protocol.
+servers:
+  - url: /api/v1
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+paths:
+  /adrs:
+    get:
+      operationId: getAdrs
+      summary: 'GET /adrs'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - proposed
+              - accepted
+              - rejected
+              - superseded
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postAdrs
+      summary: 'POST /adrs'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - projectId
+                - title
+              additionalProperties: false
+              properties:
+                projectId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 300
+                status:
+                  type: string
+                  enum:
+                    - proposed
+                    - accepted
+                    - rejected
+                    - superseded
+                context:
+                  type: string
+                  maxLength: 100000
+                decision:
+                  type: string
+                  maxLength: 100000
+                alternatives:
+                  type: string
+                  maxLength: 100000
+                consequences:
+                  type: string
+                  maxLength: 100000
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/adrs/{id}':
+    get:
+      operationId: getAdrsById
+      summary: 'GET /adrs/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchAdrsById
+      summary: 'PATCH /adrs/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 300
+                status:
+                  type: string
+                  enum:
+                    - proposed
+                    - accepted
+                    - rejected
+                    - superseded
+                context:
+                  type: string
+                  maxLength: 100000
+                decision:
+                  type: string
+                  maxLength: 100000
+                alternatives:
+                  type: string
+                  maxLength: 100000
+                consequences:
+                  type: string
+                  maxLength: 100000
+                supersededByAdrId:
+                  type:
+                    - string
+                    - 'null'
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /audit-log-entries:
+    get:
+      operationId: getAuditLogEntries
+      summary: 'GET /audit-log-entries'
+      parameters:
+        - name: action
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: actorType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - user
+              - agent
+              - system
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: entityId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: entityType
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/audit-log-entries/{id}':
+    get:
+      operationId: getAuditLogEntriesById
+      summary: 'GET /audit-log-entries/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /auth/login:
+    post:
+      operationId: postAuthLogin
+      summary: 'POST /auth/login'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+              additionalProperties: false
+              properties:
+                username:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                password:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: public
+      x-mc-strictness:
+        query: strict
+        body: strict
+      security: []
+  /auth/logout:
+    post:
+      operationId: postAuthLogout
+      summary: 'POST /auth/logout'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /auth/me:
+    get:
+      operationId: getAuthMe
+      summary: 'GET /auth/me'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /auth/password:
+    post:
+      operationId: postAuthPassword
+      summary: 'POST /auth/password'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - currentPassword
+                - newPassword
+              additionalProperties: false
+              properties:
+                currentPassword:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                newPassword:
+                  type: string
+                  minLength: 12
+                  maxLength: 1024
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /auth/tokens:
+    get:
+      operationId: getAuthTokens
+      summary: 'GET /auth/tokens'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postAuthTokens
+      summary: 'POST /auth/tokens'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - scopes
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                scopes:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items:
+                    type: string
+                    enum:
+                      - full
+                      - ingest
+                expiresAt:
+                  type: string
+                  minLength: 1
+                  maxLength: 40
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/auth/tokens/{id}':
+    delete:
+      operationId: deleteAuthTokensById
+      summary: 'DELETE /auth/tokens/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/commits/{id}':
+    get:
+      operationId: getCommitsById
+      summary: 'GET /commits/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /health:
+    get:
+      operationId: getHealth
+      summary: 'GET /health'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: public
+      x-mc-strictness:
+        query: strict
+        body: strict
+      security: []
+  /hook-events:
+    post:
+      operationId: postHookEvents
+      summary: 'POST /hook-events'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              properties:
+                hookEventName:
+                  type: string
+                  maxLength: 64
+                hook_event_name:
+                  type: string
+                  maxLength: 64
+                runtimeSessionId:
+                  type: string
+                  maxLength: 128
+                session_id:
+                  type: string
+                  maxLength: 128
+                transcriptPath:
+                  type: string
+                  maxLength: 4096
+                transcript_path:
+                  type: string
+                  maxLength: 4096
+                cwd:
+                  type: string
+                  maxLength: 4096
+                occurredAt:
+                  type: string
+                  maxLength: 64
+                payload:
+                  type: object
+                  additionalProperties: true
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: ingest
+        allowCookie: false
+      x-mc-strictness:
+        query: strict
+        body: open
+        bodyOpenPaths:
+          - ''
+          - payload
+      x-mc-body-limit-bytes: 262144
+      security:
+        - bearerAuth: []
+  /notifications:
+    get:
+      operationId: getNotifications
+      summary: 'GET /notifications'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: unread
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /notifications/read-all:
+    post:
+      operationId: postNotificationsReadAll
+      summary: 'POST /notifications/read-all'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/notifications/{id}':
+    get:
+      operationId: getNotificationsById
+      summary: 'GET /notifications/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/notifications/{id}/read':
+    post:
+      operationId: postNotificationsByIdRead
+      summary: 'POST /notifications/{id}/read'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /projects:
+    get:
+      operationId: getProjects
+      summary: 'GET /projects'
+      parameters:
+        - name: archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postProjects
+      summary: 'POST /projects'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 10000
+                workflowMode:
+                  type:
+                    - string
+                    - 'null'
+                  enum:
+                    - manual
+                    - assisted
+                    - null
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/projects/{id}':
+    get:
+      operationId: getProjectsById
+      summary: 'GET /projects/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchProjectsById
+      summary: 'PATCH /projects/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 10000
+                workflowMode:
+                  type:
+                    - string
+                    - 'null'
+                  enum:
+                    - manual
+                    - assisted
+                    - null
+                archivedAt:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 64
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    delete:
+      operationId: deleteProjectsById
+      summary: 'DELETE /projects/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /pull-requests:
+    get:
+      operationId: getPullRequests
+      summary: 'GET /pull-requests'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: repositoryId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - open
+              - merged
+              - closed
+              - draft
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/pull-requests/{id}':
+    get:
+      operationId: getPullRequestsById
+      summary: 'GET /pull-requests/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /repositories:
+    get:
+      operationId: getRepositories
+      summary: 'GET /repositories'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postRepositories
+      summary: 'POST /repositories'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - localPath
+              additionalProperties: false
+              properties:
+                localPath:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                projectId:
+                  type:
+                    - string
+                    - 'null'
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                defaultBranch:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /repositories/discover:
+    post:
+      operationId: postRepositoriesDiscover
+      summary: 'POST /repositories/discover'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/repositories/{id}':
+    get:
+      operationId: getRepositoriesById
+      summary: 'GET /repositories/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchRepositoriesById
+      summary: 'PATCH /repositories/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                projectId:
+                  type:
+                    - string
+                    - 'null'
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                defaultBranch:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    delete:
+      operationId: deleteRepositoriesById
+      summary: 'DELETE /repositories/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/repositories/{id}/commits':
+    get:
+      operationId: getRepositoriesByIdCommits
+      summary: 'GET /repositories/{id}/commits'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: branch
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: sessionId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/repositories/{id}/pull-requests':
+    get:
+      operationId: getRepositoriesByIdPullRequests
+      summary: 'GET /repositories/{id}/pull-requests'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - open
+              - merged
+              - closed
+              - draft
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/repositories/{id}/status':
+    get:
+      operationId: getRepositoriesByIdStatus
+      summary: 'GET /repositories/{id}/status'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/repositories/{id}/sync':
+    post:
+      operationId: postRepositoriesByIdSync
+      summary: 'POST /repositories/{id}/sync'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /schedule:
+    get:
+      operationId: getSchedule
+      summary: 'GET /schedule'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /search:
+    get:
+      operationId: getSearch
+      summary: 'GET /search'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - name: types
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /services/health:
+    get:
+      operationId: getServicesHealth
+      summary: 'GET /services/health'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /sessions:
+    get:
+      operationId: getSessions
+      summary: 'GET /sessions'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: repositoryId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: sessionType
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - managed
+              - observed
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - created
+              - running
+              - paused
+              - completed
+              - failed
+              - archived
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postSessions
+      summary: 'POST /sessions'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - projectId
+                - workingDirectory
+              additionalProperties: false
+              properties:
+                projectId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                workingDirectory:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                repositoryId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                branch:
+                  type: string
+                  maxLength: 255
+                title:
+                  type: string
+                  maxLength: 200
+                model:
+                  type: string
+                  maxLength: 128
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}':
+    get:
+      operationId: getSessionsById
+      summary: 'GET /sessions/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchSessionsById
+      summary: 'PATCH /sessions/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 200
+                notes:
+                  type:
+                    - string
+                    - 'null'
+                projectId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/archive':
+    post:
+      operationId: postSessionsByIdArchive
+      summary: 'POST /sessions/{id}/archive'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/clone':
+    post:
+      operationId: postSessionsByIdClone
+      summary: 'POST /sessions/{id}/clone'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - 'null'
+              additionalProperties: false
+              properties:
+                title:
+                  type: string
+                  maxLength: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/commits':
+    get:
+      operationId: getSessionsByIdCommits
+      summary: 'GET /sessions/{id}/commits'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/end':
+    post:
+      operationId: postSessionsByIdEnd
+      summary: 'POST /sessions/{id}/end'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/files':
+    get:
+      operationId: getSessionsByIdFiles
+      summary: 'GET /sessions/{id}/files'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/generate-adr':
+    post:
+      operationId: postSessionsByIdGenerateAdr
+      summary: 'POST /sessions/{id}/generate-adr'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/interrupt':
+    post:
+      operationId: postSessionsByIdInterrupt
+      summary: 'POST /sessions/{id}/interrupt'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/messages':
+    get:
+      operationId: getSessionsByIdMessages
+      summary: 'GET /sessions/{id}/messages'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - user
+              - assistant
+              - system
+              - tool
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - complete
+              - pending
+              - interrupted
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/pause':
+    post:
+      operationId: postSessionsByIdPause
+      summary: 'POST /sessions/{id}/pause'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/resume':
+    post:
+      operationId: postSessionsByIdResume
+      summary: 'POST /sessions/{id}/resume'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/start':
+    post:
+      operationId: postSessionsByIdStart
+      summary: 'POST /sessions/{id}/start'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/timeline':
+    get:
+      operationId: getSessionsByIdTimeline
+      summary: 'GET /sessions/{id}/timeline'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings:
+    get:
+      operationId: getSettings
+      summary: 'GET /settings'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/agents:
+    put:
+      operationId: putSettingsAgents
+      summary: 'PUT /settings/agents'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/general:
+    put:
+      operationId: putSettingsGeneral
+      summary: 'PUT /settings/general'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                instanceName:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                timezone:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                dateFormat:
+                  type: string
+                  enum:
+                    - YYYY-MM-DD
+                    - DD-MM-YYYY
+                    - MM/DD/YYYY
+                    - 'D MMM YYYY'
+                timeFormat:
+                  type: string
+                  enum:
+                    - '24h'
+                    - '12h'
+                theme:
+                  type: string
+                  enum:
+                    - dark
+                    - light
+                defaultLandingPage:
+                  type: string
+                  enum:
+                    - dashboard
+                    - projects
+                    - sessions
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations:
+    get:
+      operationId: getSettingsIntegrations
+      summary: 'GET /settings/integrations'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/claude-code:
+    put:
+      operationId: putSettingsIntegrationsClaudeCode
+      summary: 'PUT /settings/integrations/claude-code'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cliPath:
+                  type: string
+                  maxLength: 1024
+                defaultModel:
+                  type: string
+                  maxLength: 200
+                maxConcurrentSessions:
+                  type: integer
+                  minimum: 1
+                  maximum: 64
+                costBudget:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    dailyUsd:
+                      type:
+                        - number
+                        - 'null'
+                      minimum: 0
+                      maximum: 1000000
+                    perSessionUsd:
+                      type:
+                        - number
+                        - 'null'
+                      minimum: 0
+                      maximum: 1000000
+                    alertThresholdPercent:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/claude-code/test-connection:
+    post:
+      operationId: postSettingsIntegrationsClaudeCodeTestConnection
+      summary: 'POST /settings/integrations/claude-code/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/github:
+    put:
+      operationId: putSettingsIntegrationsGithub
+      summary: 'PUT /settings/integrations/github'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 4096
+                account:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 120
+                organizations:
+                  type: array
+                  maxItems: 64
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                discoveryRoots:
+                  type: array
+                  maxItems: 64
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 1024
+                syncIntervalMinutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 525600
+                workflowMode:
+                  type: string
+                  enum:
+                    - manual
+                    - assisted
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/github/test-connection:
+    post:
+      operationId: postSettingsIntegrationsGithubTestConnection
+      summary: 'POST /settings/integrations/github/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/obsidian:
+    put:
+      operationId: putSettingsIntegrationsObsidian
+      summary: 'PUT /settings/integrations/obsidian'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vaultPath:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 1024
+                syncMode:
+                  type: string
+                  enum:
+                    - two_way
+                    - one_way
+                    - paused
+                syncIntervalMinutes:
+                  type: integer
+                  minimum: 0
+                  maximum: 525600
+                conflictPolicy:
+                  type: string
+                  enum:
+                    - newer_wins
+                    - obsidian_wins
+                    - mission_control_wins
+                    - manual
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/obsidian/test-connection:
+    post:
+      operationId: postSettingsIntegrationsObsidianTestConnection
+      summary: 'POST /settings/integrations/obsidian/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/ollama:
+    put:
+      operationId: putSettingsIntegrationsOllama
+      summary: 'PUT /settings/integrations/ollama'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                defaultModel:
+                  type: string
+                  maxLength: 200
+                enabled:
+                  type: boolean
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/ollama/test-connection:
+    post:
+      operationId: postSettingsIntegrationsOllamaTestConnection
+      summary: 'POST /settings/integrations/ollama/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/qdrant:
+    put:
+      operationId: putSettingsIntegrationsQdrant
+      summary: 'PUT /settings/integrations/qdrant'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+                apiKey:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 4096
+                embeddingModel:
+                  type: string
+                  maxLength: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/qdrant/test-connection:
+    post:
+      operationId: postSettingsIntegrationsQdrantTestConnection
+      summary: 'POST /settings/integrations/qdrant/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/telegram:
+    put:
+      operationId: putSettingsIntegrationsTelegram
+      summary: 'PUT /settings/integrations/telegram'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                botToken:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 4096
+                chatId:
+                  type:
+                    - string
+                    - 'null'
+                  minLength: 1
+                  maxLength: 120
+                enabled:
+                  type: boolean
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/integrations/telegram/test-connection:
+    post:
+      operationId: postSettingsIntegrationsTelegramTestConnection
+      summary: 'POST /settings/integrations/telegram/test-connection'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/memory:
+    put:
+      operationId: putSettingsMemory
+      summary: 'PUT /settings/memory'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/notifications:
+    put:
+      operationId: putSettingsNotifications
+      summary: 'PUT /settings/notifications'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                events:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    sessionComplete:
+                      type: boolean
+                    sessionFailed:
+                      type: boolean
+                    syncFailed:
+                      type: boolean
+                    repositoryProblem:
+                      type: boolean
+                    costBudgetAlert:
+                      type: boolean
+                dailyReport:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    enabled:
+                      type: boolean
+                    time:
+                      type: string
+                      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+                quietHours:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    enabled:
+                      type: boolean
+                    start:
+                      type: string
+                      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+                    end:
+                      type: string
+                      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /settings/security:
+    put:
+      operationId: putSettingsSecurity
+      summary: 'PUT /settings/security'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionTimeoutMinutes:
+                  type: integer
+                  minimum: 1
+                  maximum: 525600
+                auditLogRetentionDays:
+                  type: integer
+                  minimum: 0
+                  maximum: 3650
+                allowedOrigins:
+                  type: array
+                  maxItems: 64
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 255
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/settings/{category}':
+    get:
+      operationId: getSettingsByCategory
+      summary: 'GET /settings/{category}'
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 32
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    put:
+      operationId: putSettingsByCategory
+      summary: 'PUT /settings/{category}'
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 32
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: open
+        bodyOpenPaths:
+          - ''
+  /spend:
+    get:
+      operationId: getSpend
+      summary: 'GET /spend'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /sync-runs:
+    get:
+      operationId: getSyncRuns
+      summary: 'GET /sync-runs'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postSyncRuns
+      summary: 'POST /sync-runs'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                kind:
+                  type: string
+                  enum:
+                    - obsidian
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /sync-runs/preview:
+    get:
+      operationId: getSyncRunsPreview
+      summary: 'GET /sync-runs/preview'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sync-runs/{id}':
+    get:
+      operationId: getSyncRunsById
+      summary: 'GET /sync-runs/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /ws:
+    get:
+      operationId: getWs
+      summary: 'GET /ws'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - details
+            - requestId
+          properties:
+            code:
+              type: string
+              pattern: '^[A-Z][A-Z0-9_]*$'
+            message:
+              type: string
+            details:
+              type:
+                - object
+                - 'null'
+            requestId:
+              type: string
+              description: 'Also returned as the X-Request-Id header, and in every log line.'
+  responses:
+    ErrorEnvelope:
+      description: 'Any non-2xx response (F5.4). The status code and the `error.code` registry entry carry the meaning; see docs/tds/04-api-contracts-and-events.md §1.3.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: mc_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: 'mct_ API token'

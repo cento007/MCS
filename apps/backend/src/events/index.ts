@@ -14,9 +14,16 @@
  *     fetchers only see committed rows, a job can never be observed before its domain change
  *     is visible.
  *
+ *  3. **The worker relay** (`relay.ts`) — the `LISTEN/NOTIFY` listener that injects
+ *     worker-produced F6 envelopes into the same in-process bus (TDS 04 §15.1). It is the
+ *     mirror image of (1): the outbox publishes events this process produced, the relay
+ *     publishes events another process produced, and every subscriber — the WebSocket hub
+ *     included — sees one stream with no notion of provenance.
+ *
  * The `QueuePort.enqueue` signature in `@mc/shared` already forces the transaction handle,
  * so an implementation that forgets the outbox does not typecheck.
  */
 
 export * from './bus.js';
 export * from './outbox.js';
+export * from './relay.js';

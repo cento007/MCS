@@ -49,10 +49,17 @@ export const MAX_FRAME_ID_LENGTH = 128;
 export const MAX_PROTOCOL_VIOLATIONS = 5;
 
 /**
- * Close codes (TDS 04 §14.6). `SLOW_CONSUMER` is an addition — see `connection.ts` for the
- * backpressure policy and the report of this contract gap. It is deliberately NOT `4001`:
- * WS4 §5.1 makes `4001` the one code a client must not retry, and a slow consumer must
- * reconnect and refetch (§14.7), not log the operator out.
+ * Close codes (TDS 04 §14.6). `SLOW_CONSUMER` and `RELAY_GAP` are additions — see
+ * `connection.ts` for the backpressure policy and `events/relay.ts` for the relay gap policy,
+ * both of which report their contract gap. Neither is `4001`: WS4 §5.1 makes `4001` the one
+ * code a client must not retry, and both of these mean *reconnect and refetch* (§14.7) rather
+ * than *you are logged out*.
+ *
+ * `RELAY_GAP` (4003) fires when the Backend's `LISTEN` connection was re-established after a
+ * drop. `NOTIFY` keeps no backlog, so the server cannot know what the client missed and cannot
+ * replay it (F6.3 forbids a replay buffer anyway). §14.7 already defines the client's recovery
+ * — re-subscribe and refetch per channel — so the honest move is to close and let that run,
+ * rather than leave a connected browser silently stale.
  */
 export const WS_CLOSE = Object.freeze({
   NORMAL: 1000,
@@ -60,6 +67,7 @@ export const WS_CLOSE = Object.freeze({
   PROTOCOL_VIOLATION: 4000,
   AUTH_EXPIRED: 4001,
   SLOW_CONSUMER: 4002,
+  RELAY_GAP: 4003,
 } as const);
 
 export type WsCloseCode = (typeof WS_CLOSE)[keyof typeof WS_CLOSE];

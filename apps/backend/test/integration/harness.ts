@@ -148,6 +148,11 @@ export function createTestApp(
       : { loginRateLimiter: options.loginRateLimiter }),
     ...(options.prompts === undefined ? {} : { prompts: options.prompts }),
     ...(options.eventBus === undefined ? {} : { eventBus: options.eventBus }),
+    // The worker -> hub relay (TDS 04 §15.1) is **off unless a test asks for it**. It costs a
+    // dedicated `LISTEN` connection per app, and this tier already runs eight forks against a
+    // stock `max_connections`; a suite that never publishes a worker event would pay that for
+    // nothing. `events/relay.int.test.ts` passes its own wiring and exercises the real thing.
+    eventRelay: options.eventRelay ?? false,
     // Test Connection's network / filesystem / child-process edges (§7.4). Forwarded so an
     // integration test can exercise the settings routes end to end **without** an outbound
     // request: a suite that quietly reaches api.github.com is a suite that fails on a train.

@@ -1,7 +1,9 @@
 import { newId } from '@mc/shared';
 import type { FastifyError, FastifyInstance } from 'fastify';
+import { registerBodyStrictness } from './body-strictness.js';
 import { ApiError, type ErrorCode, errorEnvelope } from './errors.js';
 import { registerQueryStrictness } from './query-strictness.js';
+import { registerRouteTable } from './route-table.js';
 
 /**
  * `http/` — Fastify wiring: route plugins per domain, the F5.4 error envelope, request-id,
@@ -28,21 +30,28 @@ export function generateRequestId(inbound: unknown): string {
 /**
  * Register cross-cutting HTTP behaviour: the `X-Request-Id` response header on every
  * reply, the F5.4 error envelope for thrown errors, the F5.4 envelope for 404s
- * (which Fastify otherwise renders in its own shape), and query-parameter strictness for
- * every route under `/api/` (`query-strictness.ts`).
+ * (which Fastify otherwise renders in its own shape), the route table every "every route"
+ * question is answered from (`route-table.ts`), and strictness for both halves of the request
+ * — query parameters (`query-strictness.ts`) and body fields (`body-strictness.ts`).
  *
- * Called before any route is registered, and that ordering is load-bearing for the query
- * guard: Fastify binds hooks to a route when the route is registered, so a hook added later
- * would cover nothing that already exists.
+ * Called before any route is registered, and that ordering is load-bearing for all three:
+ * Fastify binds hooks to a route when the route is registered, so a hook added later would
+ * cover nothing that already exists.
  */
 export function registerHttpConventions(app: FastifyInstance): void {
   app.addHook('onSend', async (request, reply) => {
     reply.header(REQUEST_ID_HEADER, request.id);
   });
 
-  // An unknown query parameter is a rejected request, not a dropped filter. See the module
-  // header for why that is a 400 and why it is a single global hook rather than per-route.
+  // First: the two guards below publish views over this table, and the F5.1 OpenAPI document
+  // is generated from it.
+  registerRouteTable(app);
+
+  // An unknown query parameter is a rejected request, not a dropped filter; an unknown body
+  // field is a rejected request, not a dropped instruction. See each module header for why
+  // that is a 400 and why each is a single global hook rather than a per-route opt-in.
   registerQueryStrictness(app);
+  registerBodyStrictness(app);
 
   app.setNotFoundHandler((request, reply) => {
     void reply
@@ -137,5 +146,7 @@ export function registerHttpConventions(app: FastifyInstance): void {
   });
 }
 
+export * from './body-strictness.js';
 export * from './errors.js';
 export * from './query-strictness.js';
+export * from './route-table.js';

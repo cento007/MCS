@@ -1349,6 +1349,20 @@ flowchart LR
 
 Legend — **Queue**: pg-boss consumers (durable, at-least-once). **WS**: relay channels (best-effort). *Notif.* means the consumer decides per `NotificationsSettings` whether to create a Notification.
 
+> **Read the "Queue consumers" column as *which process acts on this event*, not as "these processes all subscribe to one shared queue" — arbitration A16, 2026-08-13.**
+>
+> Taken literally, this column is not implementable. **pg-boss is a competing-consumer substrate:** subscribers to the same queue name share the work, so each envelope is delivered to exactly *one* of them. Two workers subscribing to a shared `events` queue do not both see an event — they steal it from each other, silently, with no error on either side. Several rows below list both workers, and a naive reading of them produces a system that loses events under load and cannot be debugged from either process's logs.
+>
+> **The implemented topology, and the rule for anything added later:**
+>
+> 1. **The Backend produces.** It subscribes to its own in-process, post-commit event bus and, in the *same* transaction as the domain write, enqueues work to a **queue dedicated to one consumer** (`notification.deliver`, `repository.sync`, the sync queue, …). Row-and-job atomicity needs an open transaction handle, which the Backend has and a worker does not — so production belongs there regardless.
+> 2. **Each worker consumes only its own queue.** No queue has two consuming processes. A worker never subscribes to a general `events` queue.
+> 3. **Fan-out to the browser is `LISTEN/NOTIFY`, not pg-boss** (§15.1) — a genuine broadcast, where every listening Backend process sees every event. That is the only mechanism here with fan-out semantics; the queue is deliberately not one.
+>
+> This was found the hard way: the Telegram Worker's implementation notes record that its `events` subscription was, at the time, the **only drain** on that queue, so `pgboss.job` would have grown unbounded without it — and adding the Sync Worker as a second subscriber would have made the two steal each other's envelopes. Rule 1 is what removed the shared queue entirely.
+>
+> Because the Backend produces, `cost_budget_alert` is not a special case — §8's note about it being Backend-produced now describes every Notification, not one exception.
+
 | # | Event type | Ph | Producer | Payload fields | Queue consumers | WS channels |
 |---|---|---|---|---|---|---|
 | 1 | `session.created` | 1 | backend | `sessionId`, `projectId`, `sessionType` (`managed`\|`observed`), `trigger` (`user`\|`system`) | — | `sessions` |

@@ -40,6 +40,18 @@ import { DeliveryAbortedError, type DeliveryResult } from './delivery.js';
  * is a competing-consumer substrate — one job goes to exactly one subscriber — so two workers
  * on `events` will steal each other's envelopes. Fixing that needs either per-consumer queues
  * or a fan-out relay; neither exists, and inventing one here would be a foundation change.
+ *
+ * ## Outbound: `notification.sent` / `notification.failed` now reach the browser
+ *
+ * They used to reach nobody — emitted onto `events`, drained above, discarded. Every emit in
+ * this process now goes through `emitWorkerEvent`, which enqueues the durable job **and** raises
+ * a `pg_notify` on the same transaction (TDS 04 §15.1); the Backend's `events/relay.ts` injects
+ * it into the in-process bus and the hub puts it on the `notifications` channel.
+ *
+ * That path is a **broadcast, not a queue**, which is exactly why it does not repeat the trap
+ * above: `NOTIFY` has no row and no lock, so every listening Backend gets its own copy and none
+ * can claim another's. The drain on `events` stays what it is — a drain — and the two mechanisms
+ * do not compete because they are not the same mechanism.
  */
 
 /**

@@ -327,6 +327,34 @@ The session panel's tablist changed selection on arrow keys **without moving DOM
 - `repositories.last_polled_sha` structurally scopes commit tracking to the default branch, which is what limits attribution; widening it is a design change, not a code change.
 - GitHub Enterprise is unrepresentable — the settings keys carry no API base URL. Correct for V1, recorded.
 
+## 2026-08-13 — Phase 2 finalization: the five outstanding items
+
+All five closed. Two agents were cut off mid-verification (one stopped by the user, one by a session limit), so their work was verified by running it rather than from their reports.
+
+**A16 — one queue, one consuming process.** The event catalog listed both workers as consumers of a shared `events` queue. pg-boss is competing-consumer: subscribers to one queue *share* the work, so each envelope reaches exactly one of them and two workers silently take events from each other, with correct-looking logs on both sides. Ruled and recorded: the Backend produces (it needs an open transaction for row-and-job atomicity anyway), each worker consumes exactly one dedicated queue, and fan-out to browsers is `LISTEN/NOTIFY` — the only mechanism in the design with broadcast semantics. Not a Foundation change: F3 chose pg-boss behind a port and never specified consumer topology.
+
+**A17 — Obsidian V1 scope.** PRD §7.2 lists four note types; V1 delivers two. **There is no Feature entity and no Requirements entity in F4.1**, so there is nothing to project — building them would mean inventing entities locally, which is exactly what workstreams escalate rather than do. Recorded with the precise boundary: ADRs export *and* import (six fields); Sessions export-only, terminal states only; notes without an `mcId` are invisible to sync entirely; deletions propagate in neither direction; and Mission Control never renames a note it wrote, because Obsidian rebuilds its `[[wikilink]]` index on rename.
+
+**OpenAPI**, **body-field strictness** (closing the `removeAdditional` class that produced the token privilege-escalation and the silent no-op `PATCH`), and the **worker→WebSocket relay** all landed with tests.
+
+### Obsidian conflict handling, verified against the report
+
+The two things a green test run cannot show:
+
+- **Nothing is overwritten before its loser is preserved.** The conflict copy is taken *before* the write and throws on failure, so there is no path that overwrites a version it did not first save. `mission_control_wins` leaves a `.conflict-<timestamp>.md` beside the note; `obsidian_wins` records the replaced fields in `audit_log_entries`; `manual` writes nothing on either side and stays a conflict every run until the operator acts. Detection is two content hashes, never timestamps — one for our projection, one for the file — because a single hash would report a change on every run forever, given the file legitimately contains operator-owned sections.
+- **`newer_wins` ties break toward `mission_control_wins` for a measured reason:** on Windows a file written *before* a row update came back 2 ms *newer*. Inside the 2 s skew margin it picks the outcome whose loser survives in the operator's own vault rather than only in an audit row.
+
+Atomic writes are temp-file-and-rename in the same directory, proven by a test that throws from an injected pre-rename hook and asserts the previous content is byte-identical and no temp file remains.
+
+### Two more pre-existing bugs found
+
+- **`isUniqueViolation` never returned true.** Drizzle 0.45 wraps query failures in its own error type with the PostgreSQL error on `cause`, so a top-level SQLSTATE check answered `false` for every violation — turning every duplicate into `500 INTERNAL` instead of `409 CONFLICT`, and silently disabling the `repositories.local_path` uniqueness guard. Now walks the cause chain, bounded.
+- **The Sync Worker never provisioned the `events` queue.** pg-boss 10+ refuses to `send` to a queue that does not exist, so on a fresh install whose worker started before the Backend, every event it emitted failed and no sync could complete. Caught by an integration test. Note the distinction it drew: *provisioning* (`createQueue`) is required to produce; *subscribing* (`work()`) is the hazard A16 forbids.
+
+### Integration tier: worker cap lowered 8 → 4
+
+Three tests failed at eight workers with single files taking 279 s and 331 s; the same state-machine file passes 32/32 alone in 40 s. Connections were never the constraint (`pg_stat_activity` showed 6 against a limit of 100) — **argon2id is**: deliberately memory-hard at 19 MiB, paid by every seeded user and every login, so eight forks hashing concurrently starve each other and push unrelated tests in the same fork past the 30 s timeout. The symptom is indistinguishable from a real bug, which is why the reasoning is pinned in the config. Four trades wall-clock for a tier where red means broken code rather than a busy machine.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

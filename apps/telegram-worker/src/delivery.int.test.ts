@@ -1,6 +1,13 @@
-import { MAX_DELIVERY_ATTEMPTS, type PgBossQueue, QUEUE_NAMES } from '@mc/shared';
+import {
+  decodeRelayEvent,
+  EVENT_RELAY_CHANNEL,
+  MAX_DELIVERY_ATTEMPTS,
+  type PgBossQueue,
+  QUEUE_NAMES,
+} from '@mc/shared';
 import { sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   configureTelegram,
   denyingHttp,
@@ -19,6 +26,7 @@ import {
   setUnreadableBotToken,
   TEST_CHAT_ID,
   testDatabase,
+  testDatabaseUrl,
   testEncryptionKey,
   testQueue,
   truncateAll,
@@ -89,6 +97,49 @@ describe('a successful delivery', () => {
     expect(row.telegramError).toBeNull();
 
     expect(await eventsOfType('notification.sent')).toHaveLength(1);
+  });
+
+  it('also raises the LISTEN/NOTIFY relay, so `notification.sent` reaches a browser', async () => {
+    // The defect this closes: `notification.sent` used to be enqueued onto `events`, drained by
+    // this worker's own consumer, and discarded — "emitted by the Telegram Worker and consumed
+    // by nobody". A durable queue row is necessary and not sufficient; the Backend's WS hub
+    // learns about it only through the notify half (TDS 04 §15.1).
+    //
+    // A **real second connection** issues the `LISTEN`, because the property under test is
+    // cross-connection fan-out and a mock would simply assume it.
+    await configureTelegram();
+    const id = await seedNotification({ userId });
+
+    const listener = new pg.Client({ connectionString: testDatabaseUrl() });
+    const received: string[] = [];
+    listener.on('notification', (message) => {
+      if (message.payload !== undefined) received.push(message.payload);
+    });
+
+    try {
+      await listener.connect();
+      await listener.query(`LISTEN ${EVENT_RELAY_CHANNEL}`);
+
+      await service(recordingHttp(okResponse()).port).deliver({ notificationId: id, attempt: 1 });
+
+      await vi.waitFor(() => {
+        expect(received).toHaveLength(1);
+      });
+
+      const decoded = decodeRelayEvent(received[0] ?? '');
+      expect(decoded.ok).toBe(true);
+      if (!decoded.ok) return;
+      expect(decoded.event).toMatchObject({
+        type: 'notification.sent',
+        source: 'telegram-worker',
+        payload: { notificationId: id, channel: 'telegram' },
+      });
+
+      // The durable copy is still there for its own consumer: the relay is additive.
+      expect(await eventsOfType('notification.sent')).toHaveLength(1);
+    } finally {
+      await listener.end();
+    }
   });
 
   it('unseals the token through the real crypto path and puts it in the URL only', async () => {

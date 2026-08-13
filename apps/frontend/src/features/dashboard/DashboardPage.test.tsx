@@ -63,8 +63,23 @@ describe('widget order (§5.2)', () => {
   it('puts Needs Attention first and follows the specified sequence', async () => {
     // Re-stubbed with a failure so Needs Attention renders its card form; the "all clear"
     // form is a rule with no heading, which the empty-state suite covers instead.
+    //
+    // `completedAt` is relative to *now*, as in `NeedsAttention.test.tsx`. Needs Attention
+    // filters failures to the last 24 h against the real clock (`attention.ts`), so a session
+    // carrying the fixture's fixed `updatedAt` (2026-08-12T12:42:15Z) silently aged out of the
+    // widget on 2026-08-13 and took this assertion with it — a test that would have passed
+    // yesterday and failed forever after.
     stubDashboard(api, {
-      sessions: [RUNNING, PAUSED, makeSession({ id: 'f-1', state: 'failed', title: 'Broke' })],
+      sessions: [
+        RUNNING,
+        PAUSED,
+        makeSession({
+          id: 'f-1',
+          state: 'failed',
+          title: 'Broke',
+          completedAt: new Date(Date.now() - 120_000).toISOString(),
+        }),
+      ],
       spend: makeSpend({ dayStatus: 'ok' }),
     });
 

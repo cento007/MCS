@@ -42,9 +42,21 @@ export default defineConfig({
      * Eight workers caps the tier at roughly 80 connections, inside the default limit with room
      * for the admin client `globalSetup` uses and for a psql session left open by a developer.
      *
+     * **Lowered to 4 on 2026-08-13, and the binding constraint changed from connections to CPU.**
+     * At eight, `state-machine.int.test.ts` took 279 s and `github.int.test.ts` 331 s, and three
+     * tests died on the 30 s `testTimeout`; the same state-machine file run alone passes 32/32 in
+     * 40 s. Connections were never the problem in that run — `pg_stat_activity` showed 6 against
+     * a limit of 100. **Argon2id is:** it is deliberately memory-hard (19 MiB, t=2) and every
+     * seeded user and every login pays it, so eight forks hashing concurrently starve each other
+     * and inflate every *other* test in the same fork past its timeout. The symptom is
+     * indistinguishable from a real bug, which is what makes it worth pinning here.
+     *
+     * Four is a deliberate trade of wall-clock for a tier that means something: a red run should
+     * indicate broken code, not a busy machine.
+     *
      * (Vitest 4 removed `poolOptions`; `maxWorkers` is the top-level replacement.)
      */
-    maxWorkers: 8,
+    maxWorkers: 4,
     // Argon2id is deliberately expensive (19 MiB, t=2) and every login test pays for it.
     testTimeout: 30_000,
     hookTimeout: 120_000,

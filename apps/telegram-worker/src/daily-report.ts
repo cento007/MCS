@@ -5,6 +5,7 @@ import {
   createJob,
   type Db,
   decideNotification,
+  emitWorkerEvent,
   type LocalDayWindow,
   type NotificationPayload,
   QUEUE_NAMES,
@@ -12,6 +13,7 @@ import {
   readLocalDayWindow,
   readQuietHoursWindow,
   schema,
+  type UndeliverableEvent,
   writeNotification,
 } from '@mc/shared';
 import { and, count, desc, eq, gte, isNotNull, lt, sql } from 'drizzle-orm';
@@ -118,12 +120,15 @@ export interface DailyReportServiceOptions {
   readonly queue: Queue;
   readonly now?: () => Date;
   readonly onError?: (error: unknown, context: string) => void;
+  /** The best-effort relay could not carry an envelope (TDS 04 §15.1). Logged, never fatal. */
+  readonly onUndeliverable?: (info: UndeliverableEvent) => void;
 }
 
 export class DailyReportService {
   readonly #db: Db;
   readonly #queue: Queue;
   readonly #now: () => Date;
+  readonly #onUndeliverable: ((info: UndeliverableEvent) => void) | undefined;
 
   #stopping = false;
 
@@ -131,6 +136,7 @@ export class DailyReportService {
     this.#db = options.db;
     this.#queue = options.queue;
     this.#now = options.now ?? (() => new Date());
+    this.#onUndeliverable = options.onUndeliverable;
   }
 
   setStopping(stopping: boolean): void {
@@ -240,9 +246,13 @@ export class DailyReportService {
         now,
       });
 
-      await this.#queue.enqueue(
+      // Durable enqueue + the best-effort `LISTEN/NOTIFY` relay to the Backend's hub, on this
+      // same transaction (TDS 04 §15.1). `emitWorkerEvent` is the only supported emit path in a
+      // worker: doing the enqueue alone would leave the `notifications` WS channel unaware that
+      // the daily report exists until the browser next polled.
+      await emitWorkerEvent(
         tx,
-        QUEUE_NAMES.EVENTS,
+        this.#queue,
         createEvent(
           'notification.created',
           'telegram-worker',
@@ -253,6 +263,11 @@ export class DailyReportService {
           },
           { occurredAt: now },
         ),
+        {
+          ...(this.#onUndeliverable === undefined
+            ? {}
+            : { onUndeliverable: this.#onUndeliverable }),
+        },
       );
 
       return written.id;

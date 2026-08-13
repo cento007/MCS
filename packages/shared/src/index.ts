@@ -17,6 +17,8 @@
  *                  Backend and the Telegram Worker both produce Notifications
  *   obsidian the two-way vault sync engine (PRD §7.1) — shared because the Sync Worker runs
  *                  syncs and the Backend serves the dry-run preview from the same planner
+ *   relay    the worker -> Backend `LISTEN/NOTIFY` event relay (TDS 04 §15.1): the `NOTIFY`
+ *                  wire codec and the producer that publishes on the caller's transaction
  *
  * Still owed by later workstreams: full `entities` DTOs.
  */
@@ -29,5 +31,6 @@ export * from './logger/index.js';
 export * from './notifications/index.js';
 export * from './obsidian/index.js';
 export * from './queue/index.js';
+export * from './relay/index.js';
 export * from './runtime/index.js';
 export * from './types.js';

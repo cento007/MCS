@@ -45,6 +45,18 @@ const categoryParamsSchema = {
   properties: { category: { type: 'string', maxLength: 32 } },
 } as const;
 
+/**
+ * The body of the parametric `PUT` fallback is deliberately **not** inspected
+ * (`http/body-strictness.ts`), and this is the one place in the product where that is right.
+ *
+ * That route matches only categories that have no static route, so it does exactly one thing:
+ * throw `NOT_FOUND` for the category. Holding the body to an empty allowlist would answer
+ * `PUT /settings/favourites { "theme": "light" }` with "unknown body field: theme" — a
+ * complaint about the fields of a resource that does not exist, which names the wrong problem
+ * and hides the real one.
+ */
+const uninspectedBodySchema = { type: 'object', additionalProperties: true } as const;
+
 interface CategoryParams {
   category: string;
 }
@@ -143,7 +155,7 @@ export function registerSettingsRoutes(app: FastifyInstance, options: SettingsRo
 
   app.put<{ Params: CategoryParams }>(
     '/api/v1/settings/:category',
-    { schema: { params: categoryParamsSchema } },
+    { schema: { params: categoryParamsSchema, body: uninspectedBodySchema } },
     async (request) => {
       // Always throws: every writable category has its own static route above.
       documentCategory(request.params);

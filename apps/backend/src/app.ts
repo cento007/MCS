@@ -11,7 +11,13 @@ import { type AdrModule, registerAdrs } from './adrs/index.js';
 import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { registerCommits } from './commits/index.js';
-import { createEventBus, type EventBus, Outbox } from './events/index.js';
+import {
+  createEventBus,
+  createPgRelayClient,
+  type EventBus,
+  EventRelay,
+  Outbox,
+} from './events/index.js';
 import {
   type GithubHttpPort,
   type GithubModule,
@@ -49,6 +55,7 @@ import {
   type PromptPort,
   registerWebSocketHub,
   type WebSocketHub,
+  WS_CLOSE,
 } from './ws/index.js';
 
 /**
@@ -107,6 +114,17 @@ export interface BuildAppOptions {
    * so events reach the hub and the Session registry without any further wiring.
    */
   readonly eventBus?: EventBusPort | undefined;
+  /**
+   * The worker -> hub event relay (TDS 04 §15.1): a dedicated `LISTEN mc_events` connection
+   * whose envelopes are injected into the in-process bus above.
+   *
+   * On by default whenever a connection string is resolvable — `main.ts` supplies `config`, so
+   * production gets it with no extra wiring and cannot forget it. `false` builds an app with no
+   * relay at all, which is what the integration harness passes: an extra dedicated PostgreSQL
+   * connection per test app buys nothing for a suite that never publishes a worker event, and
+   * `events/relay.int.test.ts` opts back in explicitly.
+   */
+  readonly eventRelay?: EventRelayWiring | false | undefined;
   /** Prompt submission (§6.4). Supplied by the wrapper workstream; until then frames are refused. */
   readonly prompts?: PromptPort | undefined;
   /**
@@ -143,12 +161,26 @@ export interface BuildAppOptions {
   readonly obsidianScanBounds?: ScanBounds | undefined;
 }
 
+/** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
+export interface EventRelayWiring {
+  /** Defaults to `config.databaseUrl`. */
+  readonly connectionString?: string | undefined;
+  readonly channel?: string | undefined;
+  readonly reconnectDelayMs?: number | undefined;
+  readonly maxReconnectDelayMs?: number | undefined;
+}
+
 export interface BuiltApp {
   readonly app: FastifyInstance;
   readonly auth: AuthService;
   readonly hub: WebSocketHub;
   readonly bus: EventBus;
   readonly outbox: Outbox;
+  /**
+   * `null` when no relay was wired (no connection string, or explicitly disabled). Worker-
+   * produced events then reach nothing in this process, which is the pre-Phase-2 behaviour.
+   */
+  readonly eventRelay: EventRelay | null;
   readonly sessions: SessionModule;
   /** Observed-session ingest: `POST /hook-events` + the transcript tailer (TDS 02 §6). */
   readonly observed: ObservedIngestModule;
@@ -290,6 +322,11 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   // `createDeltaRelay` for why this is a late attach rather than a constructor argument.
   sessions.managed?.deltas.attach(hub);
 
+  // The worker -> hub relay (TDS 04 §15.1). Built after the hub because its gap policy needs it,
+  // and it publishes onto `bus` — the same bus the outbox publishes to post-commit — so a
+  // relayed `sync.completed` is indistinguishable from an in-process one everywhere downstream.
+  const eventRelay = buildEventRelay(app, options, bus, hub);
+
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
   // schedule (§7.7), spend (§7.8) and notifications (§8). Health is registered last because it
   // self-reports the hub's connection count and the registry's slot usage (TDS 02 §7.1), and
@@ -307,6 +344,9 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
           wsConnections: hub.connectionCount,
           activeSessions: sessions.registry.slotsInUse,
           maxConcurrentSessions: sessions.registry.maxConcurrentSessions,
+          // A dead relay is invisible by nature — worker events simply stop arriving — so its
+          // state is reported where an operator already looks (Settings -> Services).
+          ...(eventRelay === null ? {} : { eventRelay: eventRelay.status }),
         };
       },
     }),
@@ -399,6 +439,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     hub,
     bus,
     outbox,
+    eventRelay,
     sessions,
     observed,
     serviceHealth,
@@ -414,4 +455,66 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   return buildAppWithServices(options).app;
+}
+
+/**
+ * Construct and wire the worker event relay, or return `null` when there is nothing to connect
+ * to (`eventRelay: false`, or an app built without `config`).
+ *
+ * Lifecycle deliberately hangs off Fastify rather than off `main.ts`: `onReady` means every
+ * caller that boots the app — including `app.inject()` in a test — gets a live relay, and
+ * `onClose` means nobody has to remember to stop it. A failed first connect does not reject;
+ * the relay schedules a retry, because a database that is still coming up must not stop the
+ * Backend from serving `/health`.
+ */
+function buildEventRelay(
+  app: FastifyInstance,
+  options: BuildAppOptions,
+  bus: EventBus,
+  hub: WebSocketHub,
+): EventRelay | null {
+  if (options.eventRelay === false) return null;
+
+  const wiring = options.eventRelay ?? {};
+  const connectionString = wiring.connectionString ?? options.config?.databaseUrl;
+  if (connectionString === undefined) return null;
+
+  const relay = new EventRelay({
+    bus,
+    log: app.log,
+    newClient: () => createPgRelayClient(connectionString),
+    ...(wiring.channel === undefined ? {} : { channel: wiring.channel }),
+    ...(wiring.reconnectDelayMs === undefined ? {} : { reconnectDelayMs: wiring.reconnectDelayMs }),
+    ...(wiring.maxReconnectDelayMs === undefined
+      ? {}
+      : { maxReconnectDelayMs: wiring.maxReconnectDelayMs }),
+    /**
+     * The gap policy, stated at the wiring site rather than buried in the relay.
+     *
+     * `NOTIFY` has no backlog: whatever a worker raised while the listener was down is gone,
+     * and F6.3 forbids the hub keeping a replay buffer that could serve it. §14.7 already
+     * defines the recovery — reconnect, re-subscribe, refetch per channel — so the server
+     * invokes it. Closing every connection is a blunt instrument for a rare event (a database
+     * restart, a network blip), and the alternative is a browser that looks live while its
+     * sync row and notification list quietly diverge from the truth.
+     */
+    onGap: ({ downForMs }) => {
+      const affected = hub.connectionCount;
+      if (affected === 0) return;
+      app.log.warn(
+        { downForMs, connections: affected },
+        'closing websocket connections after an event relay gap so clients refetch (§14.7)',
+      );
+      hub.closeAll(WS_CLOSE.RELAY_GAP, 'event relay gap; reconnect and refetch');
+    },
+  });
+
+  app.addHook('onReady', async () => {
+    await relay.start();
+  });
+  app.addHook('onClose', async () => {
+    await relay.stop();
+  });
+
+  return relay;
 }

@@ -34,6 +34,16 @@ import type { SyncJob, SyncResult } from './sync.js';
  * Worker already drains that queue. Two subscribers would steal each other's envelopes. See
  * `queue.ts` for the full note and for why nothing is lost by not subscribing.
  *
+ * ## Outbound: `sync.*` and `adr.created` do reach the browser
+ *
+ * Everything this worker emits goes through `WorkerOutbox`, which enqueues the durable job
+ * **and** raises a `pg_notify` on the same transaction (TDS 04 §15.1). The Backend's
+ * `events/relay.ts` listens on that channel and injects the envelope into its in-process bus,
+ * so `sync.started` / `sync.completed` / `sync.failed` / `sync.conflict_detected` land on the
+ * `sync` WebSocket channel exactly as a Backend-produced event would. That path is fan-out,
+ * not a queue: `NOTIFY` is broadcast to every listening session and has nothing to claim, so it
+ * cannot be raced the way a shared `events` subscription would be.
+ *
  * ## Shutdown
  *
  * `offWork` waits for the in-flight handler, so the abort must come **first**. A sync run can

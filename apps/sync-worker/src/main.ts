@@ -63,7 +63,18 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const outbox = new WorkerOutbox({ db: database.db, queue });
+  const outbox = new WorkerOutbox({
+    db: database.db,
+    queue,
+    // The relay is best-effort, so an envelope it cannot carry is a log line and nothing else —
+    // but it must be a log line, not silence. See `outbox.ts`.
+    onUndeliverable: ({ event, bytes, limit }) => {
+      log.warn(
+        { eventId: event.id, eventType: event.type, bytes, limit },
+        'event was too large for the LISTEN/NOTIFY relay; the durable queue copy is unaffected',
+      );
+    },
+  });
 
   const worker = createWorker({
     queue,

@@ -5,6 +5,7 @@ import {
   createLoggerFromConfig,
   createShutdownController,
   loadConfigOrExit,
+  type UndeliverableEvent,
 } from '@mc/shared';
 import { DailyReportService } from './daily-report.js';
 import { createDatabase } from './db.js';
@@ -63,15 +64,25 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // The relay is best-effort, so an envelope it cannot carry is a log line and nothing else —
+  // but it must be a log line, not silence (TDS 04 §15.1).
+  const onUndeliverable = ({ event, bytes, limit }: UndeliverableEvent): void => {
+    log.warn(
+      { eventId: event.id, eventType: event.type, bytes, limit },
+      'event was too large for the LISTEN/NOTIFY relay; the durable queue copy is unaffected',
+    );
+  };
+
   const delivery = new DeliveryService({
     db: database.db,
     queue,
     client: new TelegramClient({ http: createTelegramHttpPort() }),
     encryptionKey: config.encryptionKey,
     signal: inFlight.signal,
+    onUndeliverable,
   });
 
-  const dailyReport = new DailyReportService({ db: database.db, queue });
+  const dailyReport = new DailyReportService({ db: database.db, queue, onUndeliverable });
 
   const worker = createWorker({
     queue,

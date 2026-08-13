@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifySchema, RouteOptions } from 'fastify';
+import type { FastifyInstance, FastifySchema } from 'fastify';
 import { ApiError } from './errors.js';
 
 /**
@@ -78,9 +78,9 @@ declare module 'fastify' {
     /**
      * Every registered route and the query-parameter policy it will be held to.
      *
-     * Populated by an `onRoute` hook, so it is the *actual* route table rather than a
-     * hand-maintained list — which is what lets a test assert that a route added tomorrow is
-     * covered without anyone remembering to add it to a fixture.
+     * A view over `app.apiRoutes` (`route-table.ts`), so it is the *actual* route table rather
+     * than a hand-maintained list — which is what lets a test assert that a route added
+     * tomorrow is covered without anyone remembering to add it to a fixture.
      */
     readonly queryParameterPolicies: readonly RouteQueryPolicy[];
   }
@@ -165,21 +165,21 @@ export function unknownQueryParameters(
 }
 
 /**
- * Install the guard and the route-table registry.
+ * Install the guard.
  *
- * Called from `registerHttpConventions`, i.e. before any route exists — Fastify binds hooks to
- * a route at registration time, so a hook added afterwards would cover nothing.
+ * Called from `registerHttpConventions` — after `registerRouteTable`, whose table the
+ * `queryParameterPolicies` view is computed from, and before any route exists, because Fastify
+ * binds hooks to a route at registration time and a hook added afterwards would cover nothing.
  */
 export function registerQueryStrictness(app: FastifyInstance): void {
-  const policies: RouteQueryPolicy[] = [];
-  app.decorate('queryParameterPolicies', policies);
-
-  app.addHook('onRoute', (route: RouteOptions) => {
-    const methods = Array.isArray(route.method) ? route.method : [route.method];
-    const policy = queryPolicyOf(route.url, route.schema);
-    for (const method of methods) {
-      policies.push({ method, url: route.url, ...policy });
-    }
+  app.decorate('queryParameterPolicies', {
+    getter(this: FastifyInstance): readonly RouteQueryPolicy[] {
+      return this.apiRoutes.map((route) => ({
+        method: route.method,
+        url: route.url,
+        ...queryPolicyOf(route.url, route.schema),
+      }));
+    },
   });
 
   app.addHook('preValidation', async (request) => {

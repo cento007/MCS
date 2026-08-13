@@ -1,6 +1,8 @@
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  decodeRelayEvent,
+  EVENT_RELAY_CHANNEL,
   findAdrBySourceSession,
   findLatestSyncRun,
   findSyncRun,
@@ -9,7 +11,8 @@ import {
   schema,
 } from '@mc/shared';
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import pg from 'pg';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   seedAdr,
   seedMessage,
@@ -19,6 +22,7 @@ import {
   setObsidianSettings,
   silentLogger,
   testDatabase,
+  testDatabaseUrl,
   testOutbox,
   testQueue,
   testVaultDirectory,
@@ -97,6 +101,47 @@ describe('one sync run', () => {
     const types = jobs.rows.map((row) => row.data.type);
     expect(types).toEqual(['sync.started', 'sync.completed']);
     expect(jobs.rows[0]?.data.source).toBe('sync-worker');
+  });
+
+  it('also raises the LISTEN/NOTIFY relay for each of them, on a real second connection', async () => {
+    // A durable job on `events` is not enough on its own: the Backend does not consume that
+    // queue (it would compete with the Telegram Worker), so the WS `sync` channel learns about
+    // a run only through the notify half (TDS 04 §15.1). The listener here is a genuine second
+    // PostgreSQL connection — the fan-out is the property under test, so it is not mocked.
+    const listener = new pg.Client({ connectionString: testDatabaseUrl() });
+    const received: string[] = [];
+    listener.on('notification', (message) => {
+      if (message.payload !== undefined) received.push(message.payload);
+    });
+
+    try {
+      await listener.connect();
+      await listener.query(`LISTEN ${EVENT_RELAY_CHANNEL}`);
+
+      const syncRunId = await queuedRunId();
+      await sync.runOne({ syncRunId });
+
+      await vi.waitFor(() => {
+        expect(received).toHaveLength(2);
+      });
+
+      const decoded = received.map((payload) => decodeRelayEvent(payload));
+      expect(decoded.every((entry) => entry.ok)).toBe(true);
+      expect(decoded.map((entry) => (entry.ok ? entry.event.type : 'rejected'))).toEqual([
+        'sync.started',
+        'sync.completed',
+      ]);
+      // The envelope id is the same one on the durable job, so a consumer that sees both copies
+      // de-duplicates rather than acting twice (F6.3).
+      const jobs = await testDatabase().db.execute<{ data: { id: string; type: string } }>(
+        `SELECT data FROM pgboss.job WHERE name = '${QUEUE_NAMES.EVENTS}' ORDER BY created_on`,
+      );
+      expect(decoded.map((entry) => (entry.ok ? entry.event.id : null))).toEqual(
+        jobs.rows.map((row) => row.data.id),
+      );
+    } finally {
+      await listener.end();
+    }
   });
 
   it('ignores a redelivered job — the run is claimed exactly once', async () => {

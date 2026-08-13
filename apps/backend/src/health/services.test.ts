@@ -125,6 +125,62 @@ describe('service list and shape (§7.5)', () => {
   });
 });
 
+/**
+ * The worker -> hub event relay (TDS 04 §15.1) has no probe of its own: its failure is the
+ * *absence* of events, which no check can observe. It is therefore reported by the Backend's own
+ * row, and this is the test that keeps it visible.
+ */
+describe('event relay visibility', () => {
+  const relay = {
+    state: 'listening' as const,
+    channel: 'mc_events',
+    listeningSince: '2026-08-12T11:00:00.000Z',
+    reconnects: 0,
+    gaps: 0,
+    relayed: 17,
+    lastError: null,
+  };
+
+  it('stays healthy while the relay is listening, and shows its counters', async () => {
+    const row = rowOf(
+      await collect({ backend: () => ({ ...BACKEND, eventRelay: relay }) }),
+      'backend',
+    );
+
+    expect(row.status).toBe('healthy');
+    expect(row.meta).toMatchObject({ eventRelay: { state: 'listening', relayed: 17 } });
+  });
+
+  it('reports degraded — with the reason — when the relay is not connected', async () => {
+    const row = rowOf(
+      await collect({
+        backend: () => ({
+          ...BACKEND,
+          eventRelay: {
+            ...relay,
+            state: 'reconnecting' as const,
+            listeningSince: null,
+            reconnects: 3,
+            lastError: 'connection terminated unexpectedly',
+          },
+        }),
+      }),
+      'backend',
+    );
+
+    // The operator-facing point: "worker events are not reaching browsers" must be readable in
+    // the Services panel, not inferred from a sync row that stopped updating.
+    expect(row.status).toBe('degraded');
+    expect(row.detail).toContain('reconnecting');
+    expect(row.detail).toContain('connection terminated unexpectedly');
+  });
+
+  it('stays healthy when no relay is wired at all', async () => {
+    // An app built with no database URL (or a test) has no relay; absence is not degradation.
+    expect(rowOf(await collect(), 'backend').status).toBe('healthy');
+  });
+});
+
 describe('PostgreSQL check', () => {
   it('is healthy under the 250 ms threshold and carries the latency', async () => {
     const row = rowOf(await collect(), 'postgresql');

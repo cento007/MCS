@@ -151,18 +151,30 @@ describe('writes (§7.3)', () => {
     expect(replaceCategory).not.toHaveBeenCalled();
   });
 
-  it('does NOT strip an unknown field on the way through', async () => {
+  it('rejects an unknown field by name instead of stripping it', async () => {
     // Ajv would delete it under `removeAdditional: true`, and a deleted field is a *reset*
-    // under full-replace semantics. The schema therefore omits `additionalProperties: false`
-    // and the domain rejects the field by name — which only works if it arrives.
+    // under full-replace semantics: `instanceNam` vanishes, `instanceName` reads as omitted,
+    // and the operator's instance name is quietly overwritten with the registry default.
+    //
+    // This used to be caught one layer in, by the write planner, and the assertion here was
+    // that the field *arrived* so the planner could name it. The global body guard
+    // (`http/body-strictness.ts`) now answers first with the same verdict, so the field never
+    // reaches the domain at all — a 400 naming `instanceNam`, and no write attempted. The
+    // planner keeps its own check for callers that do not come in over HTTP; that is
+    // `documents.test.ts`.
     const replaceCategory = vi.fn<SettingsPort['replaceCategory']>(async () => ({}));
-    await build(fakeSettings({ replaceCategory })).inject({
+    const response = await build(fakeSettings({ replaceCategory })).inject({
       method: 'PUT',
       url: '/api/v1/settings/general',
       payload: { theme: 'dark', instanceNam: 'typo' },
     });
 
-    expect(replaceCategory.mock.calls[0]?.[2]).toEqual({ theme: 'dark', instanceNam: 'typo' });
+    expect(response.statusCode).toBe(400);
+    const error = response.json<{ error: { code: string; details: Record<string, unknown> } }>()
+      .error;
+    expect(error.code).toBe('VALIDATION_FAILED');
+    expect(error.details['unknownFields']).toEqual(['instanceNam']);
+    expect(replaceCategory).not.toHaveBeenCalled();
   });
 
   it('accepts a secret as a string or as `null`, and refuses `""`', async () => {
@@ -248,14 +260,28 @@ describe('test connection (§7.4)', () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it('takes no request body — a test can only ever cover persisted state (WS5 §5.7.2)', async () => {
+  it('refuses a request body — a test can only ever cover persisted state (WS5 §5.7.2)', async () => {
     const response = await build().inject({
       method: 'POST',
       url: '/api/v1/settings/integrations/qdrant/test-connection',
       payload: { host: 'unsaved-value' },
     });
 
-    // The body is ignored entirely; the answer is the same 409 as without it.
-    expect(response.statusCode).toBe(409);
+    // The body used to be ignored, and the answer was the same 409 as without it. That is the
+    // worst of both: a caller who sends `{ host }` believes they are testing an unsaved value,
+    // and gets a verdict about the *stored* one with nothing to distinguish the two. The route
+    // declares no body schema, so the body guard now says so — 400, naming `host`.
+    expect(response.statusCode).toBe(400);
+    const error = response.json<{ error: { code: string; details: Record<string, unknown> } }>()
+      .error;
+    expect(error.code).toBe('VALIDATION_FAILED');
+    expect(error.details['unknownFields']).toEqual(['host']);
+
+    // Without a body it is the ordinary 409: nothing is configured for qdrant.
+    const bodiless = await build().inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/qdrant/test-connection',
+    });
+    expect(bodiless.statusCode).toBe(409);
   });
 });
