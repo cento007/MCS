@@ -573,3 +573,28 @@ The shape handed to the frontend agent was wrong in a way that mattered: `retent
 - `GET /schedule` has no `memory_retention` row, so the retention chain is invisible in Settings → Services.
 - The nav and Settings rails still badge Memory `P3`, which now has both a screen and a panel.
 - **Graphify** (PRD §6.2.1) remains untouched and explicitly optional: its adoption path begins "trial as a per-repository Claude Code skill first; if proven, integrate". That is a judgement to form by hand, not an assumption to implement.
+
+---
+
+## 2026-08-13 — One bad field could evict the whole app
+
+Commit `92cc3e4`. **2310 unit tests**, lint, typecheck and build clean.
+
+The only error boundary in the route table sits on the `RequireAuth` element — the **parent** of `AppShell`. So a render failure in any shell widget replaced the entire authenticated area with "Something broke on this page", *including the navigation that would have let the operator go somewhere else*. The only recovery was a reload onto the same broken route. `RouteErrorBoundary`'s own comment calls it "deliberately the last line rather than the first"; there was no first line.
+
+`SpendChip` could trigger it: `data.budget.alertsEnabled`, guarded only against `data === undefined`. **This is not paranoia about a Backend that is currently correct.** `lib/api/types.ts` is hand-written against the prose contract, because `openapi.yaml` declares no response schemas — so nothing checks that the shape arriving at runtime is the shape the component compiled against. A renamed field takes the app.
+
+Fixed at two layers, deliberately different in kind:
+
+- **`readSpendChip` handles what it can anticipate.** A body it cannot read returns `null` — hidden, which is this chip's *own documented rule* for such a body ("Not loaded / failed to load → hidden. A chip is a glance affordance with no room for an error state, and the Dashboard widget already reports a failed `GET /spend` properly"). The one falsy-looking value that must survive is `dailyUsd: null`, the real `no_budget` case, which renders.
+- **`ShellBoundary` catches what nobody anticipated.** One per widget, so they fail independently — and one per chip rather than one around the pair, because the ConnectionChip is how an operator distinguishes "the server is down" from "this screen is wrong", which is the question a broken shell makes urgent. In `NavRail` the boundaries sit *inside*, around the running count and the open-sessions strip: the links above are the escape hatch and are built from a static table, so wrapping the whole `<nav>` would let a failing counter take navigation away.
+
+**The fallback is never `null`, and that is the design.** `SpendChip` has three deliberate reasons to render nothing. A crashed widget that also rendered nothing would make a defect indistinguishable from "the operator turned cost alerts off" — the same mistake the Memory screen's four empty states exist to prevent, reproduced in one corner of the top bar. It renders a marker that cannot be read as data, and deliberately not `—`, which already means "no value" here (`RunningCount` on a failed `GET /sessions`, `TopBar` on an unknown username). It also deliberately does **not** claim `role="status"`: the ConnectionChip owns that role, and a second live region would make `getByRole('status')` ambiguous precisely when something is already broken.
+
+### Both claims were verified against the old behaviour
+
+The first attempt at the guard's regression test was **not good enough and was rewritten**. Rendered bare, the old code threw and the run reported "1 error" while the test itself said *passed* — a signal that would mean nothing to whoever breaks this next. Asserted through a real `ShellBoundary` instead, it fails cleanly: the throw is caught and the ⚠ fallback appears on a condition the chip is supposed to handle silently.
+
+`TopBar.resilience.test.tsx` exists for a separate reason: `ShellBoundary.test.tsx` proves the boundary contains a throw, and nothing there proved the boundary was actually *wrapped around anything*. Removing the `<ShellBoundary>` from `TopBar` left every other suite in the directory green. All three of its tests fail with the boundary removed — the same gap that file's own header warns about for chips ("a chip with a perfect unit suite and no call site").
+
+The fallback's utilities were checked against the **built CSS** rather than the class names, per the `.inset-0` lesson.
