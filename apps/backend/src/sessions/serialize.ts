@@ -34,6 +34,16 @@ export interface SessionResource {
   readonly sessionType: SessionType;
   readonly state: SessionState;
   readonly title: string;
+  /**
+   * Why a `failed` Session failed — `spawn_error`, `process_crash`, `backend_restart`, … —
+   * mirroring `sessions.failure_reason` (TDS 03 §3.9) and the `session.failed` payload.
+   *
+   * `null` in every other state. Exposed because the failure code is the whole triage signal
+   * and the UI is specified to render it: WS5 §5.2's Needs Attention row and §5.5's failure
+   * banner both show it, and until now the column was written and never served, so both
+   * surfaces could only say "Session failed" without saying why.
+   */
+  readonly failureReason: string | null;
   readonly notes: string | null;
   readonly branch: string | null;
   readonly workingDirectory: string;
@@ -118,6 +128,7 @@ export function serializeSession(
     // §6.1: `title` is always present and always a string; the unset value is `''`, which maps
     // to `sessions.title IS NULL` in storage.
     title: row.title ?? '',
+    failureReason: row.failureReason,
     notes: row.notes,
     branch: row.branch,
     workingDirectory: row.workingDir ?? '',

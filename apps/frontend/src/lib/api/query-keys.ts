@@ -71,6 +71,14 @@ export const queryKeys = {
   settings: {
     root: () => ['settings'] as const,
     category: (category: string) => ['settings', category] as const,
+    /**
+     * Deliberately identical to `category('integrations')`: the API keeps every integration
+     * in one document under one DB category, and `setting.updated` carries that category name
+     * — so one slot is correct and two would leave the event invalidating only half of them.
+     */
+    integrations: () => ['settings', 'integrations'] as const,
+    /** Nested under the integrations slot, so a category-level invalidation reaches it. */
+    integration: (integration: string) => ['settings', 'integrations', integration] as const,
   },
   services: {
     health: () => ['services', 'health'] as const,
@@ -82,6 +90,11 @@ export const queryKeys = {
   },
   notifications: {
     root: () => ['notifications'] as const,
+    /**
+     * Under the `['notifications']` prefix, so the always-on `notifications` channel
+     * invalidation (§5.3) reaches every filtered list without naming them.
+     */
+    list: (filters: ListFilters = {}) => ['notifications', 'list', filters] as const,
   },
   adrs: {
     root: () => ['adrs'] as const,

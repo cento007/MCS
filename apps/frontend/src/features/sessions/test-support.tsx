@@ -85,89 +85,19 @@ export function makeTurn(overrides: Partial<LiveTurn> = {}): LiveTurn {
 
 // ------------------------------------------------------------------------------ fetch mock
 
-export interface MockCall {
-  readonly method: string;
-  readonly url: string;
-  readonly body: unknown;
-}
-
-export interface MockResponse {
-  readonly status?: number;
-  readonly body?: unknown;
-}
-
-type Handler = (call: MockCall) => MockResponse | undefined;
-
-export interface ApiMock {
-  readonly calls: MockCall[];
-  /** Register a handler. Later registrations win, so a test can override a default. */
-  on(method: string, match: string | RegExp, respond: MockResponse | Handler): void;
-  /** Every call whose URL contains `fragment`. */
-  callsTo(fragment: string): readonly MockCall[];
-  restore(): void;
-}
-
-export function mockApi(): ApiMock {
-  const calls: MockCall[] = [];
-  const handlers: { method: string; match: string | RegExp; respond: MockResponse | Handler }[] =
-    [];
-  const original = globalThis.fetch;
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.href : String(input);
-    const method = (init?.method ?? 'GET').toUpperCase();
-    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : null;
-    const call: MockCall = { method, url, body };
-    calls.push(call);
-
-    for (let index = handlers.length - 1; index >= 0; index -= 1) {
-      const handler = handlers[index];
-      if (handler === undefined) continue;
-      if (handler.method !== method) continue;
-      const matched =
-        typeof handler.match === 'string' ? url.includes(handler.match) : handler.match.test(url);
-      if (!matched) continue;
-      const result =
-        typeof handler.respond === 'function' ? handler.respond(call) : handler.respond;
-      if (result === undefined) continue;
-      return jsonResponse(result.status ?? 200, result.body ?? null);
-    }
-
-    // Unmatched calls answer the real envelope, so a component under test renders the same
-    // error path it would in production rather than a bespoke test-only failure.
-    return jsonResponse(404, {
-      error: { code: 'NOT_FOUND', message: `No mock for ${method} ${url}`, requestId: 'test-req' },
-    });
-  }) as typeof fetch;
-
-  return {
-    calls,
-    on: (method, match, respond) => {
-      handlers.push({ method: method.toUpperCase(), match, respond });
-    },
-    callsTo: (fragment) => calls.filter((call) => call.url.includes(fragment)),
-    restore: () => {
-      globalThis.fetch = original;
-    },
-  };
-}
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(body === null ? '' : JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', 'x-request-id': 'test-req' },
-  });
-}
-
-/** The list envelope, so a test never hand-writes `meta` and gets it subtly wrong. */
-export function listBody<T>(data: readonly T[], nextCursor: string | null = null): unknown {
-  return { data, meta: { nextCursor, limit: 50 } };
-}
-
-export function dataBody(data: unknown): unknown {
-  return { data };
-}
+/**
+ * The `fetch` mock moved to `src/test/api-mock.ts` when a second feature slice (Settings)
+ * needed it — feature slices may not import each other (TDS 05 §2.1), so a shared test helper
+ * belongs outside them. Re-exported here so every existing Sessions suite keeps its imports.
+ */
+export {
+  type ApiMock,
+  dataBody,
+  listBody,
+  type MockCall,
+  type MockResponse,
+  mockApi,
+} from '../../test/api-mock.js';
 
 // --------------------------------------------------------------------------------- render
 

@@ -2,8 +2,11 @@ import type {
   EntityId,
   IsoTimestamp,
   MessageRole,
+  NotificationSeverity,
+  NotificationType,
   SessionState,
   SessionType,
+  TelegramDeliveryStatus,
 } from '@mc/shared/types';
 
 /**
@@ -244,9 +247,114 @@ export interface Repository {
 
 // --------------------------------------------------------------- service health (§7.5)
 
+/**
+ * Reconciled with the implemented endpoint 2026-08-13. This declared `'ok'` and
+ * `'not_configured'`, which the API never returns, and omitted `label` and `meta` entirely —
+ * so a Services panel written against it would have rendered every healthy row as unknown
+ * while typechecking clean.
+ *
+ * `disabled` means *specified but not deployed* — Qdrant and Ollama today, and the Phase 2
+ * workers until they ship. It is deliberately distinct from `down`: heartbeat rows persist
+ * once written, so a worker that has never run has no row (`disabled`), while one that ran
+ * and went silent leaves a row that ages into `down`. Rendering the first as a failure would
+ * put permanent red rows in the panel for an install behaving exactly as designed.
+ */
+export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'disabled' | 'unknown';
+
 export interface ServiceHealthRow {
   readonly name: string;
-  readonly status: 'ok' | 'degraded' | 'down' | 'not_configured' | 'unknown';
+  /** Display name from the server, e.g. `Queue (PostgreSQL)` — never derive it client-side. */
+  readonly label: string;
+  readonly status: ServiceStatus;
   readonly detail: string | null;
   readonly checkedAt: IsoTimestamp;
+  /** Probe-specific extras (latency, heartbeat age, queue depth). Shape varies by service. */
+  readonly meta: Record<string, unknown> | null;
+}
+
+/** `GET /services/health` answers the read model, not a bare array (§7.5). */
+export interface ServiceHealth {
+  readonly services: readonly ServiceHealthRow[];
+}
+
+// --------------------------------------------------------------------------- schedule (§7.7)
+
+/**
+ * The computed schedule read model behind the Dashboard's "Upcoming Tasks" widget.
+ *
+ * **There is no Task entity and none is implied** (WS7 arbitration A1, TDS 06 §6.2 footnote).
+ * Every value here is derived at read time from Settings plus last-run records; nothing is
+ * persisted, no event exists, and the widget that renders it says so.
+ */
+export type ScheduleKind = 'obsidian_sync' | 'github_poll' | 'daily_report';
+
+export interface ScheduleEntry {
+  readonly kind: ScheduleKind;
+  /** Display text from the server, e.g. `Obsidian vault sync`. */
+  readonly label: string;
+  readonly enabled: boolean;
+  /**
+   * `null` whenever the row is disabled or its interval is 0 — the row is still returned so
+   * the UI can say *why* nothing is scheduled instead of hiding it (§7.7).
+   */
+  readonly nextRunAt: IsoTimestamp | null;
+  readonly lastRunAt: IsoTimestamp | null;
+}
+
+// ------------------------------------------------------------------------------ spend (§7.8)
+
+export interface SpendPeriod {
+  /** ISO 8601 UTC, inclusive. */
+  readonly periodStart: IsoTimestamp;
+  /** ISO 8601 UTC, exclusive. */
+  readonly periodEnd: IsoTimestamp;
+  readonly totalCostUsd: number;
+  readonly sessionCount: number;
+}
+
+/**
+ * **Computed server-side, deliberately** (§7.8): four surfaces state the same spend number —
+ * the Dashboard Spend widget, the top-bar chip, the Needs Attention budget row and the
+ * current-spend line in Settings → Claude Code — and they must never disagree about when the
+ * bar turns amber. The client rounds a percentage for display and derives nothing else.
+ */
+export type SpendDayStatus = 'no_budget' | 'ok' | 'alert' | 'over';
+
+export interface Spend {
+  /** The IANA zone actually used — `general.timezone`, or `UTC` when unset/unparseable. */
+  readonly timezone: string;
+  readonly generatedAt: IsoTimestamp;
+  /** Current calendar day **in `timezone`**, never UTC-by-accident (§7.8). */
+  readonly day: SpendPeriod;
+  readonly month: SpendPeriod;
+  readonly budget: {
+    readonly dailyUsd: number | null;
+    readonly perSessionUsd: number | null;
+    readonly alertThresholdPercent: number;
+    readonly alertsEnabled: boolean;
+  };
+  readonly dayStatus: SpendDayStatus;
+}
+
+// ---------------------------------------------------------------------- notifications (§8)
+
+export interface Notification {
+  readonly id: EntityId;
+  /** The notification-type enum — never an F6 event name (arbitration A8). */
+  readonly type: NotificationType;
+  readonly severity: NotificationSeverity;
+  readonly title: string;
+  /** Pre-rendered text; Telegram and the UI share it. */
+  readonly body: string;
+  /** Entity IDs for deep links; `payload.eventType` carries the originating F6 event. */
+  readonly payload: Record<string, unknown> | null;
+  readonly correlationId: string | null;
+  /** The in-app "delivery" state. `null` = unread. */
+  readonly readAt: IsoTimestamp | null;
+  readonly createdAt: IsoTimestamp;
+  readonly telegram: {
+    readonly status: TelegramDeliveryStatus;
+    readonly sentAt: IsoTimestamp | null;
+    readonly error: string | null;
+  };
 }

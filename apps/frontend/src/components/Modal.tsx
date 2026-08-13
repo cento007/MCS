@@ -73,6 +73,11 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
         style={{
           backgroundColor: 'var(--color-surface-raised)',
           boxShadow: 'var(--shadow-overlay)',
+          // A dialog taller than the viewport must scroll rather than overflow: the API-token
+          // reveal is the case that proves it — its "I've stored it" button is the only way
+          // past a credential that can never be shown again, so it can never be off-screen.
+          maxHeight: '90vh',
+          overflowY: 'auto',
         }}
       >
         <div className="flex items-center justify-between border-border border-b px-4 py-3">

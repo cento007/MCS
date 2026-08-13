@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { EmptyState } from '../../components/EmptyState.js';
 import { ErrorPanel } from '../../components/ErrorPanel.js';
 import { ConfirmDialog } from '../../components/Modal.js';
@@ -45,7 +45,28 @@ export function SessionsListPage() {
   const [projectId, setProjectId] = useState('');
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  const [launchOpen, setLaunchOpen] = useState(false);
+
+  /**
+   * `?launch=1` opens the Launch modal.
+   *
+   * The Dashboard's `+ New Session` needs this screen's modal, and the modal belongs to this
+   * feature (TDS 05 §2.1: no cross-feature imports). A search param is the same linkable-state
+   * mechanism §6.7 already uses for the session right panel, so the hand-off costs one
+   * parameter rather than an ownership violation. Closing clears it, so a reload does not
+   * reopen the modal.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const launchOpen = searchParams.get('launch') === '1';
+  const setLaunchOpen = (open: boolean): void => {
+    setSearchParams(
+      (params) => {
+        if (open) params.set('launch', '1');
+        else params.delete('launch');
+        return params;
+      },
+      { replace: true },
+    );
+  };
 
   const filters: SessionListFilters = useMemo(
     () => ({

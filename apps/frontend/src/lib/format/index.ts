@@ -64,6 +64,20 @@ export function formatCostUsd(value: number | null | undefined): string {
   return `$${value.toFixed(4)}`;
 }
 
+/**
+ * Budget-scale money: `$3.42`, `$10.00` — two decimals, never four.
+ *
+ * Distinct from `formatCostUsd` on purpose. A *per-Session* cost is a small number where the
+ * fourth decimal is real information (`$0.4821`), but a daily total sits beside a budget the
+ * operator typed as `10.00`, and rendering `$3.4200 of $10.0000` invites them to read the
+ * fourth decimal as precision that the comparison does not have. Same money, two scales
+ * (TDS 06 §5.2 renders `‹$3.42› of ‹$10.00›`).
+ */
+export function formatMoneyUsd(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return `$${value.toFixed(2)}`;
+}
+
 /** Compact token counts for dense rows: `1.2k`, `934`, `3.4M`. */
 export function formatTokenCount(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';

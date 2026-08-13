@@ -167,7 +167,19 @@
   /* ── Spacing (TDS 06 §2.3) ───────────────────────────────────────────────────────
      The number is the 4px multiple. Deliberately not a uniform ladder above 32px: the
      scale jumps straight to 64 for page-level rhythm, which is the only place a gap that
-     large belongs. 20 / 40 / 48 do not exist. */
+     large belongs. 20 / 40 / 48 do not exist.
+
+     `--spacing-0` is NOT decorative and must not be deleted as "obviously zero". Clearing
+     `--spacing` above closes the arbitrary ladder, which is the point — but it also means
+     Tailwind resolves every numeric spacing utility it cannot find in this namespace to
+     `calc(var(--spacing) * n)`, an invalid declaration that is dropped **silently**. Without
+     this line `inset-0` is never emitted at all, and `Modal`'s `fixed inset-0` overlay
+     collapses to its content: the scrim stops covering the page and every dialog in the
+     product — confirms, Launch Session, the API-token reveal, the unsaved-changes guard —
+     renders wherever it happens to sit in the DOM instead of centred in the viewport, with
+     its buttons potentially off-screen and unreachable. Observed in the browser on
+     2026-08-13. The same silent drop applied to `p-0`, `gap-0`, `top-0` and friends. */
+  --spacing-0: 0px;
   --spacing-05: 2px;
   --spacing-1: 4px;
   --spacing-2: 8px;

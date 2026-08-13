@@ -268,6 +268,34 @@ Changed. Heartbeat rows are upserted and persist, so the absence of a row means 
 
 The backend exited fatally on `EADDRINUSE`. Under `tsx watch` the outgoing process can hold the port for a moment, so one edit killed the dev server and every later edit re-ran the same doomed bind — visible in the browser only as `MALFORMED_RESPONSE`, because Vite proxies a dead upstream as an empty 500 that no client can parse as an F5.4 envelope. Now retried in development with explicit log lines, still fatal on the first failure in production, where a busy port means another instance is already serving.
 
+## 2026-08-13 — Dashboard and Settings
+
+**959 unit tests** (still DB-free), 420 files lint-clean, typecheck clean.
+
+**Dashboard** — the eight §5.2 widgets in one DOM order that is simultaneously grid order, mobile stack order and screen-reader order. Needs Attention aggregates four sources (failed sessions in 24 h, unhealthy services, last `sync.failed`, budget breach) through a pure function taking `now` from the **frozen** live clock, so the 24 h window stops moving when the socket does. It excludes `disabled` services — Qdrant, Ollama and both Phase 2 workers — which would otherwise pin four permanent rows to the most-visited page on a correct install; the predicate lives in `lib/service-health.ts` so the widget and the Settings panel cannot disagree. Empty **and** all sources readable collapses to "All clear"; a source that *errored* names what it could not check rather than claiming all clear. Spend uses the server's `dayStatus` rather than re-deriving the threshold, so the widget, the top-bar chip and Settings cannot disagree about when the bar turns amber.
+
+**Settings** — all seven categories, six integration cards, the write-only secret contract, and the dirty-state guard. `usePanelForm` publishes to a page-level registry and `guard.tsx` uses a **single** `useBlocker` predicate, because a category change *is* a route change — one rule covers the rail, the nav, the palette and browser back/forward, plus `beforeunload`. Test Connection reads only `summary.isDirty`, so the "paste a token, see ✓ Connected, navigate away, save nothing" hazard is structurally impossible. Untouched secrets are omitted from the request body entirely; `[Clear]` commits against the persisted baseline so unrelated pending edits cannot ride along.
+
+### The bug that mattered most was invisible to every test
+
+**`.inset-0` was never emitted anywhere in the application.** `theme.css` clears `--spacing` to close the arbitrary spacing ladder — deliberate and correct — but that also makes Tailwind resolve any numeric spacing utility outside the namespace to `calc(var(--spacing) * n)`, which is invalid and **silently dropped**. `Modal`'s `fixed inset-0` scrim therefore collapsed to its own content: **every dialog in the product** — confirms, Launch Session, the token reveal, the unsaved-changes guard — rendered wherever it happened to sit in the DOM, with buttons potentially off-screen and unclickable. Pre-existing, affecting the Sessions screens too, and found only by opening a browser. One line (`--spacing-0: 0px`), with the reasoning recorded so nobody deletes it as "obviously zero". The same silent drop applied to `p-0`, `gap-0` and `top-0`.
+
+Two more found the same way: disabled `<select>`s displayed fabricated configuration (Timezone read `Africa/Abidjan` with nothing loaded, indistinguishable from a saved setting) — now an explicit `— not loaded` option; and a freshly-loaded panel opened *dirty* because the draft was seeded before the query resolved.
+
+### Settings has no backend — this is the next task
+
+`apps/backend` has a `settings/` module of internal typed readers but registers **no settings HTTP routes at all**, and WS2 §7.6's key registry does not exist. Missing: `GET/PUT /settings/{general,notifications,security}`, `GET /settings/integrations`, `PUT /settings/integrations/{six}`, `POST /settings/integrations/{x}/test-connection`, and `GET /audit-log-entries`. Every affected panel renders its real fields **disabled with an inline note naming the exact route** — no client-side store, no seeded defaults, nothing invented.
+
+### Contract items raised
+
+- **§7.1's `SecretFieldRead` is `{ isSet: boolean }`, but WS5 §4.4 makes `(saved ‹timestamp›)` the only honest confirmation possible for a write-only value.** The API must return `updatedAt`; the client degrades to a bare "(saved)" until it does.
+- **§7.2 says "send only dirty fields", §7.3 says "full-category replace"** — mutually exclusive, and a partial body against a full replace erases untouched fields. Implemented as full replace; needs arbitrating.
+- `Session.failureReason` was stored but never serialized, so both the Needs Attention row and the failure banner could only say "Session failed" without saying why. **Fixed** — added to the resource.
+- `unknown` is a fifth `ServiceStatus` with no glyph specified in §5.7.12; both agents converged on `?` independently.
+- `endpoints.settings.test` pointed at `…/test` rather than §7.4's `…/test-connection` — never called, so it would have 404'd on first use.
+
+Also fixed en route: the shared fetch mock built `new Response('', {status: 204})`, which throws, so every mocked 204 surfaced as a network error.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

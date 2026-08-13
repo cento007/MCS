@@ -37,7 +37,18 @@ export const endpoints = {
   settings: {
     all: '/settings',
     category: (category: string) => `/settings/${category}`,
-    test: (integration: string) => `/settings/integrations/${integration}/test`,
+    /** §7.3 — all integrations in one masked document; `integrations` is one DB category. */
+    integrations: '/settings/integrations',
+    integration: (integration: string) => `/settings/integrations/${integration}`,
+    /**
+     * §7.4, spelled `test-connection`.
+     *
+     * This replaces a `…/test` entry that predated the contract and was never called. The
+     * shorter path would have 404'd against the route WS2 specified, which is the failure
+     * mode this file exists to make impossible.
+     */
+    testConnection: (integration: string) =>
+      `/settings/integrations/${integration}/test-connection`,
   },
   services: {
     health: '/services/health',
