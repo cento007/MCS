@@ -25,3 +25,9 @@ export type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
  */
 export type { CommitFile } from './schema/git.js';
 export * as schema from './schema/index.js';
+/**
+ * `notifications.payload` (TDS 03 §4.2) — entity IDs for deep links plus `eventType`. Both the
+ * Backend producer and the Telegram Worker's daily report build one, so it is contract rather
+ * than a detail of the table definition.
+ */
+export type { NotificationPayload } from './schema/notifications.js';

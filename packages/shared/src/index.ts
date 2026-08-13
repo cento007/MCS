@@ -12,14 +12,22 @@
  *   runtime  graceful shutdown + worker heartbeat (TDS 02 §7.2)
  *   db       Drizzle client/transaction types + the WS3 schema
  *   settings the settings key registry (TDS 04 §7.6) and its category document types
+ *   notifications  the cross-process Notification production contract (TDS 04 §8) — policy,
+ *                  the atomic row+job write, and the quiet-hours window, shared because the
+ *                  Backend and the Telegram Worker both produce Notifications
+ *   obsidian the two-way vault sync engine (PRD §7.1) — shared because the Sync Worker runs
+ *                  syncs and the Backend serves the dry-run preview from the same planner
  *
  * Still owed by later workstreams: full `entities` DTOs.
  */
 
+export * from './adrs/index.js';
 export * from './config/index.js';
 export * from './crypto/index.js';
 export * from './db/index.js';
 export * from './logger/index.js';
+export * from './notifications/index.js';
+export * from './obsidian/index.js';
 export * from './queue/index.js';
 export * from './runtime/index.js';
 export * from './types.js';

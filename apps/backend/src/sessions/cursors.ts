@@ -1,6 +1,5 @@
 import { ApiError } from '../http/errors.js';
 import { decodeCursor, encodeCursor } from '../http/pagination.js';
-import type { CommitCursor } from './service.js';
 
 /**
  * Resource-specific ordering keys behind the opaque F5.3 cursor (TDS 04 §1.2: "what it encodes
@@ -14,7 +13,17 @@ import type { CommitCursor } from './service.js';
  *   - **Commits** order by `committedAt DESC` (§6.10.1), which is not unique — so the key
  *     carries the `id` as a tiebreak. Without it, two commits sharing a second could hide each
  *     other across a page boundary.
+ *
+ * The commit cursor is **re-exported, not re-implemented**: `commits/cursors.ts` owns it, and
+ * `GET /sessions/{id}/commits` and `GET /repositories/{id}/commits` must agree on what a cursor
+ * for that resource means, byte for byte.
  */
+
+export {
+  type CommitCursor,
+  decodeCommitCursor,
+  encodeCommitCursor,
+} from '../commits/cursors.js';
 
 export function encodeOrdinalCursor(ordinal: number): string {
   return encodeCursor(String(ordinal));
@@ -29,28 +38,4 @@ export function decodeOrdinalCursor(cursor: string | undefined): number | undefi
     throw new ApiError('INVALID_CURSOR', 'Cursor is not a valid pagination cursor');
   }
   return ordinal;
-}
-
-const COMMIT_CURSOR_SEPARATOR = '|';
-
-export function encodeCommitCursor(cursor: CommitCursor): string {
-  return encodeCursor(`${cursor.committedAt.toISOString()}${COMMIT_CURSOR_SEPARATOR}${cursor.id}`);
-}
-
-export function decodeCommitCursor(cursor: string | undefined): CommitCursor | undefined {
-  if (cursor === undefined) return undefined;
-
-  const key = decodeCursor(cursor);
-  const separator = key.indexOf(COMMIT_CURSOR_SEPARATOR);
-  if (separator === -1) throw invalidCommitCursor();
-
-  const committedAt = new Date(key.slice(0, separator));
-  const id = key.slice(separator + 1);
-  if (Number.isNaN(committedAt.getTime()) || id.length === 0) throw invalidCommitCursor();
-
-  return { committedAt, id };
-}
-
-function invalidCommitCursor(): ApiError {
-  return new ApiError('INVALID_CURSOR', 'Cursor is not a valid pagination cursor');
 }

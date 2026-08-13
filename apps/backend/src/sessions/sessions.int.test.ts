@@ -258,14 +258,20 @@ describe('GET /sessions (§6.2)', () => {
     expect(byState.json<{ data: SessionBody[] }>().data.length).toBeGreaterThan(0);
 
     // `?since=` is deliberately absent in V1 (§6.2, resolving WS7 N16): the Needs Attention
-    // widget filters the first page client-side. Fastify strips unknown query params, so the
-    // observable contract is that the parameter has no effect — not that it 400s.
-    const ignored = await request('GET', '/api/v1/sessions?since=2026-08-12T00:00:00Z');
-    const all = await request('GET', '/api/v1/sessions');
-    expect(ignored.statusCode).toBe(200);
-    expect(ignored.json<{ data: SessionBody[] }>().data.map((row) => row.id)).toEqual(
-      all.json<{ data: SessionBody[] }>().data.map((row) => row.id),
-    );
+    // widget filters the first page client-side.
+    //
+    // It is now **rejected by name** rather than silently stripped. This assertion used to
+    // read the other way round — "Fastify strips unknown query params, so the observable
+    // contract is that the parameter has no effect" — which was a description of Ajv's
+    // `removeAdditional: true`, not a contract anyone chose: a caller filtering to "sessions
+    // since Tuesday" got every Session ever and a `200` saying that was the answer. See
+    // `http/query-strictness.ts`.
+    const rejected = await request('GET', '/api/v1/sessions?since=2026-08-12T00:00:00Z');
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json<{ error: { code: string; details: unknown } }>().error).toMatchObject({
+      code: 'VALIDATION_FAILED',
+      details: { unknownParameters: ['since'] },
+    });
   });
 });
 

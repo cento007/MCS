@@ -60,6 +60,41 @@ export const tsvector = customType<{ data: string; driverData: string }>({
 });
 
 /**
+ * `jsonb` that holds an arbitrary JSON **value**, including a bare JSON string.
+ *
+ * Drizzle's own `jsonb()` cannot be used for such a column, and the reason is a genuine
+ * double-parse rather than a preference:
+ *
+ *   1. `pg` already runs `JSON.parse` on a `jsonb` result, so a stored `"-1001234567890"`
+ *      arrives as the JavaScript string `'-1001234567890'`;
+ *   2. Drizzle's `jsonb.mapFromDriverValue` then sees a string and parses it **again**,
+ *      producing the number `-1001234567890`.
+ *
+ * For an object or an array the second parse is a no-op (the value is no longer a string by
+ * then), which is why every other `jsonb` column in this schema is unaffected and why the
+ * fault stayed invisible. It bites exactly where the stored value is a JSON string whose
+ * contents are themselves valid JSON — and `integrations.telegram.chatId` is precisely that:
+ * a Telegram chat id looks like `-1001234567890`. Read back as a number it failed
+ * `stringValue()`, degraded to the registry default `null`, and every Notification was
+ * recorded `skipped` with "No Telegram chat ID is saved" while one plainly was.
+ *
+ * `toDriver` keeps Drizzle's write behaviour verbatim (`JSON.stringify`, sent as text — this
+ * half was always correct); `fromDriver` returns what `pg` already parsed. The emitted DDL is
+ * identical, so this is not a migration.
+ */
+export const jsonValue = customType<{ data: unknown; driverData: unknown }>({
+  dataType() {
+    return 'jsonb';
+  },
+  toDriver(value: unknown): unknown {
+    return JSON.stringify(value);
+  },
+  fromDriver(value: unknown): unknown {
+    return value;
+  },
+});
+
+/**
  * Renders a closed value set as the body of a SQL `IN (...)` list.
  *
  * Enum-like values are lowercase `snake_case` `text` with `CHECK` constraints rather than

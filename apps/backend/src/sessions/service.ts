@@ -9,9 +9,11 @@ import {
   type SessionType,
   schema,
 } from '@mc/shared';
-import { and, desc, eq, lt, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { recordAuditEntry } from '../audit/index.js';
 import type { Principal } from '../auth/index.js';
+import type { CommitCursor } from '../commits/cursors.js';
+import { listCommits } from '../commits/store.js';
 import type { Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
 import { buildSessionFiles, type SessionFilesReadModel } from './files.js';
@@ -506,9 +508,14 @@ export class SessionService {
   /**
    * `GET /api/v1/sessions/{id}/commits` (§6.10.1) — newest `committedAt` first.
    *
-   * The keyset cursor carries `committedAt` **and** `id` because `committed_at` is not unique:
-   * two commits sharing a second would otherwise be able to hide each other across a page
-   * boundary. The cursor stays opaque (§1.2); clients never parse it.
+   * The query, the keyset cursor and the serializer all come from `commits/`, which owns the
+   * §5.2 resource: this route and `GET /repositories/{id}/commits` differ only in which column
+   * scopes them, and two implementations of "one page of commits, newest first" would be two
+   * chances to paginate it differently.
+   *
+   * That cursor carries `committedAt` **and** `id` because `committed_at` is not unique: two
+   * commits sharing a second would otherwise be able to hide each other across a page boundary.
+   * The cursor stays opaque (§1.2); clients never parse it.
    */
   async listCommits(
     id: string,
@@ -516,23 +523,12 @@ export class SessionService {
   ): Promise<CommitResource[]> {
     await this.#require(id);
 
-    const conditions = [eq(schema.commits.sessionId, id)];
-    if (options.after !== undefined) {
-      const { committedAt, id: afterId } = options.after;
-      const boundary = or(
-        lt(schema.commits.committedAt, committedAt),
-        and(eq(schema.commits.committedAt, committedAt), lt(schema.commits.id, afterId)),
-      );
-      /* c8 ignore next */
-      if (boundary !== undefined) conditions.push(boundary);
-    }
-
-    const rows = await this.#db
-      .select()
-      .from(schema.commits)
-      .where(and(...conditions))
-      .orderBy(desc(schema.commits.committedAt), desc(schema.commits.id))
-      .limit(options.limit);
+    const rows = await listCommits(this.#db, {
+      sessionId: id,
+      limit: options.limit,
+      order: 'desc',
+      ...(options.after === undefined ? {} : { after: options.after }),
+    });
 
     return rows.map(serializeCommit);
   }
@@ -684,11 +680,6 @@ export class SessionService {
       );
     }
   }
-}
-
-export interface CommitCursor {
-  readonly committedAt: Date;
-  readonly id: string;
 }
 
 /**

@@ -1,4 +1,12 @@
-import { createPgBossQueue, type PgBossQueue, QUEUE_NAMES } from '@mc/shared';
+import {
+  ADR_GENERATE_QUEUE,
+  createPgBossQueue,
+  EVENTS_QUEUE,
+  NOTIFICATION_DELIVER_QUEUE,
+  OBSIDIAN_SYNC_QUEUE,
+  type PgBossQueue,
+  QUEUE_NAMES,
+} from '@mc/shared';
 
 /**
  * `queue/` — the Backend's QueuePort wiring (TDS 02 §2).
@@ -15,8 +23,9 @@ import { createPgBossQueue, type PgBossQueue, QUEUE_NAMES } from '@mc/shared';
 /**
  * Queue definitions for the Backend.
  *
- * `events` — every F6 domain event (F6.3). Retries with exponential backoff, because a
- * consumer failure is nearly always transient and the alternative is losing a notification.
+ * `events` and `notification.deliver` come from `@mc/shared` because the Telegram Worker
+ * provisions the same two: pg-boss's `updateQueue` converges an existing definition, so two
+ * processes declaring different policies would let whichever restarted last silently win.
  *
  * `session.launch` — durable launch requests (TDS 02 §4.3). `expireInSeconds` is generous on
  * purpose: the consumer's handler *waits* for a concurrency slot, and a lease shorter than a
@@ -24,12 +33,15 @@ import { createPgBossQueue, type PgBossQueue, QUEUE_NAMES } from '@mc/shared';
  * window the job is redelivered, which is the correct outcome for a genuinely stuck launch.
  */
 export const BACKEND_QUEUES = Object.freeze([
-  Object.freeze({
-    name: QUEUE_NAMES.EVENTS,
-    retryLimit: 5,
-    retryDelaySeconds: 2,
-    retryBackoff: true,
-  }),
+  EVENTS_QUEUE,
+  /**
+   * `notification.deliver` — the Backend **produces** these jobs (`notifications/produce.ts`)
+   * and the Telegram Worker consumes them. It is provisioned here because pg-boss 10+ refuses
+   * to send to a queue that does not exist, and a Notification must be producible whether or
+   * not the worker has ever been started. The definition is shared so the two processes cannot
+   * converge on different retry policies.
+   */
+  NOTIFICATION_DELIVER_QUEUE,
   Object.freeze({
     name: QUEUE_NAMES.SESSION_LAUNCH,
     retryLimit: 3,
@@ -79,6 +91,15 @@ export const BACKEND_QUEUES = Object.freeze([
     retryLimit: 0,
     expireInSeconds: 3600,
   }),
+  /**
+   * `obsidian.sync` and `adr.generate` — both **produced** here and **consumed** by the Sync
+   * Worker. Provisioned because pg-boss 10+ refuses to send to a queue that does not exist, so
+   * `POST /sync-runs` and `POST /sessions/{id}/generate-adr` must work whether or not the
+   * worker has ever been started; the definitions are shared so the two processes cannot
+   * converge on different retry policies.
+   */
+  OBSIDIAN_SYNC_QUEUE,
+  ADR_GENERATE_QUEUE,
 ]);
 
 export interface CreateBackendQueueOptions {

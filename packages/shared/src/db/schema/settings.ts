@@ -10,8 +10,8 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { check, integer, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
-import { bytea, createdAt, primaryKeyId, updatedAt, valueList } from './columns.js';
+import { check, integer, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bytea, createdAt, jsonValue, primaryKeyId, updatedAt, valueList } from './columns.js';
 
 /**
  * PRD §4.4 categories. The `services` category is a read-only view in the UI (live health,
@@ -35,7 +35,13 @@ export const settings = pgTable(
     category: text('category').notNull(),
     /** snake_case, e.g. 'github_poll_interval_seconds'. */
     key: text('key').notNull(),
-    value: jsonb('value').notNull(),
+    /**
+     * `jsonValue`, not `jsonb` — see `columns.ts`. This is the one column in the schema that
+     * legitimately stores a bare JSON **string**, and Drizzle's `jsonb()` parses such a value
+     * a second time on read (`pg` has already parsed it), turning `"-1001234567890"` into a
+     * number. That is not hypothetical: it is a Telegram chat id.
+     */
+    value: jsonValue('value').notNull(),
     valueType: text('value_type').notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

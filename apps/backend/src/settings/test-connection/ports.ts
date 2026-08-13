@@ -298,16 +298,10 @@ export function describeFailure(error: unknown): string {
 /**
  * Remove a secret from anything about to be shown or logged.
  *
- * This is not defence in depth, it is the primary defence for Telegram: `getMe` is addressed
- * as `https://api.telegram.org/bot‹TOKEN›/getMe`, so the credential is *in the URL* and
- * therefore in any transport error that quotes it. Applied to every message and detail string
- * that could have come from an error.
+ * The implementation moved to `@mc/shared` when the Telegram Worker landed: the worker holds
+ * the same bot token, sends it in the same URL, and must scrub the same strings — and F2.2
+ * forbids it importing Backend modules. Re-exported here so every caller in this package keeps
+ * its import, and so this file's contract ("never returns anything derived from a secret")
+ * still names the function that enforces it.
  */
-export function redactSecret(text: string, ...secrets: readonly (string | null)[]): string {
-  let redacted = text;
-  for (const secret of secrets) {
-    if (secret === null || secret.length < 4) continue;
-    redacted = redacted.split(secret).join('«redacted»');
-  }
-  return redacted;
-}
+export { redactSecret } from '@mc/shared';

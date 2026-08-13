@@ -6,18 +6,23 @@ import type {
   TranscriptTailStateRow,
 } from './repository.js';
 
-/** One entry of `commits.files` (TDS 03 §3.7) — read whole, never queried per element. */
-interface CommitFileEntry {
-  readonly path: string;
-  readonly status: string;
-  readonly additions: number;
-  readonly deletions: number;
-}
-
 /**
  * DB row -> API resource. TDS 04 §6.1/§6.6/§6.7 shapes, using the TDS 03 §3.9 mapping table
  * as the authority for every column that is not a straight `snake_case` -> `camelCase` rename.
+ *
+ * The `Commit` resource (§5.2) is **not** one of them: `commits/serialize.ts` owns it, and
+ * §6.10.1's Session-scoped list is explicitly "the `Commit` resource of §5.2" — one resource,
+ * one serializer, whichever route serves it. Re-exported here so this module stays the single
+ * import site for everything the Session routes put on the wire.
  */
+
+export {
+  type CommitDetailResource,
+  type CommitFileResource,
+  type CommitResource,
+  serializeCommit,
+  serializeCommitDetail,
+} from '../commits/serialize.js';
 
 export interface SessionObservation {
   readonly channel: 'hooks_and_transcript' | 'hooks_only' | 'transcript_only';
@@ -286,56 +291,6 @@ export function serializeTimelineEntry(row: SessionEventRow): TimelineEntryResou
           ? { refType: 'commit' as const }
           : {}),
     ...(detail === undefined ? {} : { detail }),
-  };
-}
-
-export interface CommitResource {
-  readonly id: string;
-  readonly repositoryId: string;
-  readonly sessionId: string | null;
-  readonly sha: string;
-  readonly message: string;
-  readonly authorName: string;
-  readonly authorEmail: string | null;
-  readonly committedAt: string;
-  readonly filesChanged: number;
-  readonly additions: number;
-  readonly deletions: number;
-  readonly createdAt: string;
-}
-
-/**
- * §6.10.1: the Session-scoped commit list carries the §5.2 `Commit` resource **without**
- * `files[]` — that stays on the single-commit fetch, which is what keeps the Files tab a
- * separate read model rather than an N+1 walk. The three aggregate counts are derived from
- * `commits.files` here rather than stored (TDS 03 §3.7).
- */
-export function serializeCommit(row: {
-  id: string;
-  repositoryId: string;
-  sessionId: string | null;
-  sha: string;
-  message: string;
-  authorName: string;
-  authorEmail: string | null;
-  committedAt: Date;
-  files: CommitFileEntry[];
-  createdAt: Date;
-}): CommitResource {
-  const files = Array.isArray(row.files) ? row.files : [];
-  return {
-    id: row.id,
-    repositoryId: row.repositoryId,
-    sessionId: row.sessionId,
-    sha: row.sha,
-    message: row.message,
-    authorName: row.authorName,
-    authorEmail: row.authorEmail,
-    committedAt: row.committedAt.toISOString(),
-    filesChanged: files.length,
-    additions: files.reduce((total, file) => total + (file.additions ?? 0), 0),
-    deletions: files.reduce((total, file) => total + (file.deletions ?? 0), 0),
-    createdAt: row.createdAt.toISOString(),
   };
 }
 

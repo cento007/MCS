@@ -826,8 +826,33 @@ Rationale: a generated column is maintained by PostgreSQL itself, inside the sam
 | Query parsing | **`websearch_to_tsquery('pg_catalog.english', $1)`** — accepts raw operator input (`quoted phrases`, `or`, `-negation`) and never raises a syntax error on junk, unlike `to_tsquery`. |
 | Rank source (`rank` in the API response) | **`ts_rank_cd(search_tsv, query, 32)`** — cover-density ranking; normalization flag `32` = `rank/(rank+1)`, so every branch of the `UNION ALL` yields a comparable value in `(0,1)` and results from different entity types can be merged into one ordered list. Default weight vector `{D,C,B,A} = {0.1, 0.2, 0.4, 1.0}`. |
 | Field weights | `A` = title-ish (session title, ADR title, PR title, commit subject), `B` = primary body (notes, ADR decision, PR description, message content), `C` = secondary body (ADR context/alternatives/consequences), `D` = metadata (author, branch). |
-| Highlight (`snippet` with `<mark>`) | **`ts_headline`** over the original text (never the tsvector), with `StartSel=<mark>, StopSel=</mark>` — exactly the markup WS2 §11 promises. Applied in an outer query over the already-limited top-N rows, because `ts_headline` re-parses the source document and is far too expensive to run over every match. |
+| Highlight (`snippet` with `<mark>`) | **`ts_headline`** over the original text (never the tsvector), applied in an outer query over the already-limited top-N rows, because it re-parses the source document and is far too expensive to run over every match. **`StartSel`/`StopSel` are private sentinels, not `<mark>` — see the correction below.** |
 | Index type | `GIN` on `search_tsv` (default `fastupdate`), one per table. |
+
+> **Corrected 2026-08-13 — `StartSel=<mark>` was a stored XSS.** Two facts are true at once: a
+> `snippet` containing `<mark>` *must* be rendered as HTML (escaping it would show the operator
+> the literal characters `<mark>` instead of a highlight), and **`ts_headline` copies the source
+> document through verbatim, escaping nothing**. So a commit message, ADR body, PR description or
+> assistant turn containing `<img src=x onerror=…>` arrived in the snippet as live markup, and the
+> client had no way to distinguish a `<` PostgreSQL emitted from a `<` the corpus contained.
+>
+> This is easy to miss because PostgreSQL's text-search parser *does* drop some HTML as `tag`
+> tokens — a well-formed `<img …>` can vanish, making the feature look safe. Its tag grammar is
+> far stricter than a browser's; both of these survived on this instance and are
+> browser-executable: `<img src=x onerror=alert(1) ` (unclosed) and `<svg/onload=alert(1)>`.
+>
+> **The fix is one indirection**, implemented in `apps/backend/src/search/highlight.ts`:
+> `ts_headline` highlights with a private ASCII sentinel that means nothing to a browser; the
+> whole headline is then HTML-escaped; and only then is the **escaped sentinel** replaced with
+> real `<mark>` tags. `<mark>`/`</mark>` become the only markup that can exist in the output,
+> because they are the only markup introduced *after* escaping. Source text that happens to
+> contain the sentinel literal degrades to a stray `<mark>` — cosmetic, not injection.
+>
+> Ordering is load-bearing in two places: `&` is escaped before `<` (otherwise `&lt;` is
+> double-escaped), and truncation happens *before* escaping (cutting afterwards would slice
+> through an entity or a tag; cutting before can only slice a sentinel, whose shape is known and
+> repairable). WS2 §11's contract is unchanged and now strictly true: `<mark>` highlights, and
+> nothing but.
 
 ```sql
 -- Phase 2 additive migration. Column name is uniform across tables: search_tsv.
@@ -901,8 +926,10 @@ hits AS (
     FROM messages m, q WHERE m.search_tsv @@ q.query
 )
 SELECT h.type, h.id, h.title, h.occurred_at, h.rank,
+       -- Sentinels, not <mark>: the substitution happens after HTML-escaping, in the
+       -- application layer. See the correction note above — the literal form is an XSS.
        ts_headline('pg_catalog.english', h.source, q.query,
-                   'StartSel=<mark>, StopSel=</mark>, MaxFragments=2, MinWords=5, MaxWords=18') AS snippet
+                   'StartSel=<<<mc-hl>>>, StopSel=<<</mc-hl>>>, MaxFragments=2, MinWords=5, MaxWords=18') AS snippet
   FROM (SELECT * FROM hits
          ORDER BY rank DESC, occurred_at DESC, id DESC
          LIMIT $2) h, q;

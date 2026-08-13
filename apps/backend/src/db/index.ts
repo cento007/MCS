@@ -37,10 +37,28 @@ const UNIQUE_VIOLATION = '23505';
  * unrelated collision is not silently reported as the one the handler was guarding.
  */
 export function isUniqueViolation(error: unknown, constraint?: string): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const candidate = error as { readonly code?: unknown; readonly constraint?: unknown };
-  if (candidate.code !== UNIQUE_VIOLATION) return false;
-  return constraint === undefined || candidate.constraint === constraint;
+  // Drizzle 0.45 wraps every query failure in a `DrizzleQueryError` and puts the `pg` error on
+  // `cause`, so the SQLSTATE is one level down — and, inside a transaction, sometimes two. A
+  // check that only looked at the top-level object silently answered `false` for every
+  // violation, turning a `409 CONFLICT` into a `500 INTERNAL`. Walking the chain (bounded, so a
+  // cyclic `cause` cannot spin) is what makes the guard real rather than aspirational.
+  for (let candidate = error, depth = 0; depth < 5; depth += 1) {
+    if (typeof candidate !== 'object' || candidate === null) return false;
+
+    const pgError = candidate as {
+      readonly code?: unknown;
+      readonly constraint?: unknown;
+      readonly cause?: unknown;
+    };
+
+    if (pgError.code === UNIQUE_VIOLATION) {
+      return constraint === undefined || pgError.constraint === constraint;
+    }
+    if (pgError.cause === undefined) return false;
+    candidate = pgError.cause;
+  }
+
+  return false;
 }
 
 export function createDatabase(options: CreateDatabaseOptions): DatabaseHandle {

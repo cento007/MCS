@@ -9,9 +9,9 @@ import type { EventSource } from '../events/index.js';
  * age of one upserted row: `healthy` < 90 s, `stale` 90 s–5 min, `down` beyond that.
  * The interval is 30 s — three ticks inside the healthy window.
  *
- * SCAFFOLD STATE: the sink is pluggable and defaults to a LOG-ONLY sink. The real sink
- * upserts into `service_heartbeats` (TDS 03 §4.4), which does not exist yet — WS3 owns it.
- * Wiring the DB sink is a one-line change at each worker's composition root.
+ * The sink is pluggable and defaults to a LOG-ONLY sink so a process can start with no
+ * database. The real one is `createDatabaseHeartbeatSink` next door, which upserts into
+ * `service_heartbeats` (TDS 03 §4.4); each worker's composition root supplies it.
  */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const HEARTBEAT_HEALTHY_MS = 90_000;
@@ -60,10 +60,11 @@ export function createHeartbeat(options: HeartbeatOptions): Heartbeat {
   const sink: HeartbeatSink =
     options.sink ??
     ((sample) => {
-      // Log-only until `service_heartbeats` exists (TDS 03 §4.4).
+      // Log-only: no database was wired at this composition root, so the Services panel will
+      // show this worker as `disabled` ("not deployed") however healthy the process actually is.
       logger.debug(
         { heartbeat: { service: sample.service, pid: sample.pid, stats: sample.stats } },
-        'heartbeat intent (no sink configured — service_heartbeats table pending WS3)',
+        'heartbeat intent (no sink configured — service_heartbeats not written)',
       );
     });
 

@@ -16,6 +16,7 @@ import { readCategoryValues, readSecretKeys } from './values.js';
  *   `integrations.github.syncIntervalMinutes`  -> `('integrations', 'github_sync_interval_minutes')`
  *   `integrations.github.token`                -> `secret_items('integrations', 'github_token')`
  *   `integrations.telegram.enabled`            -> `('integrations', 'telegram_enabled')`
+ *   `integrations.telegram.chatId`             -> `('integrations', 'telegram_chat_id')`
  *   `integrations.telegram.botToken`           -> `secret_items('integrations', 'telegram_bot_token')`
  *
  * **Absent interval rows default to `0`, not to the value the Settings form pre-fills.** §7.7
@@ -34,6 +35,7 @@ export const INTEGRATION_SETTING_KEYS = Object.freeze({
   githubToken: settingKey('integrations.github.token'),
   telegramEnabled: settingKey('integrations.telegram.enabled'),
   telegramBotToken: settingKey('integrations.telegram.botToken'),
+  telegramChatId: settingKey('integrations.telegram.chatId'),
 } as const);
 
 export interface ObsidianScheduleSettings {
@@ -49,9 +51,18 @@ export interface GithubScheduleSettings {
   readonly syncIntervalMinutes: number;
 }
 
+/**
+ * The Telegram fields no consumer of this module is allowed to see the token through.
+ *
+ * `botTokenIsSet` / `chatIdIsSet` are presence only (§7.1 `{ isSet }`): the schedule read model
+ * needs to know whether delivery is *possible*, and the Notification producer needs to decide
+ * between `pending` and a terminal `skipped` — neither needs the credential, so neither is
+ * given a shape that could carry it.
+ */
 export interface TelegramScheduleSettings {
   readonly enabled: boolean;
   readonly botTokenIsSet: boolean;
+  readonly chatIdIsSet: boolean;
 }
 
 export interface ScheduleIntegrationSettings {
@@ -92,6 +103,11 @@ export function parseScheduleIntegrationSettings(
         values.get(INTEGRATION_SETTING_KEYS.telegramEnabled),
       ),
       botTokenIsSet: secretKeys.has(INTEGRATION_SETTING_KEYS.telegramBotToken),
+      chatIdIsSet:
+        normalizeSetting<string | null>(
+          'integrations.telegram.chatId',
+          values.get(INTEGRATION_SETTING_KEYS.telegramChatId),
+        ) !== null,
     },
   };
 }

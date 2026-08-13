@@ -1,4 +1,9 @@
-import type { PgBossQueue } from '@mc/shared';
+import {
+  createDatabaseHeartbeatSink,
+  createHeartbeat,
+  createLogger,
+  type PgBossQueue,
+} from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -46,6 +51,31 @@ function rowOf(model: ServiceHealthReadModel, name: string): ServiceHealthRow {
   const row = model.services.find((service) => service.name === name);
   if (row === undefined) throw new Error(`No health row for ${name}`);
   return row;
+}
+
+/**
+ * One row, collected past the ~5 s cache.
+ *
+ * `ServiceHealthService` memoizes, deliberately (TDS 02 §7.1), so a test that changes the world
+ * and immediately re-reads would be asserting against the snapshot from before the change.
+ * Collecting through fresh probes is the honest way to observe a transition.
+ */
+async function freshHealthRead(name: string): Promise<ServiceHealthRow> {
+  const model = await collectServiceHealth(
+    createServiceHealthProbes({
+      db: testDatabase().db,
+      queue,
+      backend: () => ({
+        version: '0.0.0-test',
+        uptimeSeconds: 1,
+        startedAt: new Date().toISOString(),
+        wsConnections: 0,
+        activeSessions: 0,
+        maxConcurrentSessions: 3,
+      }),
+    }),
+  );
+  return rowOf(model, name);
 }
 
 beforeEach(async () => {
@@ -142,6 +172,40 @@ describe('worker heartbeats read from service_heartbeats (TDS 03 §4.4)', () => 
     expect(rowOf(model, 'sync-worker').meta).toMatchObject({
       lastHeartbeatAt: null,
       heartbeatStatus: 'never_reported',
+    });
+  });
+
+  /**
+   * The Phase 2 transition, end to end and through the **real** sink the worker uses.
+   *
+   * Before the Telegram Worker has ever run there is no row and the panel says `disabled`
+   * ("Not deployed"). The first heartbeat is the entire deployment signal: nothing else about
+   * the worker is visible to the Backend, because it has no port (TDS 02 §1.1). Asserting the
+   * flip with `createDatabaseHeartbeatSink` rather than the `seedHeartbeat` fixture is the
+   * point — it proves the row the worker actually writes is the row this view actually reads.
+   */
+  it('flips from disabled to healthy the first time the worker heartbeats', async () => {
+    const before = rowOf(await readHealth(), 'telegram-worker');
+    expect(before.status).toBe('disabled');
+    expect(before.detail).toContain('Not deployed');
+
+    await createHeartbeat({
+      service: 'telegram-worker',
+      version: '0.0.0-test',
+      logger: createLogger({ service: 'telegram-worker', level: 'silent' }),
+      sink: createDatabaseHeartbeatSink(testDatabase().db),
+      stats: () => ({ jobsProcessed: 3, jobsFailed: 0 }),
+    }).beat();
+
+    // The read model caches for ~5 s (TDS 02 §7.1), so ask a fresh service rather than
+    // asserting against a snapshot taken before the row existed.
+    const after = await freshHealthRead('telegram-worker');
+
+    expect(after.status).toBe('healthy');
+    expect(after.meta).toMatchObject({
+      heartbeatStatus: 'healthy',
+      version: '0.0.0-test',
+      stats: { jobsProcessed: 3, jobsFailed: 0 },
     });
   });
 

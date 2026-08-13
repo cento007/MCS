@@ -15,10 +15,14 @@ import { type AuditLogService, parseInstant } from './query.js';
  *
  * A *known* filter with an unusable value is rejected rather than dropped (`?from=lastTuesday`
  * is a 400, not "every row ever"): an audit filter that fails open answers a narrow question
- * with the whole table. An *unknown* query parameter is silently discarded by Fastify's Ajv
- * (`removeAdditional: true`, its default and this repository's behaviour on every list route),
- * so `?actor=` reads as no filter at all — noted here rather than worked around, because the
- * fix belongs in one place for all routes, not in this one.
+ * with the whole table.
+ *
+ * An **unknown** parameter is rejected too, and no longer by anything in this file. It used to
+ * be silently discarded by Fastify's Ajv (`removeAdditional: true`), so `?actor=me` read as no
+ * filter at all and this endpoint answered a narrow question with every row it had. The fix is
+ * where the note said it belonged — one place for all routes: `http/query-strictness.ts`, whose
+ * allowlist is derived from the `listQuerySchema` below, so a filter that is not spelled
+ * exactly as it appears there is a `VALIDATION_FAILED`.
  */
 
 const UUID_PATTERN =

@@ -175,7 +175,10 @@ describe('POST /api/v1/projects', () => {
       { name: 'Valid', workflowMode: 'automatic' },
       // Note: an *unknown* property is not in this list. Fastify's default ajv configuration
       // is `removeAdditional: true`, so `additionalProperties: false` strips the field rather
-      // than rejecting the request — the same behaviour every other route in this Backend has.
+      // than rejecting the request — the same behaviour every other route **body** in this
+      // Backend has. Query *parameters* are the exception and are rejected by name
+      // (`http/query-strictness.ts`), because a dropped filter is a wrong answer rather than a
+      // no-op; the settings write planner rejects unknown body fields for the same reason.
     ]) {
       const response = await request('POST', '/api/v1/projects', payload);
 

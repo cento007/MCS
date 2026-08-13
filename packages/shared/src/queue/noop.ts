@@ -24,6 +24,13 @@ export interface NoopQueue extends Queue {
   readonly enqueuedJobs: readonly { queue: string; job: QueueJob }[];
   /** Queue names with a live subscription. */
   readonly subscriptions: readonly string[];
+  /**
+   * The handler a consumer registered, so a test can drive it exactly as pg-boss would —
+   * including the `signal` a real delivery carries. Throws when nothing is subscribed, because
+   * a silently-undefined handler turns "the consumer was never wired" into a passing test.
+   */
+  handlerFor(queue: string): ConsumerHandler;
+  jobHandlerFor<TPayload extends JobPayload = JobPayload>(queue: string): JobHandler<TPayload>;
 }
 
 export function createNoopQueue(): NoopQueue {
@@ -40,6 +47,12 @@ export function createNoopQueue(): NoopQueue {
     },
     get subscriptions() {
       return [...handlers.keys()];
+    },
+    handlerFor(queue): ConsumerHandler {
+      return required(handlers, queue) as ConsumerHandler;
+    },
+    jobHandlerFor<TPayload extends JobPayload>(queue: string): JobHandler<TPayload> {
+      return required(handlers, queue) as unknown as JobHandler<TPayload>;
     },
     async enqueue(_tx, queue, event) {
       enqueued.push({ queue, event });
@@ -63,4 +76,17 @@ export function createNoopQueue(): NoopQueue {
       handlers.clear();
     },
   };
+}
+
+function required(
+  handlers: Map<string, ConsumerHandler | JobHandler<JobPayload>>,
+  queue: string,
+): ConsumerHandler | JobHandler<JobPayload> {
+  const handler = handlers.get(queue);
+  if (handler === undefined) {
+    throw new Error(
+      `No consumer is subscribed to "${queue}" — subscribed: ${[...handlers.keys()].join(', ') || '(none)'}`,
+    );
+  }
+  return handler;
 }

@@ -60,9 +60,28 @@ const passwordBodySchema = {
   },
 } as const;
 
+/**
+ * `scopes` is **required**, and that is a security decision rather than strictness for its
+ * own sake.
+ *
+ * `additionalProperties: false` does not reject here — Fastify runs Ajv with
+ * `removeAdditional: true`, which turns it into *silently delete the field*. So a caller who
+ * typed the singular `scope: ['ingest']` had it stripped, and with `scopes` optional the
+ * service's `?? ['full']` default then issued a **full-access token**, answered `201`, and
+ * gave no hint that the requested scope had been discarded. Privilege escalation by typo,
+ * with a success response.
+ *
+ * Making the field required closes it at the schema: the stripped body now fails validation
+ * with `VALIDATION_FAILED` naming `scopes`. Full access must be asked for explicitly and can
+ * never be reached by omission — which is the point of the `ingest` scope existing at all,
+ * since it is what stops a hook profile installed on a dev machine from holding the whole API.
+ *
+ * The SPA already sends `scopes` on every create (`features/settings/panels/ApiTokens.tsx`),
+ * so no client of ours relied on the default.
+ */
 const createTokenBodySchema = {
   type: 'object',
-  required: ['name'],
+  required: ['name', 'scopes'],
   additionalProperties: false,
   properties: {
     name: { type: 'string', minLength: 1, maxLength: 100 },

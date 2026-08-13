@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AppConfig, loadConfig, newId, type PgBossQueue, schema } from '@mc/shared';
+import { type AppConfig, insertAdr, loadConfig, newId, type PgBossQueue, schema } from '@mc/shared';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { type BuildAppOptions, type BuiltApp, buildAppWithServices } from '../../src/app.js';
@@ -164,6 +164,16 @@ export function createTestApp(
     githubHttp: options.githubHttp ?? createDenyingGithubHttp('the integration harness'),
     ...(options.githubBaseUrl === undefined ? {} : { githubBaseUrl: options.githubBaseUrl }),
     ...(options.githubLimits === undefined ? {} : { githubLimits: options.githubLimits }),
+    // `GET /search`'s statement timeout (TDS 04 §11). Forwarded so the timeout path can be
+    // exercised by shrinking the budget rather than by building a corpus large enough to
+    // exceed a real one.
+    ...(options.searchTimeoutMs === undefined ? {} : { searchTimeoutMs: options.searchTimeoutMs }),
+    // The dry-run preview's vault walk (`GET /sync-runs/preview`). Forwarded so a test can
+    // shrink the bounds and prove the scan stops, instead of building a vault big enough to
+    // exceed a real 15-second deadline.
+    ...(options.obsidianScanBounds === undefined
+      ? {}
+      : { obsidianScanBounds: options.obsidianScanBounds }),
   });
 
   openApps.push(built.app);
@@ -211,6 +221,8 @@ export async function truncateAll(): Promise<void> {
     'projects',
     'workspaces',
     'notifications',
+    'adrs',
+    'obsidian_sync_states',
     'sync_runs',
     'service_heartbeats',
     'users',
@@ -511,6 +523,70 @@ export async function seedSession(input: SeedSessionInput): Promise<string> {
         : { resumedFromSessionId: input.resumedFromSessionId }),
       ...(input.lineageKind === undefined ? {} : { lineageKind: input.lineageKind }),
       ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
+    });
+  return id;
+}
+
+/**
+ * A real, empty directory to use as an Obsidian vault.
+ *
+ * Real, because the sync engine's whole job is filesystem behaviour and a mocked filesystem
+ * cannot demonstrate an atomic write or a conflict copy. Under the OS temp root and removed in
+ * teardown, so **no test ever touches an operator's actual vault** (TDS 07 §4).
+ */
+export function testVaultDirectory(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'mc-vault-'));
+  tempDirectories.push(directory);
+  return directory;
+}
+
+export interface SeedAdrInput {
+  readonly projectId: string;
+  readonly title?: string;
+  readonly status?: string;
+  readonly context?: string;
+  readonly decision?: string;
+  readonly alternatives?: string;
+  readonly consequences?: string;
+  readonly sourceSessionId?: string;
+}
+
+/** An `adrs` row inserted through the shared numbering write, so `adr_number` is real. */
+export async function seedAdr(input: SeedAdrInput): Promise<{ id: string; adrNumber: number }> {
+  const row = await testDatabase().db.transaction(async (tx) =>
+    insertAdr(tx, {
+      projectId: input.projectId,
+      title: input.title ?? 'Use pg-boss for the job queue',
+      ...(input.status === undefined ? {} : { status: input.status }),
+      ...(input.context === undefined ? {} : { context: input.context }),
+      ...(input.decision === undefined ? {} : { decision: input.decision }),
+      ...(input.alternatives === undefined ? {} : { alternatives: input.alternatives }),
+      ...(input.consequences === undefined ? {} : { consequences: input.consequences }),
+      ...(input.sourceSessionId === undefined ? {} : { sourceSessionId: input.sourceSessionId }),
+    }),
+  );
+
+  return { id: row.id, adrNumber: row.adrNumber };
+}
+
+/** A Message row — the evidence a Session Note and an ADR draft are assembled from. */
+export async function seedMessage(input: {
+  readonly sessionId: string;
+  readonly ordinal: number;
+  readonly role: 'user' | 'assistant' | 'system' | 'tool';
+  readonly content: string;
+  readonly toolFilePath?: string;
+}): Promise<string> {
+  const id = newId();
+  await testDatabase()
+    .db.insert(schema.messages)
+    .values({
+      id,
+      sessionId: input.sessionId,
+      ordinal: input.ordinal,
+      role: input.role,
+      content: input.content,
+      ...(input.toolFilePath === undefined ? {} : { toolFilePath: input.toolFilePath }),
     });
   return id;
 }

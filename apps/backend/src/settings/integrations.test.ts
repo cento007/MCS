@@ -15,6 +15,7 @@ describe('parseScheduleIntegrationSettings (§7.2 / §7.6)', () => {
         ['obsidian_sync_interval_minutes', 15],
         ['github_sync_interval_minutes', 30],
         ['telegram_enabled', true],
+        ['telegram_chat_id', '-1001234567890'],
       ]),
       new Set(['github_token', 'telegram_bot_token']),
     );
@@ -25,7 +26,11 @@ describe('parseScheduleIntegrationSettings (§7.2 / §7.6)', () => {
       syncIntervalMinutes: 15,
     });
     expect(settings.github).toEqual({ tokenIsSet: true, syncIntervalMinutes: 30 });
-    expect(settings.telegram).toEqual({ enabled: true, botTokenIsSet: true });
+    expect(settings.telegram).toEqual({
+      enabled: true,
+      botTokenIsSet: true,
+      chatIdIsSet: true,
+    });
   });
 
   it('reads an unconfigured instance as unconfigured, not as a default schedule', () => {
@@ -36,6 +41,9 @@ describe('parseScheduleIntegrationSettings (§7.2 / §7.6)', () => {
     expect(settings.github.syncIntervalMinutes).toBe(0);
     expect(settings.github.tokenIsSet).toBe(false);
     expect(settings.telegram.enabled).toBe(false);
+    // The chat id is a plain setting, not a secret: absence is row-absence and reads as `null`,
+    // which the Notification producer turns into a terminal `skipped` rather than a retry.
+    expect(settings.telegram.chatIdIsSet).toBe(false);
   });
 
   it('reports secret presence without ever reading a secret', () => {

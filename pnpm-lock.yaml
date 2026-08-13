@@ -148,10 +148,22 @@ importers:
       '@mc/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.21.0)(pg@8.23.0)
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      '@types/pg':
+        specifier: 8.21.0
+        version: 8.21.0
+      pg-boss:
+        specifier: 12.27.0
+        version: 12.27.0
       tsx:
         specifier: 4.23.12
         version: 4.23.12
@@ -167,10 +179,22 @@ importers:
       '@mc/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.21.0)(pg@8.23.0)
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
     devDependencies:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      '@types/pg':
+        specifier: 8.21.0
+        version: 8.21.0
+      pg-boss:
+        specifier: 12.27.0
+        version: 12.27.0
       tsx:
         specifier: 4.23.12
         version: 4.23.12

@@ -1,27 +1,36 @@
 import process from 'node:process';
 import {
+  createDatabaseHeartbeatSink,
   createHeartbeat,
   createLoggerFromConfig,
-  createNoopQueue,
   createShutdownController,
-  keepAlive,
   loadConfigOrExit,
 } from '@mc/shared';
+import { DailyReportService } from './daily-report.js';
+import { createDatabase } from './db.js';
+import { DeliveryService } from './delivery.js';
+import { createWorkerQueue } from './queue.js';
+import { TelegramClient } from './telegram/client.js';
+import { createTelegramHttpPort } from './telegram/http.js';
 import { createWorker } from './worker.js';
 
 /**
  * Telegram Worker process entry (TDS 02 §2.2, Phase 2).
  *
  * Process contract (F8.1): foreground, JSON logs to stdout, nonzero exit on fatal. Under
- * systemd this is `mission-control-telegram-worker.service`; in a dev console it is one of
- * the `pnpm dev:workers` processes. No process-manager knowledge lives here.
+ * systemd this is `mission-control-telegram-worker.service`; in a dev console it is one of the
+ * `pnpm dev:workers` processes. No process-manager knowledge lives here.
  *
- * Shutdown is wired to BOTH SIGINT and SIGTERM: Ubuntu sends SIGTERM, Windows delivers
- * Ctrl-C as SIGINT and has no true SIGTERM (TDS 07 §7.2).
+ * Shutdown is wired to BOTH SIGINT and SIGTERM: Ubuntu sends SIGTERM, Windows delivers Ctrl-C
+ * as SIGINT and has no true SIGTERM (TDS 07 §7.2).
  *
- * SCAFFOLD STATE: the queue is the in-memory `createNoopQueue()` placeholder, so this
- * process starts and stops cleanly with no database present. Swapping in the pg-boss
- * driver (F3.1) is a one-line change at this composition root once WS3's schema exists.
+ * **This is the only place the real Telegram transport is constructed.** Everything below it
+ * takes the port as an argument, which is what lets every test drive the whole delivery path
+ * without a network — and what lets the integration harness install a port that *throws*, so a
+ * suite that forgot to inject fails loudly instead of messaging a real chat.
+ *
+ * Startup order: config -> DB pool -> `boss.start()` (pg-boss migrates its own vendored schema;
+ * the **Backend** owns the app migrations, TDS 03 §7.1) -> subscribe -> accept work.
  */
 const VERSION = process.env['MC_VERSION'] ?? '0.0.0';
 
@@ -29,15 +38,63 @@ async function main(): Promise<void> {
   const config = loadConfigOrExit();
   const log = createLoggerFromConfig('telegram-worker', config);
 
-  const queue = createNoopQueue();
-  const heartbeat = createHeartbeat({ service: 'telegram-worker', version: VERSION, logger: log });
-  const worker = createWorker({ queue, logger: log, heartbeat });
-
+  const database = createDatabase({ connectionString: config.databaseUrl });
   const shutdown = createShutdownController({ logger: log });
-  // Remove once the pg-boss driver holds the event loop itself — see keep-alive.ts.
-  const stopKeepAlive = keepAlive();
 
-  shutdown.onShutdown('keep-alive', stopKeepAlive);
+  // Aborted before anything else on shutdown, so an in-flight Bot API call unblocks instead of
+  // holding `offWork` open (see `worker.ts`'s `stop`).
+  const inFlight = new AbortController();
+
+  const queue = createWorkerQueue({
+    connectionString: config.databaseUrl,
+    onError: (error) => {
+      log.error({ err: error }, 'queue error');
+    },
+    onWarning: (warning) => {
+      log.warn({ warning }, 'queue warning');
+    },
+  });
+
+  try {
+    await queue.start();
+  } catch (error) {
+    log.fatal({ err: error }, 'queue failed to start');
+    await database.close();
+    process.exit(1);
+  }
+
+  const delivery = new DeliveryService({
+    db: database.db,
+    queue,
+    client: new TelegramClient({ http: createTelegramHttpPort() }),
+    encryptionKey: config.encryptionKey,
+    signal: inFlight.signal,
+  });
+
+  const dailyReport = new DailyReportService({ db: database.db, queue });
+
+  const worker = createWorker({
+    queue,
+    logger: log,
+    delivery,
+    dailyReport,
+    shutdown: inFlight,
+    heartbeat: createHeartbeat({
+      service: 'telegram-worker',
+      version: VERSION,
+      logger: log,
+      // The real sink. Writing this row is what flips Settings -> Services from
+      // `disabled` ("not deployed") to `healthy` (TDS 02 §7.2).
+      sink: createDatabaseHeartbeatSink(database.db),
+      stats: () => worker.stats(),
+    }),
+  });
+
+  // Hooks run in REVERSE registration order, so the pool is registered first and drained last —
+  // nothing can still be querying it once the consumers have stopped.
+  shutdown.onShutdown('database-pool', async () => {
+    await database.close();
+  });
   shutdown.onShutdown('worker', async () => {
     await worker.stop();
   });
@@ -46,6 +103,8 @@ async function main(): Promise<void> {
     await worker.start();
   } catch (error) {
     log.fatal({ err: error }, 'telegram worker failed to start');
+    await queue.stop();
+    await database.close();
     process.exit(1);
   }
 }

@@ -21,7 +21,9 @@ import { readCategoryValues } from './values.js';
  *
  * Two Phase 1 read models consume this category: `GET /spend` reads `events.costBudgetAlert`
  * for `budget.alertsEnabled` (§7.8), and `GET /schedule` reads `dailyReport` for the
- * `daily_report` row (§7.7).
+ * `daily_report` row (§7.7). Phase 2 adds the Notification producer, which reads all three:
+ * `events` decides whether a Notification exists at all, `quietHours` decides whether its
+ * Telegram delivery is deferred (see `notifications/produce.ts`).
  */
 
 export type { DailyReportSettings, NotificationEventToggles, QuietHoursSettings };
@@ -38,6 +40,7 @@ export const NOTIFICATION_SETTING_KEYS = Object.freeze({
 export interface NotificationsSettings {
   readonly events: NotificationEventToggles;
   readonly dailyReport: DailyReportSettings;
+  readonly quietHours: QuietHoursSettings;
 }
 
 export function parseNotificationsSettings(
@@ -51,6 +54,10 @@ export function parseNotificationsSettings(
     dailyReport: normalizeSetting<DailyReportSettings>(
       'notifications.dailyReport',
       values.get(NOTIFICATION_SETTING_KEYS.dailyReport),
+    ),
+    quietHours: normalizeSetting<QuietHoursSettings>(
+      'notifications.quietHours',
+      values.get(NOTIFICATION_SETTING_KEYS.quietHours),
     ),
   };
 }

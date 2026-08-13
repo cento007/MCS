@@ -17,11 +17,16 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { ADR_STATUSES as ADR_STATUS_VOCABULARY, type AdrStatus } from '../../entities/adr.js';
 import { createdAt, primaryKeyId, tsvector, updatedAt, valueList } from './columns.js';
 import { projects } from './projects.js';
 import { sessions } from './sessions.js';
 
-const ADR_STATUSES = ['proposed', 'accepted', 'rejected', 'superseded'] as const;
+/**
+ * Anchored to the shared vocabulary rather than re-typed, exactly as `sessions.state` is: the
+ * CHECK and the values the API validates against cannot drift apart (F9.5).
+ */
+const ADR_STATUSES = ADR_STATUS_VOCABULARY satisfies readonly AdrStatus[];
 
 export const adrs = pgTable(
   'adrs',

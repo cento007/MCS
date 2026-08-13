@@ -1,7 +1,16 @@
-import { type AppConfig, createNoopQueue, type Db, type LogLevel, type Queue } from '@mc/shared';
+import {
+  type AppConfig,
+  createNoopQueue,
+  type Db,
+  type LogLevel,
+  type Queue,
+  type ScanBounds,
+} from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { type AdrModule, registerAdrs } from './adrs/index.js';
 import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
+import { registerCommits } from './commits/index.js';
 import { createEventBus, type EventBus, Outbox } from './events/index.js';
 import {
   type GithubHttpPort,
@@ -17,10 +26,13 @@ import {
   type ServiceHealthService,
 } from './health/index.js';
 import { generateRequestId, registerHttpConventions } from './http/index.js';
-import { type NotificationService, registerNotifications } from './notifications/index.js';
+import { type NotificationsModule, registerNotifications } from './notifications/index.js';
+import { type ObsidianModule, registerObsidian } from './obsidian/index.js';
 import { registerProjects } from './projects/index.js';
+import { registerPullRequests } from './pull-requests/index.js';
 import { registerRepositories } from './repositories/index.js';
 import { registerSchedule, type ScheduleService } from './schedule/index.js';
+import { registerSearch, type SearchModule } from './search/index.js';
 import {
   type AgentRuntimePort,
   registerSessions,
@@ -118,6 +130,17 @@ export interface BuildAppOptions {
   readonly githubBaseUrl?: string | undefined;
   /** Shrink the per-sync page and detail budgets (tests only). */
   readonly githubLimits?: SyncLimits | undefined;
+  /**
+   * `statement_timeout` for `GET /api/v1/search` (TDS 04 §11). Defaults to
+   * `DEFAULT_SEARCH_TIMEOUT_MS`; a test drops it to 1ms to prove the bound is enforced by
+   * PostgreSQL rather than merely written down.
+   */
+  readonly searchTimeoutMs?: number | undefined;
+  /**
+   * Bounds for the dry-run preview's vault walk (`GET /sync-runs/preview`). Tests shrink them
+   * to prove the scan stops rather than waiting for a real 15-second deadline.
+   */
+  readonly obsidianScanBounds?: ScanBounds | undefined;
 }
 
 export interface BuiltApp {
@@ -132,11 +155,18 @@ export interface BuiltApp {
   /** The four Phase 1 read models (TDS 04 §7.5, §7.7, §7.8, §8). */
   readonly serviceHealth: ServiceHealthService;
   readonly schedule: ScheduleService;
-  readonly notifications: NotificationService;
+  /** The §8 read surface plus the Phase 2 producer that writes the rows (`produce.ts`). */
+  readonly notifications: NotificationsModule;
   /** Settings read/write, secrets and Test Connection (TDS 04 §7.1–§7.4). */
   readonly settings: SettingsModule;
   /** Repository discovery, commit/PR sync and the polling producer (TDS 04 §5, PRD §4.3). */
   readonly github: GithubModule;
+  /** Phase 2 keyword search across the five TDS 03 §4.6 branches (TDS 04 §11). */
+  readonly search: SearchModule;
+  /** ADR CRUD + `generate-adr` (TDS 04 §9, PRD §7.3). */
+  readonly adrs: AdrModule;
+  /** Obsidian sync runs, the dry-run preview, and nothing that writes a vault (TDS 04 §10). */
+  readonly obsidian: ObsidianModule;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -236,6 +266,12 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   registerProjects(app, { db: options.db });
   registerRepositories(app, { db: options.db, outbox });
 
+  // The Commit and PullRequest read models (§5.2/§5.3). Registered next to `repositories/`
+  // because every one of their routes hangs off a Repository, and read-only by construction:
+  // `github/` writes both tables, these two modules only serve them.
+  registerCommits(app, { db: options.db });
+  registerPullRequests(app, { db: options.db });
+
   // After `registerAuth`, and that ordering is load-bearing: the guard's instance-level
   // `onRequest` hook must already be in place so it authenticates the upgrade before the
   // route's own Origin check runs (TDS 04 §14.1–§14.2, and the ordering note in `ws/index.ts`).
@@ -288,7 +324,18 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
-  const notifications = registerNotifications(app, { db: options.db });
+  // The Notification producer subscribes to the same in-process bus the outbox publishes to
+  // after commit, so `session.completed` becomes a Notification (and its Telegram delivery
+  // job) only once the Session's own transaction is durable (TDS 04 §8, §15.2).
+  const notifications = registerNotifications(app, {
+    db: options.db,
+    outbox,
+    queue,
+    bus,
+  });
+  app.addHook('onClose', async () => {
+    notifications.stop();
+  });
 
   // Settings (§7.1–§7.4) and the audit-log read (§12). Registered after the read models
   // because a settings write is what makes them change: `setting.updated` goes out through the
@@ -321,6 +368,31 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
+  // Keyword search (TDS 04 §11). Registered last and depending on nothing but the db handle:
+  // it owns no table, reads five it does not write, and the generated `search_tsv` columns it
+  // queries are maintained by PostgreSQL inside each of those writes (TDS 03 §4.6).
+  const search = registerSearch(app, {
+    db: options.db,
+    ...(options.searchTimeoutMs === undefined ? {} : { searchTimeoutMs: options.searchTimeoutMs }),
+    onTimeout: (q, timeoutMs) => {
+      app.log.warn({ queryLength: q.length, timeoutMs }, 'search exceeded its statement timeout');
+    },
+  });
+
+  // Knowledge (Phase 2): the Adr domain (TDS 04 §9) and the Obsidian sync surface (§10).
+  //
+  // Both are producers only — `adrs` writes its own table and enqueues `adr.generate`;
+  // `obsidian` inserts a `sync_runs` row and enqueues `obsidian.sync`. Neither touches the
+  // vault: that happens in the Sync Worker, which is the single writer (F2.2). The one
+  // exception is the dry-run preview, which *reads* the vault and writes nothing anywhere.
+  const adrs = registerAdrs(app, { db: options.db, outbox, queue });
+  const obsidian = registerObsidian(app, {
+    db: options.db,
+    outbox,
+    queue,
+    scanBounds: options.obsidianScanBounds,
+  });
+
   return {
     app,
     auth,
@@ -334,6 +406,9 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     notifications,
     settings,
     github,
+    adrs,
+    obsidian,
+    search,
   };
 }
 

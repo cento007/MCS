@@ -11,6 +11,7 @@
  * entity names are PascalCase in types and docs. IDs are UUIDv7 strings.
  */
 
+export * from './adr.js';
 export * from './notification.js';
 export * from './service-health.js';
 export * from './session-state.js';

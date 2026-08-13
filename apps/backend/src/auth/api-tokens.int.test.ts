@@ -40,6 +40,12 @@ let app: FastifyInstance;
 let user: SeededUser;
 let cookie: string;
 
+/**
+ * `scopes` defaults to `['full']` **here in the helper, not in the API**. Most tests below
+ * want a working token and do not care about its scope; the route itself requires the field,
+ * because a full-access token must never be issuable by omission. The tests that assert that
+ * contract call `app.inject` directly so nothing is filled in behind them.
+ */
 async function createToken(
   payload: Record<string, unknown>,
 ): Promise<{ status: number; body: TokenBody & { token: string } }> {
@@ -47,7 +53,7 @@ async function createToken(
     method: 'POST',
     url: '/api/v1/auth/tokens',
     headers: { cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
-    payload,
+    payload: { scopes: ['full'], ...payload },
   });
 
   return {
@@ -101,7 +107,7 @@ beforeEach(async () => {
 
 describe('POST /api/v1/auth/tokens', () => {
   it('returns the full token exactly once, and never again', async () => {
-    const created = await createToken({ name: 'cli-laptop' });
+    const created = await createToken({ name: 'cli-laptop', scopes: ['full'] });
 
     expect(created.status).toBe(201);
     expect(created.body.token).toMatch(/^mct_[A-Za-z0-9_-]{43}$/);
@@ -133,8 +139,7 @@ describe('POST /api/v1/auth/tokens', () => {
     expect(JSON.stringify(rows)).not.toContain(created.body.token.slice(8));
   });
 
-  it('defaults scopes to ["full"] and accepts an explicit scope set', async () => {
-    expect((await createToken({ name: 'default' })).body.scopes).toEqual(['full']);
+  it('accepts an explicit scope set', async () => {
     expect((await createToken({ name: 'ingest', scopes: ['ingest'] })).body.scopes).toEqual([
       'ingest',
     ]);
@@ -142,6 +147,36 @@ describe('POST /api/v1/auth/tokens', () => {
       'full',
       'ingest',
     ]);
+  });
+
+  it('refuses to issue a token when scopes is omitted, rather than defaulting to full', async () => {
+    // Privilege escalation by omission: `scopes` used to be optional with a `['full']` default.
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/tokens',
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
+      payload: { name: 'no-scopes' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: { code: string } }>().error.code).toBe('VALIDATION_FAILED');
+    expect(await testDatabase().db.select().from(schema.apiTokens)).toHaveLength(0);
+  });
+
+  it('refuses a misspelled scope field instead of silently granting full access', async () => {
+    // The real hazard: Fastify runs Ajv with `removeAdditional`, so `additionalProperties: false`
+    // *deletes* the unknown key rather than rejecting it. With `scopes` optional, a singular
+    // `scope: ['ingest']` was stripped, the default applied, and the caller received a
+    // full-access token with a 201 and no indication their requested scope was discarded.
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/tokens',
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
+      payload: { name: 'typo', scope: ['ingest'] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(await testDatabase().db.select().from(schema.apiTokens)).toHaveLength(0);
   });
 
   it('rejects an unknown scope and an empty scope set with VALIDATION_FAILED', async () => {

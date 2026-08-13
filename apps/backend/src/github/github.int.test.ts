@@ -747,7 +747,12 @@ describe('POST /api/v1/repositories/{id}/sync', () => {
       events = [];
 
       await built.github.sync.sync(repositoryId);
-      expect(events).toHaveLength(0);
+      // Scoped to this domain rather than `events` as a whole: the Phase 2 Notification
+      // producer subscribes to the same bus and answers the FIRST failure with
+      // `notification.created` — asynchronously, so that envelope can land after the reset
+      // above. What this test is about is that the *repository* failure is not re-emitted,
+      // which is also what keeps a stuck repository from notifying on every poll.
+      expect(events.filter((event) => event.type.startsWith('repository.'))).toHaveLength(0);
     });
 
     it('a 404 on a deleted remote → failed, naming the repository and the likely cause', async () => {
