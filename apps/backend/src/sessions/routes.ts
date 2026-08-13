@@ -18,7 +18,7 @@ import { MAX_TITLE_LENGTH } from './title.js';
  *   GET    /api/v1/sessions                    cursor list, filters per §6.2
  *   POST   /api/v1/sessions                    201, managed Session in state `created`
  *   GET    /api/v1/sessions/{id}
- *   PATCH  /api/v1/sessions/{id}               title (operator override) / notes / projectId
+ *   PATCH  /api/v1/sessions/{id}               title / notes / projectId / agentId (PRD §5.1)
  *   POST   /api/v1/sessions/{id}/start         200 { data, meta: { launch } } — never 409 on capacity
  *   POST   /api/v1/sessions/{id}/pause         200
  *   POST   /api/v1/sessions/{id}/resume        200 in place from `paused`; 201 new Session otherwise
@@ -74,6 +74,8 @@ const createBodySchema = {
     branch: { type: 'string', maxLength: 255 },
     title: { type: 'string', maxLength: MAX_TITLE_LENGTH },
     model: { type: 'string', maxLength: 128 },
+    /** PRD §5.1 — the Agent persona to run as. Global or project-scoped (§13.2, `agents/`). */
+    agentId: { type: 'string', pattern: UUID_PATTERN },
   },
 } as const;
 
@@ -85,6 +87,8 @@ const updateBodySchema = {
     title: { type: ['string', 'null'], maxLength: MAX_TITLE_LENGTH },
     notes: { type: ['string', 'null'] },
     projectId: { type: 'string', pattern: UUID_PATTERN },
+    /** `null` unbinds. Legal only while the Session is `created` — see `service.ts`. */
+    agentId: { type: ['string', 'null'], pattern: UUID_PATTERN },
   },
 } as const;
 
@@ -139,11 +143,13 @@ interface CreateBody {
   branch?: string;
   title?: string;
   model?: string;
+  agentId?: string;
 }
 interface UpdateBody {
   title?: string | null;
   notes?: string | null;
   projectId?: string;
+  agentId?: string | null;
 }
 interface CloneBody {
   title?: string;
@@ -205,6 +211,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
           branch: request.body.branch,
           title: request.body.title,
           model: request.body.model,
+          agentId: request.body.agentId,
         },
         contextOf(request),
       );
@@ -232,6 +239,9 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
           ...('title' in body ? { title: body.title } : {}),
           ...('notes' in body ? { notes: body.notes } : {}),
           ...(body.projectId === undefined ? {} : { projectId: body.projectId }),
+          // `in` rather than `!== undefined`: `null` is a real value here (unbind), and it must
+          // stay distinguishable from "the field was not sent".
+          ...('agentId' in body ? { agentId: body.agentId } : {}),
         },
         contextOf(request),
       );

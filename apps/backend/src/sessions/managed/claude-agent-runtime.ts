@@ -1,3 +1,4 @@
+import type { Options as ClaudeQueryOptions } from '@anthropic-ai/claude-agent-sdk';
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalizeSdkMessage } from './normalize.js';
 import type {
@@ -42,8 +43,12 @@ export interface ClaudeAgentRuntimeOptions {
   /** `integrations.claudeCode.defaultModel`, used when the Session names no model. */
   readonly defaultModel?: string | null | undefined;
   /**
-   * Phase 1 static permission default (F1.5: "Phase 1 uses static defaults; the permission-
-   * gating surface is reserved for Phase 4").
+   * The **process-wide** permission default (F1.5: "Phase 1 uses static defaults").
+   *
+   * Phase 4's per-Agent gating is a *different* surface and deliberately so: it arrives per
+   * Session as `disallowedTools` (`agents/permissions.ts`) and only ever subtracts. This mode
+   * stays what it was, because raising it for an agent would auto-approve more than a Session
+   * without one gets — a permission model that grants is not a permission model.
    *
    * `acceptEdits` is the default because Phase 1 has **no permission-prompt surface**: there is
    * no `canUseTool` handler and no UI to answer one, and the SDK is explicit that without a
@@ -73,6 +78,65 @@ export function createClaudeAgentRuntime(
   };
 }
 
+/**
+ * Every SDK option that depends on the Session rather than on the process — exported so the
+ * mapping can be asserted without spawning a `claude` child.
+ *
+ * That matters most for the Agent binding (PRD §5): "the agent's instructions reach the runtime"
+ * is a claim about *this object*, and the only honest way to check it offline is to build the
+ * object and look. `prompt`, `abortController` and `stderr` stay with the instance below; they
+ * are wiring, not policy.
+ *
+ * ## What an Agent changes here, and what it does not
+ *
+ * - **`systemPrompt`.** With no agent the option is absent entirely, which leaves the SDK on its
+ *   own default — the behaviour every Session had before Phase 4. With an agent it becomes
+ *   `{ type: 'preset', preset: 'claude_code', append }`: Claude Code's own prompt *plus* the
+ *   persona. A bare string would replace the runtime's prompt wholesale and take its tool
+ *   conventions with it, which is not what "a persona operating through a runtime" means.
+ * - **`disallowedTools`.** Set only when non-empty, so an unrestricted Session's options are
+ *   byte-identical to what they were before this existed.
+ * - **`permissionMode` is untouched.** Agent permissions are subtractive
+ *   (`agents/permissions.ts`); raising the permission mode for an agent would *widen* what the
+ *   runtime auto-approves, which is the opposite of a permission model.
+ */
+export function buildSessionQueryOptions(
+  session: AgentSessionOptions,
+  options: ClaudeAgentRuntimeOptions = {},
+): Omit<ClaudeQueryOptions, 'abortController' | 'stderr'> {
+  const model = session.model ?? options.defaultModel ?? null;
+
+  return {
+    cwd: session.workingDirectory,
+    includePartialMessages: true,
+    permissionMode: options.permissionMode ?? 'acceptEdits',
+    settingSources: [...(options.settingSources ?? ['user', 'project', 'local'])],
+    ...(model === null ? {} : { model }),
+    ...(session.resume === null ? {} : { resume: session.resume }),
+    // F1.5: Clone is a fork of the resumed conversation, not a continuation of it.
+    ...(session.fork ? { forkSession: true } : {}),
+    ...(session.systemPromptAppend === null
+      ? {}
+      : {
+          systemPrompt: {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: session.systemPromptAppend,
+          },
+        }),
+    ...(session.disallowedTools.length === 0
+      ? {}
+      : { disallowedTools: [...session.disallowedTools] }),
+    // No `mcpServers` is passed anywhere in this Backend, so `strictMcpConfig: true` means "no
+    // MCP tools at all" — which is the point: a deny list over built-in tool names cannot speak
+    // about `mcp__something__write_file`.
+    ...(session.strictMcpConfig ? { strictMcpConfig: true } : {}),
+    ...(options.cliPath === null || options.cliPath === undefined
+      ? {}
+      : { pathToClaudeCodeExecutable: options.cliPath }),
+  };
+}
+
 /** What the SDK accepts on a streaming-input prompt iterable. */
 type InboxMessage = SDKUserMessage;
 
@@ -88,24 +152,12 @@ class ClaudeAgentSession implements AgentSessionHandle {
 
     session.signal?.addEventListener('abort', () => this.#abort.abort(), { once: true });
 
-    const model = session.model ?? options.defaultModel ?? null;
-
     this.#query = query({
       // Streaming input: the child lives across turns (TDS 02 §4.1).
       prompt: this.#inbox.stream(),
       options: {
+        ...buildSessionQueryOptions(session, options),
         abortController: this.#abort,
-        cwd: session.workingDirectory,
-        includePartialMessages: true,
-        permissionMode: options.permissionMode ?? 'acceptEdits',
-        settingSources: [...(options.settingSources ?? ['user', 'project', 'local'])],
-        ...(model === null ? {} : { model }),
-        ...(session.resume === null ? {} : { resume: session.resume }),
-        // F1.5: Clone is a fork of the resumed conversation, not a continuation of it.
-        ...(session.fork ? { forkSession: true } : {}),
-        ...(options.cliPath === null || options.cliPath === undefined
-          ? {}
-          : { pathToClaudeCodeExecutable: options.cliPath }),
         stderr: (data: string) => {
           options.onStderr?.(data, session.sessionId);
         },

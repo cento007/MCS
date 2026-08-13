@@ -4,8 +4,8 @@ import {
   type MemorySourceType,
   type MemoryTier,
 } from '@mc/shared/types';
+import type { Draft, DraftValue } from '../../../lib/forms/dirty.js';
 import { memorySourceField, memorySourceLabel } from '../../../lib/memory-sources.js';
-import type { Draft, DraftValue } from '../dirty.js';
 
 /**
  * Settings → Memory, as pure functions (PRD §4.4 item 4).

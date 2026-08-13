@@ -123,11 +123,11 @@ export class SettingsService {
         stored('notifications'),
       ),
       memory: categoryDocument<SettingsDocument['memory']>('memory', stored('memory')),
-      // Phase 4: the category exists in the storage CHECK and in the Settings rail, and it has
-      // no fields yet. `{}` is the honest answer; inventing placeholder fields would create
-      // settings nothing reads and a migration to remove them. `memory` was the same until its
-      // two PRD §4.4 fields acquired a consumer — the indexer and the retention sweep.
-      agents: {},
+      // Phase 4. Served as `{}` until one of its two §7.2 fields acquired a consumer:
+      // `defaultPermissionTemplate` is read by `POST /agents`. The other, `defaultRuntime`, is
+      // still absent and still should be — one runtime is launchable, so it would be a control
+      // with one position (`AGENT_KEYS`).
+      agents: categoryDocument<SettingsDocument['agents']>('agents', stored('agents')),
       security: categoryDocument<SettingsDocument['security']>('security', stored('security')),
     };
   }

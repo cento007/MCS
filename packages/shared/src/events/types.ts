@@ -67,10 +67,25 @@ export const PHASE_3_EVENT_TYPES = [
   'memory.reindexed',
 ] as const;
 
+/**
+ * Phase 4 event types — **two** of the six names TDS 04 §15.4 reserved, and only two.
+ *
+ *   `agent.created` — an Agent was defined
+ *   `agent.updated` — its fields, permissions or archived state changed
+ *
+ * `agent.assigned` and the three `agent.execution_*` names stay in `RESERVED_EVENT_TYPES.phase4`
+ * below because nothing produces them: assignment (`POST /agents/{id}/assignments`) and execution
+ * (`POST /agents/{id}/executions`) are later slices. Listing an event name in the live registry
+ * makes it subscribable and documentable — and a subscriber that waits forever for
+ * `agent.execution_completed` is a worse outcome than a name that is honestly still reserved.
+ */
+export const PHASE_4_EVENT_TYPES = ['agent.created', 'agent.updated'] as const;
+
 export const EVENT_TYPES = [
   ...PHASE_1_EVENT_TYPES,
   ...PHASE_2_EVENT_TYPES,
   ...PHASE_3_EVENT_TYPES,
+  ...PHASE_4_EVENT_TYPES,
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -94,8 +109,12 @@ export function isEventType(value: unknown): value is EventType {
 /**
  * Reserved names for later phases (TDS 04 §15.4).
  *
- * > **Phase 3/4 — interface only.** Placeholder/extension point. Detailed design is out of
+ * > **Phase 4/5 — interface only.** Placeholder/extension point. Detailed design is out of
  * > TDS scope per the project-plan scope guard.
+ *
+ * The lists are kept whole after a name graduates into the live registry, so this stays the
+ * record of where each one came from. `phase3` is entirely produced; `phase4` is half produced —
+ * `agent.created` and `agent.updated` are live, the other four are not.
  */
 export const RESERVED_EVENT_TYPES = Object.freeze({
   phase3: Object.freeze(['memory.item_stored', 'memory.item_deleted', 'memory.reindexed'] as const),

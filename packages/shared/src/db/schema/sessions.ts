@@ -29,6 +29,7 @@ import {
   type SessionType,
   TERMINAL_SESSION_STATE,
 } from '../../entities/session-state.js';
+import { agents } from './agents.js';
 import { users } from './auth.js';
 import { createdAt, primaryKeyId, timestamptz, tsvector, updatedAt, valueList } from './columns.js';
 import { projects, repositories } from './projects.js';
@@ -82,8 +83,7 @@ export interface SessionUsage {
  * Transition *legality* is enforced in the application layer (F7,
  * `apps/backend/src/sessions/state-machine.ts`); the DB constrains only the value set.
  *
- * Phase 4 extension point: `agent_id uuid REFERENCES agents(id)` arrives by additive
- * migration in Phase 4 — deliberately NOT in the Phase 1 schema.
+ * `agent_id` arrived by additive migration in Phase 4, as this header promised it would.
  */
 export const sessions = pgTable(
   'sessions',
@@ -106,6 +106,17 @@ export const sessions = pgTable(
     ),
     /** NULL iff `resumed_from_session_id` is NULL — see `ck_sessions_lineage`. */
     lineageKind: text('lineage_kind'),
+    /**
+     * The Agent persona this Session runs as (PRD §5.1 `Runtime → Agent → Task`), or NULL for a
+     * Session that is nobody in particular. Bound before launch and fixed from then on: the
+     * agent's instructions become the runtime's system prompt at spawn, and a runtime has no way
+     * to be handed a different one mid-conversation.
+     *
+     * `ON DELETE RESTRICT`, which is the archive-only rule for agents made structural — the row
+     * that says "this conversation ran as the Architect" must not be able to become a dangling id
+     * (`agents.ts`).
+     */
+    agentId: uuid('agent_id').references((): AnyPgColumn => agents.id, { onDelete: 'restrict' }),
     sessionType: text('session_type').notNull(),
     state: text('state').notNull().default('created'),
     runtime: text('runtime').notNull().default('claude_code'),
@@ -180,6 +191,8 @@ export const sessions = pgTable(
       .on(table.repositoryId)
       .where(sql`${table.repositoryId} IS NOT NULL`),
     index('ix_sessions_resumed_from').on(table.resumedFromSessionId),
+    /** "Which Sessions ran as this Agent" + the FK index the RESTRICT check needs. */
+    index('ix_sessions_agent_id').on(table.agentId).where(sql`${table.agentId} IS NOT NULL`),
     /** Dashboard "Active Sessions" widget: tiny hot subset. */
     index('ix_sessions_active')
       .on(sql`${table.createdAt} DESC`)

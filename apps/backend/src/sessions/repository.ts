@@ -55,6 +55,8 @@ export interface InsertSessionInput {
   /** Written once at row creation and never mutated (TDS 03 §3.9). */
   readonly resumedFromSessionId?: string | null;
   readonly lineageKind?: SessionLineageKind | null;
+  /** The Agent persona this Session runs as (PRD §5.1); NULL for a Session bound to none. */
+  readonly agentId?: string | null;
 }
 
 /**
@@ -149,6 +151,7 @@ export async function insertSession(db: DbLike, input: InsertSessionInput): Prom
       notes: input.notes ?? null,
       resumedFromSessionId: input.resumedFromSessionId ?? null,
       lineageKind: input.lineageKind ?? null,
+      agentId: input.agentId ?? null,
     })
     .returning();
 

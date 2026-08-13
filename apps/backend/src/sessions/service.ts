@@ -16,6 +16,7 @@ import type { CommitCursor } from '../commits/cursors.js';
 import { listCommits } from '../commits/store.js';
 import type { Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
+import type { SessionAgentPort } from './agent-binding.js';
 import { buildSessionFiles, type SessionFilesReadModel } from './files.js';
 import type { LaunchDisposition, ManagedSessionRegistry } from './manager.js';
 import {
@@ -64,12 +65,16 @@ export interface CreateSessionInput {
   readonly branch?: string | undefined;
   readonly title?: string | undefined;
   readonly model?: string | undefined;
+  /** The Agent persona to run as (PRD §5.1). Global or project-scoped only — see `#bindAgent`. */
+  readonly agentId?: string | undefined;
 }
 
 export interface UpdateSessionInput {
   readonly title?: string | null | undefined;
   readonly notes?: string | null | undefined;
   readonly projectId?: string | undefined;
+  /** Bind (or, with `null`, unbind) an Agent. Legal only while the Session is `created`. */
+  readonly agentId?: string | null | undefined;
 }
 
 export interface ListSessionsInput {
@@ -98,6 +103,8 @@ export interface SessionServiceOptions {
   readonly stateMachine: SessionStateMachine;
   readonly registry: ManagedSessionRegistry;
   readonly runtime: SessionRuntimePort;
+  /** Validates an `agentId` against the Session's project/id before it is stored (PRD §5.2). */
+  readonly agents: SessionAgentPort;
   readonly onRuntimeError?: (error: unknown, sessionId: string) => void;
 }
 
@@ -107,6 +114,7 @@ export class SessionService {
   readonly #stateMachine: SessionStateMachine;
   readonly #registry: ManagedSessionRegistry;
   readonly #runtime: SessionRuntimePort;
+  readonly #agents: SessionAgentPort;
   readonly #onRuntimeError: ((error: unknown, sessionId: string) => void) | undefined;
 
   constructor(options: SessionServiceOptions) {
@@ -115,6 +123,7 @@ export class SessionService {
     this.#stateMachine = options.stateMachine;
     this.#registry = options.registry;
     this.#runtime = options.runtime;
+    this.#agents = options.agents;
     this.#onRuntimeError = options.onRuntimeError;
   }
 
@@ -132,6 +141,19 @@ export class SessionService {
 
     const id = newId();
 
+    // PRD §5.1. Resolved before the transaction opens: a scope mismatch is a `400` about the
+    // request, and there is nothing to roll back.
+    const agent =
+      input.agentId === undefined
+        ? null
+        : await this.#agents.resolveForSession({
+            agentId: input.agentId,
+            projectId: input.projectId,
+            // The Session does not exist yet, which is exactly what makes a session-scoped Agent
+            // unbindable here (`agents/binding.ts` says so in the error).
+            sessionId: null,
+          });
+
     const row = await this.#outbox.run(async (outboxTx) => {
       const session = await insertSession(outboxTx.tx, {
         id,
@@ -143,6 +165,7 @@ export class SessionService {
         workingDir: input.workingDirectory,
         branch: input.branch ?? null,
         model: input.model ?? null,
+        ...(agent === null ? {} : { agentId: agent.agentId, runtime: agent.runtime }),
         // §6.11.3: empty and whitespace-only normalize to NULL at write, so "unnamed" has one
         // storage representation and the derivation guard stays total.
         title: normalizeOperatorTitle(input.title),
@@ -179,6 +202,7 @@ export class SessionService {
           repositoryId: session.repositoryId,
           sessionType: session.sessionType,
           workingDirectory: session.workingDir,
+          agentId: session.agentId,
         },
         requestId: ctx.requestId,
         ipAddress: ctx.ipAddress,
@@ -211,10 +235,19 @@ export class SessionService {
   }
 
   /**
-   * `PATCH /api/v1/sessions/{id}` — the operator override for `title`, plus `notes`/`projectId`.
+   * `PATCH /api/v1/sessions/{id}` — the operator override for `title`, plus `notes`/`projectId`,
+   * plus `agentId` (PRD §5.1).
    *
-   * Legal in **every** state including `archived` (§6.11.4): renaming a record is not a
-   * lifecycle action and performs no F7 transition, so nothing here touches the state machine.
+   * `title`, `notes` and `projectId` are legal in **every** state including `archived`
+   * (§6.11.4): renaming a record is not a lifecycle action and performs no F7 transition, so
+   * nothing here touches the state machine.
+   *
+   * **`agentId` is not like them.** The Agent's instructions become the runtime's system prompt
+   * at spawn and the runtime offers no way to replace it mid-conversation, so binding one to a
+   * Session that has already started would be a change with no effect — a stored value that
+   * contradicts what is running. It is therefore accepted only in `created`, which is the state
+   * in which it is still true. This is also the path by which a **session-scoped** Agent becomes
+   * usable: it names the Session it belongs to, so it cannot exist until the Session does.
    */
   async update(
     principal: Principal,
@@ -225,10 +258,14 @@ export class SessionService {
     const existing = await this.#require(id);
     if (input.projectId !== undefined) await this.#assertProjectExists(input.projectId);
 
+    const agentChange =
+      'agentId' in input ? await this.#resolveAgentChange(existing, input.agentId ?? null) : {};
+
     const changes = {
       ...('title' in input ? { title: normalizeOperatorTitle(input.title) } : {}),
       ...('notes' in input ? { notes: normalizeNotes(input.notes) } : {}),
       ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+      ...agentChange,
     };
 
     if (Object.keys(changes).length === 0) return this.#serialize(existing);
@@ -542,6 +579,50 @@ export class SessionService {
 
   // -------------------------------------------------------------------------- internals
 
+  /**
+   * The `agent_id` (and `runtime`) a `PATCH` should write, or a refusal.
+   *
+   * Three refusals, each naming a different fact:
+   *   - the Session has left `created`, so the system prompt is already fixed (`CONFLICT`);
+   *   - the Session is observed, so Mission Control does not own its process and could not apply
+   *     a persona to it at all (`OPERATION_NOT_SUPPORTED`);
+   *   - the Agent's scope does not admit this Session (`VALIDATION_FAILED`, from the port).
+   */
+  async #resolveAgentChange(
+    session: SessionRow,
+    agentId: string | null,
+  ): Promise<{ agentId?: string | null; runtime?: string }> {
+    if (session.agentId === agentId) return {};
+
+    if (session.sessionType === 'observed') {
+      throw new ApiError(
+        'OPERATION_NOT_SUPPORTED',
+        'Mission Control does not launch an observed session, so an agent cannot steer one',
+        { sessionType: session.sessionType, field: 'agentId' },
+      );
+    }
+
+    if (session.state !== 'created') {
+      throw new ApiError(
+        'CONFLICT',
+        "An agent is bound before launch: this session's state is '" +
+          session.state +
+          "' and its system prompt is already fixed",
+        { state: session.state, field: 'agentId' },
+      );
+    }
+
+    if (agentId === null) return { agentId: null };
+
+    const agent = await this.#agents.resolveForSession({
+      agentId,
+      projectId: session.projectId,
+      sessionId: session.id,
+    });
+
+    return { agentId: agent.agentId, runtime: agent.runtime };
+  }
+
   async #require(id: string): Promise<SessionRow> {
     const session = await findSessionById(this.#db, id);
     if (session === null) throw new ApiError('NOT_FOUND', `No session with id ${id}`);
@@ -586,6 +667,10 @@ export class SessionService {
         title: normalizeOperatorTitle(title),
         resumedFromSessionId: parent.id,
         lineageKind,
+        // The persona is inherited with the conversation. A resume that dropped it would replay
+        // a transcript written by an Architect into a session that is nobody — and the operator
+        // would have no way to tell from the record which half was which.
+        agentId: parent.agentId,
       });
 
       const payload = {

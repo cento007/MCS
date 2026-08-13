@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ConfirmDialog } from '../../../components/Modal.js';
 import { endpoints, queryKeys } from '../../../lib/api/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import {
   SelectControl,
   type SelectOption,
@@ -10,7 +11,6 @@ import {
   ToggleControl,
 } from '../components/Field.js';
 import { SettingsPanel } from '../components/Panel.js';
-import type { Draft } from '../dirty.js';
 import { usePanelForm } from '../form.js';
 import { useMemorySettings } from '../queries.js';
 import type { MemorySettingsDocument } from '../types.js';

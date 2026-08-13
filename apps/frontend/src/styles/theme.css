@@ -224,6 +224,11 @@
      emitted rule rather than by reading the class name. */
   --mc-palette-max-h: 320px; /* what `max-h-80` was meant to be */
   --mc-palette-group-w: 80px; /* what `w-20` was meant to be */
+  /* Agent Builder (PRD §5.8). The Prompt field is an agent's whole persona and is routinely
+     hundreds of lines, so it is a real editing surface rather than a two-row textarea. Declared
+     here for the same reason as the two above: `min-h-72` is outside the curated ladder and would
+     emit nothing at all, leaving the control at its 2-row default with no visible failure. */
+  --mc-prompt-min-h: 288px;
 
   /* ── Motion (TDS 06 §2.4) ────────────────────────────────────────────────────────
      Minimal and purposeful. The only looping animations permitted anywhere are the

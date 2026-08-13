@@ -1,4 +1,5 @@
 import { endpoints } from '../../../lib/api/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import {
   RadioGroupControl,
   SelectControl,
@@ -7,7 +8,6 @@ import {
 } from '../components/Field.js';
 import { PanelStatus, SettingsPanel } from '../components/Panel.js';
 import { TestConnection } from '../components/TestConnection.js';
-import type { Draft } from '../dirty.js';
 import {
   OBSIDIAN_CONFLICT_POLICIES,
   OBSIDIAN_CONFLICT_POLICY_LABELS,

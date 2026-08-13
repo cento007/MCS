@@ -10,6 +10,7 @@ import {
 } from '@mc/shared';
 import type { EventBus, Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
+import type { RuntimeAgentBinding, SessionAgentPort } from './agent-binding.js';
 import { findSessionById, type SessionRow } from './repository.js';
 import type { SessionRuntimePort } from './runtime-port.js';
 import { Semaphore } from './semaphore.js';
@@ -71,6 +72,8 @@ export interface ManagedSessionRegistryOptions {
   readonly bus: EventBus;
   readonly stateMachine: SessionStateMachine;
   readonly runtime: SessionRuntimePort;
+  /** Resolves `sessions.agent_id` into what the runtime must do about it (PRD §5). */
+  readonly agents: SessionAgentPort;
   /** `integrations.claudeCode.maxConcurrentSessions` (PRD §4.4.2). */
   readonly maxConcurrentSessions: number;
   readonly onLaunchError?: (error: unknown, sessionId: string) => void;
@@ -83,6 +86,7 @@ export class ManagedSessionRegistry {
   readonly #bus: EventBus;
   readonly #stateMachine: SessionStateMachine;
   readonly #runtime: SessionRuntimePort;
+  readonly #agents: SessionAgentPort;
   readonly #semaphore: Semaphore;
   readonly #onLaunchError: ((error: unknown, sessionId: string) => void) | undefined;
 
@@ -101,6 +105,7 @@ export class ManagedSessionRegistry {
     this.#bus = options.bus;
     this.#stateMachine = options.stateMachine;
     this.#runtime = options.runtime;
+    this.#agents = options.agents;
     this.#semaphore = new Semaphore(options.maxConcurrentSessions);
     this.#onLaunchError = options.onLaunchError;
   }
@@ -285,6 +290,7 @@ export class ManagedSessionRegistry {
   async #performLaunch(intent: LaunchIntent): Promise<void> {
     const session = intent.session;
     const resumeFrom = await this.#resumeTargetFor(session);
+    const agent = await this.#agentBindingFor(session);
 
     let outcome: Awaited<ReturnType<SessionRuntimePort['launch']>>;
     try {
@@ -296,6 +302,7 @@ export class ManagedSessionRegistry {
         branch: session.branch,
         resumeFromRuntimeSessionId: resumeFrom,
         fork: session.lineageKind === 'cloned' && session.runtimeSessionId === null,
+        agent,
       });
     } catch (error) {
       await this.#failLaunch(session, error);
@@ -349,6 +356,32 @@ export class ManagedSessionRegistry {
    * row starts with `runtime_session_id` NULL because the runtime issues a fresh native id for
    * the resumed/forked conversation (TDS 03 §3.9).
    */
+  /**
+   * The Agent binding for this launch, read fresh at spawn time (PRD §5.1).
+   *
+   * Fresh rather than cached: an operator may edit an agent's instructions or permissions between
+   * two launches of the same Session, and the launch that happens after the edit must be the one
+   * the edit describes. Within a launch it is fixed — the system prompt is set at spawn and the
+   * runtime offers no way to change it mid-conversation.
+   *
+   * A **missing** row throws rather than degrading to "no agent": `sessions.agent_id` is
+   * `ON DELETE RESTRICT`, so this cannot happen, and if it somehow did, launching an unrestricted
+   * session in place of a restricted one is the one outcome that must never be silent.
+   */
+  async #agentBindingFor(session: SessionRow): Promise<RuntimeAgentBinding | null> {
+    if (session.agentId === null) return null;
+
+    const binding = await this.#agents.bindingFor(session.agentId);
+    if (binding === null) {
+      throw new ApiError(
+        'RUNTIME_UNAVAILABLE',
+        'This session is bound to an agent that no longer exists; refusing to launch it unrestricted',
+        { sessionId: session.id, agentId: session.agentId },
+      );
+    }
+    return binding;
+  }
+
   async #resumeTargetFor(session: SessionRow): Promise<string | null> {
     if (session.runtimeSessionId !== null) return session.runtimeSessionId;
     if (session.resumedFromSessionId === null) return null;

@@ -43,10 +43,10 @@ import {
   type MemorySourceType,
   type MemoryTier,
 } from '../../entities/memory.js';
+import { agents } from './agents.js';
 import { createdAt, primaryKeyId, timestamptz, updatedAt, valueList } from './columns.js';
 import { projects } from './projects.js';
 import { sessions } from './sessions.js';
-import { agents } from './skeletons.js';
 
 /** Anchored to the shared vocabulary rather than re-typed, exactly as `sessions.state` is. */
 const MEMORY_TIERS = MEMORY_TIER_VOCABULARY satisfies readonly MemoryTier[];
@@ -77,8 +77,10 @@ export const memoryItems = pgTable(
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
     sessionId: uuid('session_id').references(() => sessions.id, { onDelete: 'cascade' }),
     /**
-     * Phase 4. **Nothing writes this in Phase 3** — the `agent` tier has no producer until the
-     * agent framework lands. The FK exists now so that landing it is not a migration.
+     * **Still nothing writes this.** The agent framework's first slice (`agents.ts`) defines and
+     * runs agents but produces no agent-tier memory: an agent has no episodic record of its own
+     * yet, so `PRODUCIBLE_MEMORY_TIERS` continues to exclude `agent` and this column continues to
+     * be NULL in every row. The FK now points at a real table rather than a skeleton.
      */
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'cascade' }),
 

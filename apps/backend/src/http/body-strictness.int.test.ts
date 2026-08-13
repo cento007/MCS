@@ -147,7 +147,7 @@ describe('body strictness across the whole API surface', () => {
     expect(typoedTitle.statusCode).toBe(400);
     expect(typoedTitle.json<ErrorBody>().error.details).toEqual({
       unknownFields: ['titel'],
-      allowedFields: ['notes', 'projectId', 'title'],
+      allowedFields: ['agentId', 'notes', 'projectId', 'title'],
     });
 
     const typoedBranch = await send('PATCH', `/api/v1/repositories/${repositoryId}`, {

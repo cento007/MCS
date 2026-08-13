@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type AgentPermissions,
+  type AgentScope,
   type AppConfig,
+  agentPermissionsFromTemplate,
   createDenyingMemoryHttp,
   createOllamaEmbedder,
   createQdrantVectorStore,
@@ -286,6 +289,10 @@ export async function truncateAll(): Promise<void> {
     // Before `sessions` and `projects`: `memory_items` holds FKs into both. The cascade would
     // handle it, but naming it keeps the list an honest inventory of the app's tables.
     'memory_items',
+    // `agents` and `sessions` reference each other (`sessions.agent_id`, `agents.session_id`),
+    // so no ordering of the two is "correct" — TRUNCATE takes them together via CASCADE. Named
+    // for the same reason as `memory_items`: the list is the inventory.
+    'agents',
     'sessions',
     'repositories',
     'projects',
@@ -552,6 +559,40 @@ export async function seedRepository(
   return id;
 }
 
+export interface SeedAgentInput {
+  readonly name?: string;
+  readonly scope?: AgentScope;
+  readonly projectId?: string;
+  readonly sessionId?: string;
+  readonly permissions?: AgentPermissions;
+  readonly instructions?: string | null;
+  readonly archivedAt?: Date;
+}
+
+/**
+ * Insert an `agents` row directly, bypassing the API.
+ *
+ * `permissions` defaults to the `full` template rather than to the API's `read_only` default, on
+ * purpose: a test that seeds an agent to exercise something *else* (a launch, a session binding)
+ * should not have half the tool set removed underneath it. Tests about permissions pass their own.
+ */
+export async function seedAgent(input: SeedAgentInput = {}): Promise<string> {
+  const id = newId();
+  await testDatabase()
+    .db.insert(schema.agents)
+    .values({
+      id,
+      name: input.name ?? 'Architect',
+      scope: input.scope ?? 'global',
+      projectId: input.projectId ?? null,
+      sessionId: input.sessionId ?? null,
+      permissions: input.permissions ?? agentPermissionsFromTemplate('full'),
+      instructions: input.instructions === undefined ? null : input.instructions,
+      ...(input.archivedAt === undefined ? {} : { archivedAt: input.archivedAt }),
+    });
+  return id;
+}
+
 export interface SeedSessionInput {
   readonly projectId: string;
   readonly userId: string;
@@ -564,6 +605,7 @@ export interface SeedSessionInput {
   readonly resumedFromSessionId?: string;
   readonly lineageKind?: 'resumed' | 'cloned';
   readonly startedAt?: Date;
+  readonly agentId?: string;
 }
 
 /**
@@ -593,6 +635,7 @@ export async function seedSession(input: SeedSessionInput): Promise<string> {
         : { resumedFromSessionId: input.resumedFromSessionId }),
       ...(input.lineageKind === undefined ? {} : { lineageKind: input.lineageKind }),
       ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
+      ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
     });
   return id;
 }

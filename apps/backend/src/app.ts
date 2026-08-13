@@ -8,6 +8,7 @@ import {
 } from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type AdrModule, registerAdrs } from './adrs/index.js';
+import { type AgentModule, registerAgents } from './agents/index.js';
 import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { registerCommits } from './commits/index.js';
@@ -229,6 +230,8 @@ export interface BuiltApp {
    */
   readonly eventRelay: EventRelay | null;
   readonly sessions: SessionModule;
+  /** Phase 4: the Agent domain (PRD §5, TDS 04 §13.2) and the binding the launch path uses. */
+  readonly agents: AgentModule;
   /** Observed-session ingest: `POST /hook-events` + the transcript tailer (TDS 02 §6). */
   readonly observed: ObservedIngestModule;
   /** The four Phase 1 read models (TDS 04 §7.5, §7.7, §7.8, §8). */
@@ -316,11 +319,18 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
 
   registerHealthRoutes(app);
 
+  // Before the Session domain, and that ordering is load-bearing in one direction only: the
+  // registry and the Session service both take `agents.binding` as a constructor argument, so it
+  // has to exist first. The Agent domain itself depends on nothing but the db handle and the
+  // outbox — it neither imports `sessions/` nor knows the launch path exists.
+  const agents = registerAgents(app, { db: options.db, outbox });
+
   const sessions = registerSessions(app, {
     db: options.db,
     outbox,
     bus,
     queue,
+    agents: agents.binding,
     ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
     ...(options.agentRuntime === undefined ? {} : { agentRuntime: options.agentRuntime }),
     maxConcurrentSessions: options.maxConcurrentSessions ?? DEFAULT_MAX_CONCURRENT_SESSIONS,
@@ -554,6 +564,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     outbox,
     eventRelay,
     sessions,
+    agents,
     observed,
     serviceHealth,
     schedule,

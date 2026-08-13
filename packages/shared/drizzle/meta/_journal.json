@@ -43,6 +43,20 @@
       "when": 1786640108755,
       "tag": "0005_memory_index_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786659807717,
+      "tag": "0006_sticky_paibok",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786660510340,
+      "tag": "0007_flippant_ben_grimm",
+      "breakpoints": true
     }
   ]
 }

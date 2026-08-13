@@ -25,7 +25,7 @@ export const STATIC_CHANNELS = Object.freeze({
   adrs: 2,
   /** §14.3, live in Phase 3: indexing outcomes and backfill-run progress. */
   memory: 3,
-  /** Reserved (§14.3). Subscribable so a Phase 4 client is not blocked, but nothing routes here. */
+  /** §14.3, live in Phase 4: agent definition changes. Execution events are a later slice. */
   agents: 4,
 } as const);
 
@@ -108,6 +108,11 @@ const STATIC_ROUTES: Readonly<Record<string, readonly StaticChannel[]>> = Object
   'memory.item_stored': ['memory'],
   'memory.item_deleted': ['memory'],
   'memory.reindexed': ['memory'],
+  // Phase 4. Definition changes only: an agent's permissions decide what a *future* launch may
+  // do, so a client holding an agent list needs to know they changed. Nothing routes onto
+  // `sessions` — creating an agent is not a Session event.
+  'agent.created': ['agents'],
+  'agent.updated': ['agents'],
 });
 
 const SESSIONS_CHANNEL_SET: ReadonlySet<string> = new Set(SESSIONS_CHANNEL_EVENTS);

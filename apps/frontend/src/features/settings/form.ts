@@ -1,5 +1,6 @@
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDirtyForms } from '../../components/UnsavedChangesGuard.js';
 import type { ApiError, QueryKey } from '../../lib/api/index.js';
 import {
   CLEAN,
@@ -10,10 +11,9 @@ import {
   type SecretDraft,
   type SecretDrafts,
   summarizeDirty,
-} from './dirty.js';
+} from '../../lib/forms/dirty.js';
 import { type SaveSettingsOptions, useSaveSettings } from './mutations.js';
 import { isEndpointMissing } from './queries.js';
-import { useSettingsDirty } from './registry.js';
 import type { SecretFieldWrite } from './types.js';
 
 /**
@@ -112,7 +112,7 @@ const EMPTY_DRAFT: Draft = Object.freeze({});
 
 export function usePanelForm<TDoc>(options: PanelFormOptions<TDoc>): PanelForm<TDoc> {
   const { panelId, label, path, queryKey, query, toDraft, toBody } = options;
-  const registry = useSettingsDirty();
+  const registry = useDirtyForms();
 
   const document = query.data ?? null;
   // `toDraft` is a module-level pure function per panel; depending on its identity would

@@ -33,9 +33,15 @@ export const routes: RouteObject[] = [
           { path: 'sessions/:sessionId', lazy: () => import('../routes/session-detail.js') },
           { path: 'adrs', lazy: () => import('../routes/adrs.js') },
           { path: 'adrs/:adrId', lazy: () => import('../routes/adr-detail.js') },
-          // Phase 3/4 placeholder routes. Reachable and badged — never `disabled` (§10).
           { path: 'memory', lazy: () => import('../routes/memory.js') },
           { path: 'agents', lazy: () => import('../routes/agents.js') },
+          /*
+           * `agents/new` is registered before `agents/:agentId` and as its own entry, so create
+           * mode is a route rather than a reserved id — `useParams().agentId` is `undefined`
+           * there, and no future UUIDv7 can collide with the word.
+           */
+          { path: 'agents/new', lazy: () => import('../routes/agent-builder.js') },
+          { path: 'agents/:agentId', lazy: () => import('../routes/agent-builder.js') },
           { path: 'settings', element: <Navigate to="/settings/general" replace /> },
           { path: 'settings/:category', lazy: () => import('../routes/settings.js') },
           { path: '*', lazy: () => import('../routes/not-found.js') },

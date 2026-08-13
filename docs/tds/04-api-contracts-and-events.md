@@ -98,7 +98,8 @@ All routes require authentication except `POST /api/v1/auth/login`. There is no 
 | Sync runs (Obsidian) | `/api/v1/sync-runs` | 2 | §10 |
 | Search | `/api/v1/search` | 2 | §11 |
 | MemoryItems | `/api/v1/memory-items` | 3 — stub | §13.1 |
-| Agents / AgentTeams | `/api/v1/agents`, `/api/v1/agent-teams` | 4 — stub | §13.2 |
+| Agents | `/api/v1/agents` | 4 | §13.2 |
+| AgentTeams | `/api/v1/agent-teams` | 4 — stub (teams are a later slice) | §13.2 |
 | WebSocket | `/api/v1/ws` | 1 | §14 |
 
 ---
@@ -1247,6 +1248,39 @@ Reserved routes (PRD §12: Create / Update / Assign / Execute):
 - `GET|POST /api/v1/agent-teams`, `GET|PATCH /api/v1/agent-teams/{id}` — AgentTeam CRUD.
 - Reserved event names: `agent.created`, `agent.updated`, `agent.assigned`, `agent.execution_started`, `agent.execution_completed`, `agent.execution_failed` (§15.4). Reserved WS channel: `agents`.
 
+**Phase 4's first slice landed 2026-08-14, and this section's four Agent-CRUD routes now exist.** Recorded here for the reason §13.1 gives: a section that reserved routes without payload detail makes the first concrete shape additive by definition, and additive-and-unwritten is how two documents start disagreeing.
+
+What was built: `GET|POST /api/v1/agents` and `GET|PATCH /api/v1/agents/{id}`, F5 conventions throughout (cursor pagination, `{error:{code,message,details,requestId}}`). The `Agent` resource follows PRD §5.3 minus two fields and plus one derived one — see the table below. `agent.created` and `agent.updated` are produced through the outbox and relayed on the `agents` channel (§14.3).
+
+**Three of this section's items are deliberately still unbuilt**, and each omission is a decision rather than a backlog entry:
+
+| Reserved | Status | Why |
+|---|---|---|
+| `POST /agents/{id}/assignments` | not built | Binding an Agent to a Session is done on the Session resource — `agentId` on `POST /sessions` and `PATCH /sessions/{id}` — because the rule that governs it is a Session lifecycle rule (an Agent may only be bound while the Session is `created`; its instructions become the runtime's system prompt at spawn). A general assignment surface, and `agent.assigned` with it, waits for project/team assignment. |
+| `POST /agents/{id}/executions` | not built | An agent that *runs a task on its own* is a later slice. Its three `agent.execution_*` names stay unproduced; the event registry lists only the two that exist. |
+| `/agent-teams` | not built | PRD §5.6/§5.7 presuppose agents that exist and run. `agent_teams` is still a skeleton and `agent_team_members` still does not exist. |
+
+**There is no `DELETE /agents/{id}`, and §13.2 was right not to list one.** An Agent is referenced by `sessions.agent_id`, by `audit_log_entries.actor_id` (polymorphic, deliberately not an FK so audit outlives its actor) and by `memory_items.agent_id`. Retirement is `PATCH { "archived": true }` — reversible, idempotent, and inside the reserved route set. `sessions.agent_id` is `ON DELETE RESTRICT`, so the rule is structural rather than a missing route.
+
+**The `Agent` resource** (PRD §5.3's structure, with the departures stated):
+
+| field | type | note |
+|---|---|---|
+| `id`, `name`, `description` | uuid, string, string\|null | |
+| `scope` | `'global' \| 'project' \| 'session'` | PRD §5.2. `ck_agents_scope_target` makes scope-without-its-target unrepresentable, exactly as `ck_memory_items_tier_scope` does for memory tiers |
+| `projectId`, `sessionId` | uuid\|null | Exactly one is non-null for `project`/`session`; both null for `global` |
+| `runtime` | `'claude_code'` | PRD §5.4 also lists Ollama. **The CHECK admits one value**, because one runtime is launchable — an agent stored as `ollama` would silently run on Claude Code. Copied onto `sessions.runtime` at bind |
+| `permissions` | `{ repository: { read, write, shell } }` | PRD §5.5 reduced to what a control surface enforces — see below |
+| `disallowedTools` | `string[]`, derived, read-only | The tool names the runtime is actually told to remove. Present so the permission model is auditable from the API rather than trusted |
+| `instructions` | string\|null | Reaches the runtime as the SDK's `systemPrompt: { preset: 'claude_code', append }` — appended, never replacing |
+| `archivedAt` | timestamp\|null | |
+
+**PRD §5.3's `knowledge` and `memory` are absent, and §5.5's Memory and Documentation groups with them.** Nothing reads them: the `agent` memory tier still has no producer (`PRODUCIBLE_MEMORY_TIERS` excludes it), and memory search / ADR creation / Obsidian notes are routes the *operator* calls — a Claude Code session has no path to them. They become expressible when an execution surface exists that an agent can reach.
+
+**§5.5's Repository group is three booleans, not six.** Commit, Create PR, Merge and Delete are all `git`/`gh` through the runtime's Bash tool; separating them would mean deciding permissions by parsing shell command strings, which `sh -c 'git merge'` defeats. They are collapsed into `repository.shell`, which says what it grants. `shell` also subsumes `read` and `write` (a shell can `cat` and `>`), enforced at the boundary and by `ck_agents_permissions_shell_subsumes`.
+
+**Permissions are subtractive.** Granting changes nothing relative to a Session with no Agent; denying removes tools (`disallowedTools`, plus `strictMcpConfig` so an on-disk MCP server cannot supply a differently-named equivalent). There is no `allowedTools` and no `canUseTool` handler, because both auto-approve — a permission model that grants is not a permission model.
+
 ---
 
 ## 14. WebSocket Protocol — `/api/v1/ws` (F5.6)
@@ -1295,7 +1329,7 @@ Matching is exact string comparison of normalized origins (scheme + host + port)
 | `sync` | `sync.*` | 2 |
 | `adrs` | `adr.created`, `adr.updated` | 2 |
 | `memory` | reserved | 3 — stub |
-| `agents` | reserved | 4 — stub |
+| `agents` | `agent.created`, `agent.updated` (§15.4). Execution events are a later slice | 4 |
 
 Single-user system: any authenticated `full` principal may subscribe to any channel. Limit: 64 concurrent channel subscriptions per connection (`ack { ok: false, error: { code: 'VALIDATION_FAILED' } }` beyond).
 
@@ -1477,6 +1511,8 @@ Notes:
 > Detailed design is out of TDS scope per the project-plan scope guard.
 
 `agent.created`, `agent.updated`, `agent.assigned`, `agent.execution_started`, `agent.execution_completed`, `agent.execution_failed` — producer: backend; consumers TBD in Phase 4 design.
+
+**Two of the six are live as of 2026-08-14** (Phase 4, first slice): `agent.created` and `agent.updated`, produced by the Backend through the outbox and relayed on the `agents` channel. Payloads carry ids and scalars only (F6.2): `{ agentId, scope, projectId, sessionId }` and `{ agentId, changedFields, archived }`. The other four stay reserved because nothing produces them — assignment and execution are later slices, and a name in the live registry is subscribable, so a client waiting forever for `agent.execution_completed` would be a worse outcome than a name that is honestly still reserved.
 
 ---
 

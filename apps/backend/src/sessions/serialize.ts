@@ -52,6 +52,14 @@ export interface SessionResource {
   readonly notes: string | null;
   readonly branch: string | null;
   readonly workingDirectory: string;
+  /**
+   * The Agent persona this Session runs as (PRD §5.1), or `null`.
+   *
+   * The id only. The Agent resource is served by `GET /api/v1/agents/{id}`, and inlining a
+   * persona's instructions into every Session payload would put a 20 000-character system prompt
+   * on the session list.
+   */
+  readonly agentId: string | null;
   readonly runtime: {
     readonly kind: string;
     readonly runtimeSessionId: string | null;
@@ -137,6 +145,7 @@ export function serializeSession(
     notes: row.notes,
     branch: row.branch,
     workingDirectory: row.workingDir ?? '',
+    agentId: row.agentId,
     runtime: {
       kind: row.runtime,
       runtimeSessionId: row.runtimeSessionId,

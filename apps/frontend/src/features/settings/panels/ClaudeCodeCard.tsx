@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { type ApiError, apiGet, endpoints, queryKeys, type Spend } from '../../../lib/api/index.js';
 import { formatMoneyUsd } from '../../../lib/format/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import {
   NumberControl,
   SelectControl,
@@ -11,7 +12,6 @@ import {
 } from '../components/Field.js';
 import { SettingsPanel } from '../components/Panel.js';
 import { TestConnection } from '../components/TestConnection.js';
-import type { Draft } from '../dirty.js';
 import type { ClaudeCodeSettings } from '../types.js';
 import { nullableNumber, numberOr, useIntegrationForm } from './integration-form.js';
 import { ALERT_THRESHOLD_OPTIONS } from './options.js';

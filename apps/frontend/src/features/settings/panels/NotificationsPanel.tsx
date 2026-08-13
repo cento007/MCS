@@ -1,7 +1,7 @@
 import { endpoints, queryKeys } from '../../../lib/api/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import { SettingsField, SettingsGroup, TextControl, ToggleControl } from '../components/Field.js';
 import { SettingsPanel } from '../components/Panel.js';
-import type { Draft } from '../dirty.js';
 import { usePanelForm } from '../form.js';
 import { useNotificationsSettings } from '../queries.js';
 import type { NotificationsSettings } from '../types.js';

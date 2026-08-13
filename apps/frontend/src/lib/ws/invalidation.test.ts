@@ -88,8 +88,17 @@ describe('queryKeysForEvent', () => {
     expect(keys).toContain(`["sessions","${SESSION_ID}","files"]`);
   });
 
-  it('ignores Phase 4 reserved events rather than guessing at their effect', () => {
+  it('refetches the agents group on an agent write, and ignores execution events', () => {
+    // Phase 4 graduated `agent.created`/`agent.updated`/`agent.assigned` from reserved to
+    // produced when the Agents screen shipped. The blunt prefix is right here where it was wrong
+    // for memory: `GET /agents` is one cheap read with no embedding call behind it, and these
+    // fire when a person presses Save rather than hundreds of times inside a backfill.
+    for (const type of ['agent.created', 'agent.updated', 'agent.assigned']) {
+      expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual(['["agents"]']);
+    }
+    // Executions stay ignored: nothing in the SPA renders one, so a refetch would redraw nothing.
     expect(queryKeysForEvent(event('agent.execution_started', {}))).toEqual([]);
+    expect(queryKeysForEvent(event('agent.execution_failed', {}))).toEqual([]);
   });
 
   it('refetches the memory INDEX STATE on a memory event, and never a cached search', () => {
@@ -131,11 +140,13 @@ describe('queryKeysForChannel (reconnect gap healing)', () => {
     expect(perChannel.length).toBeGreaterThan(perEvent.length);
   });
 
-  it('heals the memory gap at the index state, and leaves Phase 4 silent', () => {
+  it('heals the memory gap at the index state, and the agents gap at the whole group', () => {
     // Same narrowness as the per-event map, for the same reason: the reconnect is healing an
     // unknown gap in what is *indexed*, not re-asking a question the operator asked once.
     expect(keyStrings(queryKeysForChannel('memory'))).toEqual(['["memory-items","backfill"]']);
-    expect(queryKeysForChannel('agents')).toEqual([]);
+    // Agents is the opposite trade: the gap is cheap to close and a stale agent list is a list of
+    // permissions that are no longer what it says they are.
+    expect(keyStrings(queryKeysForChannel('agents'))).toEqual(['["agents"]']);
   });
 
   it('always refetches notifications and service health on reconnect', () => {

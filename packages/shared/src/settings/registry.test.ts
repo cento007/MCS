@@ -22,6 +22,7 @@ import {
   snakeCase,
 } from './registry.js';
 import type {
+  AgentsSettings,
   ClaudeCodeSettings,
   GeneralSettings,
   GithubSettings,
@@ -169,10 +170,13 @@ describe('lookups', () => {
     expect(grouped).toHaveLength(settingsForCategory('integrations').length);
   });
 
-  it('has no entries for the Phase 4 placeholder category', () => {
-    // `memory` was here until Phase 3 gave both of its PRD §4.4 fields a consumer. `agents`
-    // stays: a field nothing reads is a lie, and the agent framework has not landed.
-    expect(settingsForCategory('agents')).toEqual([]);
+  it('declares only the `agents` field that has a consumer', () => {
+    // TDS 04 §7.2 reserves two. `defaultRuntime` is not here and must not be: there is one
+    // launchable runtime, so the setting would be a control with one position — the same "a
+    // field nothing reads is a lie" rule that kept this category empty until now.
+    expect(settingsForCategory('agents').map((entry) => entry.path)).toEqual([
+      'agents.defaultPermissionTemplate',
+    ]);
   });
 
   it('declares exactly the two PRD §4.4 item 4 memory fields', () => {
@@ -417,6 +421,9 @@ const FIELD_MANIFEST = {
     indexedSources: true,
     retentionDays: true,
   } satisfies Record<keyof MemorySettings, true>,
+  agents: {
+    defaultPermissionTemplate: true,
+  } satisfies Record<keyof AgentsSettings, true>,
   security: {
     sessionTimeoutMinutes: true,
     auditLogRetentionDays: true,

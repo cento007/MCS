@@ -1,6 +1,7 @@
 import type { Db, Queue } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import type { EventBus, Outbox } from '../events/index.js';
+import type { SessionAgentPort } from './agent-binding.js';
 import {
   type AgentRuntimePort,
   createManagedSessions,
@@ -42,12 +43,14 @@ import { SessionStateMachine } from './state-machine.js';
  *   files.ts          the §6.10.2 bounded read model
  *   cursors.ts        the two non-`id` ordering keys (message `ordinal`, commit `committedAt`)
  *   runtime-port.ts   `SessionRuntimePort` — the seam the Agent SDK wrapper fills (WS6 §5.1)
+ *   agent-binding.ts  `SessionAgentPort` — the seam `agents/` fills: which persona, which tools
  *   managed/          the Agent SDK wrapper that fills it: controller, pump, prompts (§4–§5)
  *   observed/         hook ingest + the transcript tailer (§6)
  *   export/           §6.7 Export and Context Package — registered from `app.ts`, not here,
  *                     because the package reads the semantic-memory layer (see its `index.ts`)
  */
 
+export * from './agent-binding.js';
 export * from './cursors.js';
 export * from './files.js';
 export * from './managed/index.js';
@@ -78,6 +81,15 @@ export interface RegisterSessionsOptions {
    * the WebSocket hub needs. Tests pass the WS6 §5.2 mock; `main.ts` passes the Agent SDK.
    */
   readonly agentRuntime?: AgentRuntimePort;
+  /**
+   * The Agent domain, behind `SessionAgentPort` (`agent-binding.ts`).
+   *
+   * Required rather than optional on purpose: a Session may carry an `agent_id`, and a registry
+   * built without a way to resolve it could only launch that Session **unrestricted**. Fail-open
+   * is the one behaviour a permission model must not have, so the wiring is mandatory and there
+   * is no fallback branch to get wrong.
+   */
+  readonly agents: SessionAgentPort;
   readonly maxConcurrentSessions: number;
   readonly spawnTimeoutMs?: number | undefined;
   readonly disposeTimeoutMs?: number | undefined;
@@ -130,6 +142,7 @@ export function registerSessions(
     bus: options.bus,
     stateMachine,
     runtime,
+    agents: options.agents,
     maxConcurrentSessions: options.maxConcurrentSessions,
     ...(options.onError === undefined ? {} : { onLaunchError: options.onError }),
   });
@@ -140,6 +153,7 @@ export function registerSessions(
     stateMachine,
     registry,
     runtime,
+    agents: options.agents,
     ...(options.onError === undefined ? {} : { onRuntimeError: options.onError }),
   });
 

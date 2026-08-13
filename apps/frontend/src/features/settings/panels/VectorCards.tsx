@@ -1,10 +1,10 @@
 import { PhaseBadge } from '../../../components/PhasePlaceholder.js';
 import { endpoints } from '../../../lib/api/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import { NumberControl, SettingsField, TextControl, ToggleControl } from '../components/Field.js';
 import { PanelStatus, SettingsPanel } from '../components/Panel.js';
 import { SecretField } from '../components/SecretField.js';
 import { TestConnection } from '../components/TestConnection.js';
-import type { Draft } from '../dirty.js';
 import type { OllamaSettings, QdrantSettings } from '../types.js';
 import { numberOr, useIntegrationForm } from './integration-form.js';
 

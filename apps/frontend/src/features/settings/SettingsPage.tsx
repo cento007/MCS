@@ -7,15 +7,15 @@ import {
   type SettingsCategory,
   settingsCategoryLabel,
 } from '../../app/shell/navigation.js';
-import { PhaseBadge, PhasePlaceholder } from '../../components/PhasePlaceholder.js';
-import { UnsavedChangesGuard } from './guard.js';
+import { PhaseBadge } from '../../components/PhasePlaceholder.js';
+import { DirtyFormProvider, UnsavedChangesGuard } from '../../components/UnsavedChangesGuard.js';
+import { AgentsSettingsPanel } from './panels/AgentsSettingsPanel.js';
 import { GeneralPanel } from './panels/GeneralPanel.js';
 import { IntegrationsPanel } from './panels/IntegrationsPanel.js';
 import { MemoryPanel } from './panels/MemoryPanel.js';
 import { NotificationsPanel } from './panels/NotificationsPanel.js';
 import { SecurityPanel } from './panels/SecurityPanel.js';
 import { ServicesSettingsPanel } from './panels/ServicesSettingsPanel.js';
-import { SettingsDirtyProvider } from './registry.js';
 
 /**
  * `/settings/:category` — the Settings screen (PRD §4.4, TDS 05 §7, TDS 06 §5.7).
@@ -47,7 +47,7 @@ export function SettingsPage() {
   }, []);
 
   return (
-    <SettingsDirtyProvider>
+    <DirtyFormProvider>
       <div className="flex min-h-full flex-col md:flex-row">
         <nav
           aria-label="Settings categories"
@@ -98,7 +98,7 @@ export function SettingsPage() {
       </div>
 
       <UnsavedChangesGuard />
-    </SettingsDirtyProvider>
+    </DirtyFormProvider>
   );
 }
 
@@ -120,13 +120,11 @@ export function CategoryPanel({ category }: { category: SettingsCategory }) {
       // phase a category belongs to, exactly as the main nav's Memory entry does.
       return <MemoryPanel />;
     case 'agents':
-      return (
-        <PhasePlaceholder
-          phase={4}
-          title="Agents"
-          description="Planned controls: default runtime and default permission template."
-        />
-      );
+      // Phase 4, and live. The placeholder this replaced promised "default runtime and default
+      // permission template"; only the second was ever declared in the key registry, and the first
+      // was withdrawn on purpose (one launchable runtime, so a picker chooses nothing). The rail
+      // keeps its `P4` badge because the badge marks the phase a category belongs to.
+      return <AgentsSettingsPanel />;
     default:
       return null;
   }

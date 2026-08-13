@@ -167,9 +167,19 @@ describe('memory_items scope constraints (ck_memory_items_tier_scope)', () => {
     await expectRejectedBy(insertMemoryItem({ tier: 'workspace' }), 'ck_memory_items_tier');
   });
 
-  it('accepts the agent tier that nothing produces yet, so Phase 4 needs no migration', async () => {
+  it('accepts the agent tier that nothing produces yet, so Phase 4 needed no migration', async () => {
+    // Phase 4's first slice made `agents` a real table; the tier it points at is still
+    // producer-less (`PRODUCIBLE_MEMORY_TIERS` excludes it), which is why this test inserts the
+    // row by hand and why nothing else in the suite ever sees an `agent`-tier chunk.
     const agentId = newId();
-    await testDatabase().db.insert(schema.agents).values({ id: agentId, name: 'Architect' });
+    await testDatabase()
+      .db.insert(schema.agents)
+      .values({
+        id: agentId,
+        name: 'Architect',
+        scope: 'global',
+        permissions: { repository: { read: true, write: false, shell: false } },
+      });
 
     await expect(insertMemoryItem({ tier: 'agent', agentId })).resolves.toBeTruthy();
   });

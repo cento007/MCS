@@ -110,6 +110,20 @@ export const endpoints = {
     backfill: '/memory-items/backfill',
     detail: (id: string) => `/memory-items/${id}`,
   },
+  /**
+   * Phase 4 agents (TDS 04 §13.2, PRD §5).
+   *
+   * Only the two CRUD routes the Agents screen calls. §13.2 also reserves
+   * `POST /agents/{id}/assignments` and `POST /agents/{id}/executions`, and **they are
+   * deliberately absent** for the same reason two of §13.1's memory routes are: nothing in the
+   * SPA can execute an agent or assign one yet, and a path listed here is a path a screen may be
+   * written against. `agent-teams` is likewise omitted — PRD §5.7 teams are not being built this
+   * round, and a reserved path is how a Teams tab gets added to a screen that cannot serve it.
+   */
+  agents: {
+    list: '/agents',
+    detail: (id: string) => `/agents/${id}`,
+  },
 } as const;
 
 /**

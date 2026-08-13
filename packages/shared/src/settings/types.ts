@@ -1,3 +1,4 @@
+import type { AgentPermissionTemplate } from '../entities/agent.js';
 import type { IsoTimestamp } from '../entities/index.js';
 
 /**
@@ -234,23 +235,39 @@ export interface SecuritySettings {
   readonly allowedOrigins: readonly string[];
 }
 
+// ------------------------------------------------------------------------------------- agents
+
+/**
+ * §7.2's `agents` category, with **one** of its two reserved fields.
+ *
+ * `defaultRuntime` is deliberately absent: there is exactly one launchable runtime, so the
+ * setting would be a control with one position. The full argument is on `AGENT_KEYS` in
+ * `registry.ts`.
+ */
+export interface AgentsSettings {
+  /**
+   * The permission template `POST /api/v1/agents` applies when the request names no permissions
+   * (`entities/agent.ts`). Read on every agent create; it decides which tools that agent's
+   * sessions lose.
+   */
+  readonly defaultPermissionTemplate: AgentPermissionTemplate;
+}
+
 // ---------------------------------------------------------------------------- the whole thing
 
 /**
  * `GET /api/v1/settings` (§7.3).
  *
- * `agents` (Phase 4) is named by §7.3 and has **no fields yet**, so it serialises as `{}`. That
- * is the honest answer: the category exists in the storage CHECK and in the UI rail, and
- * inventing placeholder fields for it would create settings nothing reads and a migration to
- * remove. `memory` was the same until Phase 3's indexer and retention sweep gave both of its
- * PRD §4.4 fields a real consumer.
+ * `agents` served as `{}` until Phase 4's first slice gave one of its two §7.2 fields a real
+ * consumer — the same graduation `memory` made in Phase 3. The other field stays out for the
+ * reason a placeholder was always wrong: a setting nothing reads is a control that lies.
  */
 export interface SettingsDocument {
   readonly general: GeneralSettings;
   readonly integrations: IntegrationsSettings;
   readonly notifications: NotificationsSettingsDocument;
   readonly memory: MemorySettings;
-  readonly agents: Record<string, never>;
+  readonly agents: AgentsSettings;
   readonly security: SecuritySettings;
 }
 

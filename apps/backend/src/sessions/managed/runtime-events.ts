@@ -146,6 +146,21 @@ export interface AgentSessionOptions {
   readonly resume: string | null;
   /** SDK `forkSession: true` — this Session is a Clone of the resume target. */
   readonly fork: boolean;
+  /**
+   * The Agent persona (PRD §5), appended to the runtime's own system prompt. `null` for a
+   * Session bound to no Agent, which is every Session before Phase 4.
+   */
+  readonly systemPromptAppend: string | null;
+  /**
+   * Tools this Session must not have — PRD §5.5 as the runtime enforces it
+   * (`agents/permissions.ts`). Empty for an unrestricted Session.
+   */
+  readonly disallowedTools: readonly string[];
+  /**
+   * Ignore on-disk MCP configuration. Set for a restricted Session so a locally-configured MCP
+   * server cannot supply a differently-named tool that does a denied thing.
+   */
+  readonly strictMcpConfig: boolean;
   readonly signal?: AbortSignal | undefined;
 }
 

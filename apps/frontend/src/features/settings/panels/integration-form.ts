@@ -1,6 +1,6 @@
 import { type UseQueryResult, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ApiError, apiGet, endpoints, queryKeys } from '../../../lib/api/index.js';
-import type { Draft } from '../dirty.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import { type PanelForm, usePanelForm } from '../form.js';
 import type { IntegrationSlug, IntegrationsSettings, SecretFieldWrite } from '../types.js';
 

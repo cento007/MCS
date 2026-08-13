@@ -116,6 +116,12 @@ export class ManagedRuntime implements SessionRuntimePort {
       // resume-as-new Session, and a Clone alike.
       resume: request.resumeFromRuntimeSessionId,
       fork: request.fork,
+      // PRD §5.1's Agent, reduced to the two things a runtime can act on. A Session with no
+      // Agent produces exactly the arguments this call made before Phase 4 — no prompt append,
+      // an empty deny list — so binding nothing changes nothing.
+      systemPromptAppend: request.agent?.systemPromptAppend ?? null,
+      disallowedTools: request.agent?.disallowedTools ?? [],
+      strictMcpConfig: request.agent?.strictMcpConfig ?? false,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
 

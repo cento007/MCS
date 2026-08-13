@@ -12,6 +12,7 @@
  */
 
 export * from './adr.js';
+export * from './agent.js';
 export * from './memory.js';
 export * from './notification.js';
 export * from './service-health.js';

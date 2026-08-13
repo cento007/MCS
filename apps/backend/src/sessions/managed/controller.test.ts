@@ -73,6 +73,10 @@ function harness(
       model: null,
       resume: null,
       fork: false,
+      // A Session bound to no Agent: no persona, nothing denied (PRD §5.1).
+      systemPromptAppend: null,
+      disallowedTools: [],
+      strictMcpConfig: false,
     }),
     messages,
     stateMachine: state,

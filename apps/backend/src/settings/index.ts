@@ -19,9 +19,9 @@ import { TestConnectionService } from './test-connection/index.js';
  *   service.ts         the §7.3 contract: one transaction per write, audit + `setting.updated`
  *   test-connection/   the §7.4 executors and their bounded ports
  *   routes.ts          `/api/v1/settings/*`
- *   general.ts, claude-code.ts, integrations.ts, notifications.ts, security.ts
- *                      the typed internal reads the Session domain and the read models use —
- *                      same registry, same defaults, no parallel source of truth
+ *   general.ts, claude-code.ts, integrations.ts, notifications.ts, agents.ts, security.ts
+ *                      the typed internal reads the Session domain, the Agent domain and the
+ *                      read models use — same registry, same defaults, no parallel source of truth
  *
  * Boundary reminder (F8.2): the seven bootstrap variables are env-only. They have no registry
  * entries by construction, and `registry.test.ts` asserts that mechanically.

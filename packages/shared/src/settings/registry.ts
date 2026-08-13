@@ -1,4 +1,8 @@
 import {
+  AGENT_PERMISSION_TEMPLATES,
+  DEFAULT_AGENT_PERMISSION_TEMPLATE,
+} from '../entities/agent.js';
+import {
   MEMORY_SOURCE_FIELDS,
   MEMORY_SOURCE_TYPES,
   memorySourceField,
@@ -814,6 +818,32 @@ export const MEMORY_KEYS = {
         ]),
       ) as unknown as MemoryRetentionDays;
     },
+  }),
+} as const;
+
+// ------------------------------------------------------------------------------------- agents
+
+/**
+ * TDS 04 §7.2 reserves two `agents` keys: `defaultRuntime` and `defaultPermissionTemplate`.
+ * **Only the second is declared**, and the omission is the point of this comment.
+ *
+ * `defaultRuntime` would be a control with one position. `AGENT_RUNTIMES` has exactly one member
+ * because exactly one runtime can be launched (F1.5: `ManagedRuntime` drives the Claude Agent SDK
+ * for every managed Session), so a setting that chooses among them chooses nothing. It is
+ * declared the day a second runtime exists — which is a Phase 5 question, not a Phase 4 one.
+ *
+ * `defaultPermissionTemplate` is read by `POST /api/v1/agents` whenever the body names no
+ * permissions, and the value it supplies goes on to decide which tools are removed from that
+ * agent's sessions. That is a real consumer with a visible effect, which is the only reason it is
+ * here.
+ */
+export const AGENT_KEYS = {
+  defaultPermissionTemplate: defineEnum('agents.defaultPermissionTemplate', {
+    values: AGENT_PERMISSION_TEMPLATES,
+    // Deny-biased: an agent created without a thought about permissions must not be able to edit
+    // a working tree. The operator raises this deliberately or not at all.
+    default: DEFAULT_AGENT_PERMISSION_TEMPLATE,
+    phase: 4,
   }),
 } as const;
 

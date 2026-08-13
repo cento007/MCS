@@ -2,7 +2,7 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { ErrorPanel } from '../../../components/ErrorPanel.js';
 import { Skeleton } from '../../../components/Skeleton.js';
 import { formatClockSeconds } from '../../../lib/format/index.js';
-import { changeCountLabel } from '../dirty.js';
+import { changeCountLabel } from '../../../lib/forms/dirty.js';
 import type { PanelForm } from '../form.js';
 
 /**

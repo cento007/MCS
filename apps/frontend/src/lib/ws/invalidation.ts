@@ -147,6 +147,24 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
     case 'memory.reindexed':
       return [queryKeys.memoryItems.backfill()];
 
+    /**
+     * Phase 4 agents (§13.2's reserved names, relayed on the `agents` channel).
+     *
+     * The blunt prefix is right here where it was wrong for memory: an agent list is one cheap
+     * `GET /agents` with no embedding call behind it, these events fire when a person presses
+     * Save rather than hundreds of times during a backfill, and the Agent Builder is a form that
+     * must not keep showing a stale baseline after another tab saved over it.
+     *
+     * `agent.assigned` is included — an assignment does not change the agent document itself, but
+     * it changes where the agent is offered, which is what the scope column reports. The three
+     * `agent.execution_*` names are deliberately absent: nothing in the SPA renders an execution,
+     * so invalidating on them would refetch a list to redraw nothing.
+     */
+    case 'agent.created':
+    case 'agent.updated':
+    case 'agent.assigned':
+      return [queryKeys.agents.root()];
+
     default:
       return [];
   }
@@ -194,7 +212,13 @@ export function queryKeysForChannel(channel: string): readonly QueryKey[] {
      */
     case 'memory':
       return [queryKeys.memoryItems.backfill()];
-    // `agents` is subscribable and silent until Phase 4 ships (§14.4).
+    /**
+     * Phase 4. This channel was "subscribable and silent" (§14.4) until the Agents screen
+     * shipped; a reconnect now heals the whole agents group, because the gap is of unknown
+     * content and an agent list is cheap to re-read.
+     */
+    case 'agents':
+      return [queryKeys.agents.root()];
     default:
       return [];
   }

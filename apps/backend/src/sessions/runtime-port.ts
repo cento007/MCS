@@ -1,5 +1,6 @@
 import type { SessionType } from '@mc/shared';
 import { ApiError } from '../http/errors.js';
+import type { RuntimeAgentBinding } from './agent-binding.js';
 
 /**
  * `SessionRuntimePort` — the seam between the Session domain and the Claude Code runtime.
@@ -31,6 +32,17 @@ export interface LaunchRequest {
   readonly resumeFromRuntimeSessionId: string | null;
   /** SDK `forkSession: true` — this Session is a Clone of the resume target (F1.5). */
   readonly fork: boolean;
+  /**
+   * The Agent persona this Session runs as, resolved to what the runtime must do about it, or
+   * `null` for a Session bound to no Agent (PRD §5.1).
+   *
+   * This is the field that makes an Agent more than a database row: F1.5 reserved the runtime's
+   * control surfaces as the Phase 4 enforcement point, and this is where they are handed over —
+   * a system-prompt append and a tool deny list, both computed once in `agents/binding.ts`.
+   * A runtime that ignores it runs a session with no persona and no restrictions, which is why
+   * `ManagedRuntime` forwards it rather than treating it as advisory.
+   */
+  readonly agent: RuntimeAgentBinding | null;
   /** Aborted when the launch is no longer wanted (shutdown, job lease expiry). */
   readonly signal?: AbortSignal | undefined;
 }

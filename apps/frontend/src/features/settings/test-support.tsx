@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { type RenderResult, render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router';
+import { DirtyFormProvider } from '../../components/UnsavedChangesGuard.js';
 import type { ApiTokenSummary, ServiceHealth } from '../../lib/api/index.js';
-import { SettingsDirtyProvider } from './registry.js';
 import { SettingsPage } from './SettingsPage.js';
 import type {
   GeneralSettings,
@@ -242,7 +242,7 @@ export function renderPanel(ui: ReactElement): PanelHarness {
   const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <SettingsDirtyProvider>{ui}</SettingsDirtyProvider>
+        <DirtyFormProvider>{ui}</DirtyFormProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );

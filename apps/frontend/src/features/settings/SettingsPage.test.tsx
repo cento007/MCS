@@ -94,10 +94,17 @@ describe('phase-gated categories (§2.5)', () => {
     expect(within(rail).getAllByTitle('Available in Phase 3').length).toBeGreaterThan(0);
   });
 
-  it('routes Agents to its Phase 4 placeholder', async () => {
+  it('routes Agents to its real panel, and draws only the key that has a reader', async () => {
+    // Phase 4 has landed. The placeholder this replaced promised "default runtime and default
+    // permission template"; only the second was ever declared in the shared key registry, and the
+    // first was withdrawn deliberately — `AGENT_RUNTIMES` has one member, so a picker over it
+    // chooses nothing. Advertising it would be the `integrations.ollama.enabled` mistake again.
     renderSettingsPage('/settings/agents');
+
+    expect(await screen.findByLabelText('Default permission template')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/default runtime/i)).toBeNull();
     expect(
-      await screen.findByText(/default runtime and default permission template/),
+      screen.getByText(/There is no control for it and that is deliberate/),
     ).toBeInTheDocument();
   });
 });

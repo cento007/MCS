@@ -225,7 +225,7 @@ describe('reads on an empty database (§7.2)', () => {
     expect(integrations.qdrant.apiKey).toEqual({ isSet: false, updatedAt: null });
   });
 
-  it('serves the whole document, with the Phase 4 category still empty', async () => {
+  it('serves the whole document, including the one Phase 4 field that has a consumer', async () => {
     const document = await get<Record<string, unknown>>('/api/v1/settings');
 
     expect(Object.keys(document)).toEqual([
@@ -236,9 +236,10 @@ describe('reads on an empty database (§7.2)', () => {
       'agents',
       'security',
     ]);
-    // `agents` has no fields until Phase 4 gives them a consumer; `memory` now has both of its
-    // PRD §4.4 item 4 fields, served from the registry on a database with no rows at all.
-    expect(document['agents']).toEqual({});
+    // `agents` carries `defaultPermissionTemplate` and nothing else — `POST /agents` reads it,
+    // and §7.2's other reserved key still has no reader. `memory` has both of its PRD §4.4
+    // item 4 fields. All of it served from the registry on a database with no rows at all.
+    expect(document['agents']).toEqual({ defaultPermissionTemplate: 'read_only' });
     expect(document['memory']).toEqual({
       indexedSources: {
         session: true,

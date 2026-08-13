@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { ErrorPanel } from '../../../components/ErrorPanel.js';
 import { endpoints, queryKeys } from '../../../lib/api/index.js';
+import type { Draft } from '../../../lib/forms/dirty.js';
 import { SelectControl, SettingsField } from '../components/Field.js';
 import { SettingsPanel } from '../components/Panel.js';
-import type { Draft } from '../dirty.js';
 import { usePanelForm } from '../form.js';
 import { useChangePassword } from '../mutations.js';
 import { useSecuritySettings } from '../queries.js';

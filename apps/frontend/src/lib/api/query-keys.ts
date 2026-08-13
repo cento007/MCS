@@ -129,6 +129,18 @@ export const queryKeys = {
     backfill: () => ['memory-items', 'backfill'] as const,
     detail: (id: string) => ['memory-items', id] as const,
   },
+  /**
+   * Phase 4 agents (TDS 04 §13.2).
+   *
+   * The ordinary hierarchy — unlike `memoryItems`, nothing here is expensive to refetch, so a
+   * prefix invalidation on `['agents']` is exactly the right blunt instrument when an
+   * `agent.created` / `agent.updated` event arrives on the `agents` channel.
+   */
+  agents: {
+    root: () => ['agents'] as const,
+    list: (filters: ListFilters = {}) => ['agents', 'list', filters] as const,
+    detail: (id: string) => ['agents', id] as const,
+  },
 } as const;
 
 /** A query key as the invalidation machinery passes it around. */

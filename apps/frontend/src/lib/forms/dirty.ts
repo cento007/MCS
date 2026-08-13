@@ -13,6 +13,19 @@
  *    operator cannot verify by looking at it;
  *  - each changed field is individually marked, so the number is verifiable rather than
  *    trusted.
+ *
+ * ## Why this lives in `lib/` and not in `features/settings/`
+ *
+ * It was written for Settings and moved here unchanged when the **Agent Builder** (Phase 4)
+ * became the second editable surface a person can navigate away from mid-edit. TDS 05 §2.1
+ * forbids cross-feature imports — a feature slice may only reach `components/`, `lib/` and
+ * `stores/` — so the alternatives were a second implementation of the same contract or this
+ * move, and two implementations of "how many unsaved changes are there" is exactly how the
+ * Agent Builder ends up warning about 2 changes while Settings would have said 3.
+ *
+ * The secret-field vocabulary stays in the shared file even though only Settings has secrets:
+ * `summarizeDirty` is the one function both surfaces call, and splitting it into a
+ * secret-aware and a secret-blind copy would recreate the divergence this move prevents.
  */
 
 /** Everything a Settings control can hold. Nested API objects are flattened into dotted paths. */
