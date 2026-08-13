@@ -95,6 +95,19 @@ function parseArgs(argv: readonly string[]): Args {
       case '-h':
         help = true;
         break;
+      /**
+       * A bare `--` is an argument separator, not an argument.
+       *
+       * Every documented entry point here goes through one — `package.json` defines
+       * `hooks:status` as `pnpm --filter @mc/backend run hooks -- status`, and pnpm forwards the
+       * separator to the script rather than consuming it. So `pnpm hooks:install`, the command
+       * the module header tells operators to run, died on `Unknown argument: --` before doing
+       * anything. Ignoring it here rather than editing the wrapper fixes it for `npm`, `yarn`
+       * and a hand-typed `tsx src/cli/hooks.ts -- status` at the same time, none of which agree
+       * on whether the separator is passed through.
+       */
+      case '--':
+        break;
       default:
         fail(`Unknown argument: ${String(arg)}${USAGE}`);
     }
