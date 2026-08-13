@@ -34,12 +34,7 @@ import {
   useUpdateSession,
 } from './mutations.js';
 import { SessionPanel } from './panel/SessionPanel.js';
-import {
-  useRunningSessions,
-  useSession,
-  useSessionMessages,
-  useSessionTimeline,
-} from './queries.js';
+import { useRunningSessions, useSession, useSessionMessages } from './queries.js';
 import { SessionHeader } from './SessionHeader.js';
 import { SessionTabBar } from './SessionTabBar.js';
 
@@ -320,28 +315,16 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
     [messagesQuery.messages],
   );
 
-  /**
-   * The failure reason, read from the timeline (§6.7: `session.failed` is recorded with its
-   * `reason` in `detail`).
+  /*
+   * The §5.5 failure banner reads its reason from `session.failureReason` inside `Composer`,
+   * so there is no failure plumbing here any more.
    *
-   * Fetched eagerly for a `failed` Session — the one state where the panel's lazy activation
-   * is the wrong trade. "Why did it die" is the entire question this screen is being opened
-   * to answer, and making the operator click a panel tab to reach the answer, on a banner
-   * that has a slot reserved for it, is a worse deal than one extra request.
+   * This used to eagerly fetch the timeline for a `failed` Session and dig the reason out of
+   * the `session.state_changed` payload — the only source the client had while the column was
+   * stored but not serialized. Both are written from the same argument in the same
+   * transaction (`state-machine.ts`), so the resource is the same answer without the request,
+   * and one fact now has one source.
    */
-  const failureTimeline = useSessionTimeline(sessionId, session?.state === 'failed');
-  const failureDetail = useMemo(() => {
-    const entries = failureTimeline.data ?? [];
-    const failure = entries.find(
-      (item) => item.type === 'session.failed' || item.toState === 'failed',
-    );
-    return {
-      code: failure?.detail ?? null,
-      // The F5.4 `requestId` exists only when the failure surfaced through an API call; a
-      // system-triggered crash has none, and `—` is the honest rendering of that.
-      requestId: null,
-    };
-  }, [failureTimeline.data]);
 
   const transcript = useMemo(
     () =>
@@ -457,7 +440,6 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
             onRestorePrompt={(content) => setDraft(sessionId, content)}
             terminalActions={overflowActions(session)}
             onAction={onAction}
-            failureDetail={failureDetail}
           />
         </div>
 

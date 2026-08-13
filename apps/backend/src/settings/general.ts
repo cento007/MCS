@@ -1,9 +1,8 @@
-import type { Db } from '@mc/shared';
-import { readCategoryValues, stringValue } from './values.js';
+import { type Db, normalizeSetting, settingDefault, settingKey } from '@mc/shared';
+import { readCategoryValues } from './values.js';
 
 /**
- * `general` settings (TDS 04 §7.2, PRD §4.4.1). Phase 1 needs exactly one field of this
- * category, and it is the most consequential one in the product:
+ * `general` settings (TDS 04 §7.2, PRD §4.4.1) — the internal read path.
  *
  *   `general.timezone` -> `('general', 'timezone')`, string, IANA name
  *
@@ -11,18 +10,19 @@ import { readCategoryValues, stringValue } from './values.js';
  * schedule row (§7.7). It is explicitly **not** the server's `TZ`, not PostgreSQL's session
  * `TimeZone`, not the browser's zone, and not UTC-by-accident — a Backend running UTC while
  * the operator is in `Europe/Amsterdam` would roll "today" at 01:00 or 02:00 local.
+ *
+ * The default and the validation rule are the registry's (§7.6): the API and this reader must
+ * agree on what an unset timezone means, and they do so by construction rather than by two
+ * constants that happen to match today.
  */
 
 /** §7.8: an unset or unparseable zone falls back to UTC and *reports* UTC. */
-export const DEFAULT_TIMEZONE = 'UTC';
+export const DEFAULT_TIMEZONE = settingDefault<string>('general.timezone');
 
 export const GENERAL_SETTING_KEYS = Object.freeze({
-  timezone: 'timezone',
-  instanceName: 'instance_name',
+  timezone: settingKey('general.timezone'),
+  instanceName: settingKey('general.instanceName'),
 } as const);
-
-/** An IANA name is at most a few dozen characters; anything longer is not one. */
-const MAX_TIMEZONE_LENGTH = 64;
 
 /**
  * Resolve a stored timezone to a name this process can actually compute with.
@@ -33,16 +33,7 @@ const MAX_TIMEZONE_LENGTH = 64;
  * tested without a database.
  */
 export function resolveTimezone(raw: unknown): string {
-  const name = stringValue(raw);
-  if (name === null || name.length > MAX_TIMEZONE_LENGTH) return DEFAULT_TIMEZONE;
-
-  try {
-    // Throws RangeError for a zone ICU does not know.
-    new Intl.DateTimeFormat('en-US', { timeZone: name }).format(0);
-    return name;
-  } catch {
-    return DEFAULT_TIMEZONE;
-  }
+  return normalizeSetting<string>('general.timezone', raw);
 }
 
 /** The instance timezone, or `UTC` when unset/unparseable (§7.8). */

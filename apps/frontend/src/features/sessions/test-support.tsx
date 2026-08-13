@@ -27,6 +27,9 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     sessionType: 'managed',
     state: 'running',
     title: 'Refactor queue port to batch enqueue',
+    // `null` is the honest default: this fixture is `running`, and the column is populated
+    // only on the transition to `failed`. Failure suites pass it explicitly.
+    failureReason: null,
     notes: null,
     branch: 'DEV',
     workingDirectory: 'D:\\Repos\\MCS',

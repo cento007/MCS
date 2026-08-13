@@ -39,9 +39,6 @@ export interface ComposerProps {
   readonly onRestorePrompt: (content: string) => void;
   readonly terminalActions: readonly SessionActionDescriptor[];
   readonly onAction: (action: SessionActionDescriptor) => void;
-  readonly failureDetail?:
-    | { readonly code: string | null; readonly requestId: string | null }
-    | undefined;
 }
 
 export function Composer(props: ComposerProps) {
@@ -198,7 +195,17 @@ function CompletedBar({ session, terminalActions, onAction }: ComposerProps) {
   );
 }
 
-function FailedBar({ session, terminalActions, onAction, failureDetail }: ComposerProps) {
+/**
+ * §5.5's failure ErrorBanner: "reason, `code`, `requestId`".
+ *
+ * The reason comes straight off the Session resource. It used to be dug out of the timeline —
+ * one extra request for a fact the resource already carried — and before `failureReason` was
+ * serialized at all this line could only ever render `—`, which is to say this banner could
+ * announce a failure without being able to name it.
+ */
+function FailedBar({ session, terminalActions, onAction }: ComposerProps) {
+  const code = session.failureReason?.trim() ?? '';
+
   return (
     <div
       role="alert"
@@ -216,11 +223,14 @@ function FailedBar({ session, terminalActions, onAction, failureDetail }: Compos
         The runtime stopped before the session completed. Any partial response above is retained —
         it is the last thing the agent produced.
       </p>
-      <p className="mt-1 font-mono text-2xs text-text-muted">
+      <p data-testid="failure-detail" className="mt-1 font-mono text-2xs text-text-muted">
         {/* Every segment is rendered even when empty, as `—`. A missing error code is itself
             information — it says the failure carried none — and a line that silently drops
-            fields makes "no code" indistinguishable from "no line". */}
-        {failureDetail?.code ?? '—'} · requestId {failureDetail?.requestId ?? '—'} ·{' '}
+            fields makes "no code" indistinguishable from "no line".
+            `requestId` stays `—` on purpose: the F5.4 id exists only when the failure
+            surfaced through an API call, nothing persists one against a Session today, and a
+            fabricated correlation id is worse than an absent one. */}
+        {code.length === 0 ? '—' : code} · requestId — ·{' '}
         <span>{formatDateTime(session.completedAt)}</span>
       </p>
       <TerminalActions actions={terminalActions} onAction={onAction} />

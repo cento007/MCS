@@ -1,63 +1,47 @@
-import { type Db, schema } from '@mc/shared';
+import {
+  type CostBudget,
+  type Db,
+  DEFAULT_COST_BUDGET,
+  normalizeSetting,
+  schema,
+  settingDefault,
+  settingKey,
+} from '@mc/shared';
 import { and, eq } from 'drizzle-orm';
-import { integerValue, moneyValue, objectValue, readCategoryValues } from './values.js';
+import { readCategoryValues, stringValue } from './values.js';
 
 /**
- * The `integrations.claudeCode` settings Phase 1 needs before `settings/` exists as a service
- * (TDS 04 §7.2, PRD §4.4.2): `maxConcurrentSessions` (F1.5 concurrency gate) and `costBudget`
- * (the spend read model, §7.8).
+ * The `integrations.claudeCode` reads the Session domain needs (TDS 04 §7.2, PRD §4.4.2):
+ * `maxConcurrentSessions` (F1.5 concurrency gate), `costBudget` (the spend read model, §7.8),
+ * and the two launch fields (`cliPath`, `defaultModel`).
  *
- * Storage coordinates come from the WS2 §7.6 derivation rule — one row per top-level field,
- * `key = snake_case(integration) + '_' + snake_case(field)`, category `integrations`:
+ * Storage coordinates and defaults come from the key registry (§7.6) rather than from
+ * constants declared here — `main.ts` reads `maxConcurrentSessions` before the HTTP server
+ * exists, and the Settings page writes it; the two must not be able to disagree about what an
+ * unwritten row means.
  *
- *   `integrations.claudeCode.maxConcurrentSessions`
- *     -> `('integrations', 'claude_code_max_concurrent_sessions')`, number
- *   `integrations.claudeCode.costBudget`
- *     -> `('integrations', 'claude_code_cost_budget')`, object — read WHOLE (§7.6 rule 1)
- *
- * SCOPE NOTE: like `security.ts`, this is deliberately NOT the settings service (TDS 04 §7.3)
- * and not the key registry (§7.6, `packages/shared/src/settings/registry.ts`). It is a set of
- * typed reads with documented defaults, so these are real settings from day one instead of
- * constants that later have to be un-hardcoded. The coordinates above will not change when the
- * registry lands.
+ *   `integrations.claudeCode.maxConcurrentSessions` -> `('integrations', 'claude_code_max_concurrent_sessions')`
+ *   `integrations.claudeCode.costBudget`            -> `('integrations', 'claude_code_cost_budget')`, read WHOLE
  */
+
+export type { CostBudget };
 
 /** WS5 §5.7.4 renders the control defaulted to 3. */
-export const DEFAULT_MAX_CONCURRENT_SESSIONS = 3;
+export const DEFAULT_MAX_CONCURRENT_SESSIONS = settingDefault<number>(
+  'integrations.claudeCode.maxConcurrentSessions',
+);
 
-/** One session floor; a ceiling that is a rate-limit sanity bound, not a policy. */
-const MIN_MAX_CONCURRENT_SESSIONS = 1;
-const MAX_MAX_CONCURRENT_SESSIONS = 64;
-
-export const CLAUDE_CODE_SETTING_KEYS = Object.freeze({
-  maxConcurrentSessions: 'claude_code_max_concurrent_sessions',
-  cliPath: 'claude_code_cli_path',
-  defaultModel: 'claude_code_default_model',
-  costBudget: 'claude_code_cost_budget',
-} as const);
-
-/**
- * `ClaudeCodeSettings.costBudget` (TDS 04 §7.2, §7.8).
- *
- * `dailyUsd: null` means **no budget**, which is a different statement from "alerts off" —
- * the latter lives in `notifications.events.costBudgetAlert` and the two are never conflated
- * (§7.2 note, WS5 §3.1/§5.2).
- */
-export interface CostBudget {
-  readonly dailyUsd: number | null;
-  readonly perSessionUsd: number | null;
-  /** 1–100. WS5 §5.7.4 renders the control defaulted to 80. */
-  readonly alertThresholdPercent: number;
-}
-
-export const DEFAULT_ALERT_THRESHOLD_PERCENT = 80;
+export const DEFAULT_ALERT_THRESHOLD_PERCENT = DEFAULT_COST_BUDGET.alertThresholdPercent;
 
 /** No budget configured — the shape `GET /spend` reports as `dayStatus: 'no_budget'`. */
-export const NO_COST_BUDGET: CostBudget = Object.freeze({
-  dailyUsd: null,
-  perSessionUsd: null,
-  alertThresholdPercent: DEFAULT_ALERT_THRESHOLD_PERCENT,
-});
+export const NO_COST_BUDGET: CostBudget = DEFAULT_COST_BUDGET;
+
+export const CLAUDE_CODE_SETTING_KEYS = Object.freeze({
+  maxConcurrentSessions: settingKey('integrations.claudeCode.maxConcurrentSessions'),
+  cliPath: settingKey('integrations.claudeCode.cliPath'),
+  defaultModel: settingKey('integrations.claudeCode.defaultModel'),
+  costBudget: settingKey('integrations.claudeCode.costBudget'),
+} as const);
 
 /**
  * Parse the stored JSONB object. Pure, and every field degrades independently: a corrupt
@@ -65,18 +49,7 @@ export const NO_COST_BUDGET: CostBudget = Object.freeze({
  * would silently turn a budgeted instance into an unbudgeted one.
  */
 export function parseCostBudget(raw: unknown): CostBudget {
-  const object = objectValue(raw);
-  if (object === null) return NO_COST_BUDGET;
-
-  return {
-    dailyUsd: moneyValue(object['dailyUsd']),
-    perSessionUsd: moneyValue(object['perSessionUsd']),
-    alertThresholdPercent: integerValue(
-      object['alertThresholdPercent'],
-      DEFAULT_ALERT_THRESHOLD_PERCENT,
-      { min: 1, max: 100 },
-    ),
-  };
+  return normalizeSetting<CostBudget>('integrations.claudeCode.costBudget', raw);
 }
 
 /** Read `integrations.claudeCode.costBudget` (§7.8 setting-key table, verbatim). */
@@ -87,7 +60,7 @@ export async function readCostBudget(db: Db): Promise<CostBudget> {
 
 /**
  * Read `maxConcurrentSessions`. Falls back to the documented default when the row is absent
- * (first run, before settings are seeded) or unusable.
+ * (first run, before anything has been saved) or unusable.
  */
 export async function readMaxConcurrentSessions(db: Db): Promise<number> {
   const rows = await db
@@ -101,24 +74,16 @@ export async function readMaxConcurrentSessions(db: Db): Promise<number> {
     )
     .limit(1);
 
-  const raw = rows[0]?.value;
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return DEFAULT_MAX_CONCURRENT_SESSIONS;
-
-  const limit = Math.floor(raw);
-  if (limit < MIN_MAX_CONCURRENT_SESSIONS || limit > MAX_MAX_CONCURRENT_SESSIONS) {
-    return DEFAULT_MAX_CONCURRENT_SESSIONS;
-  }
-  return limit;
+  return normalizeSetting<number>('integrations.claudeCode.maxConcurrentSessions', rows[0]?.value);
 }
 
 /**
  * The two `integrations.claudeCode` fields the managed wrapper needs at launch (§7.2
  * `ClaudeCodeSettings.cliPath` / `.defaultModel`).
  *
- * Both are optional by design. `cliPath` unset means "let the SDK use the binary it ships with",
- * which is the correct default on a machine where `claude` was installed through the SDK itself;
- * `defaultModel` unset means "whatever the runtime's own default is", which is the only honest
- * answer before an operator has expressed a preference.
+ * Both are optional by design, and the API models "unset" as `''` (§7.2 keeps the field a
+ * plain `string`); this reader converts that to `null`, which is what the runtime adapter
+ * means by "use your own default".
  */
 export async function readClaudeCodeLaunchSettings(
   db: Db,
@@ -130,11 +95,7 @@ export async function readClaudeCodeLaunchSettings(
 
   const byKey = new Map(rows.map((row) => [row.key, row.value]));
   return {
-    cliPath: nonEmptyString(byKey.get(CLAUDE_CODE_SETTING_KEYS.cliPath)),
-    defaultModel: nonEmptyString(byKey.get(CLAUDE_CODE_SETTING_KEYS.defaultModel)),
+    cliPath: stringValue(byKey.get(CLAUDE_CODE_SETTING_KEYS.cliPath)),
+    defaultModel: stringValue(byKey.get(CLAUDE_CODE_SETTING_KEYS.defaultModel)),
   };
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }

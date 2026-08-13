@@ -73,6 +73,22 @@ describe('composer per F7 state', () => {
     expect(banner).toHaveTextContent(/partial response above is retained/);
   });
 
+  it('failed — states the reason from the Session, not a placeholder dash', () => {
+    renderComposer(makeSession({ state: 'failed', failureReason: 'process_crash' }));
+
+    // §5.5: "reason, `code`, `requestId`". The reason is the answer to the question the
+    // operator opened this screen to ask, and it comes off the resource — no timeline fetch.
+    expect(screen.getByTestId('failure-detail')).toHaveTextContent('process_crash');
+  });
+
+  it('failed — renders `—` when the transition carried no reason', () => {
+    renderComposer(makeSession({ state: 'failed', failureReason: null }));
+
+    // Every segment renders even when empty: "no code" and "no line" must not look alike.
+    // `requestId` is always `—` today — nothing persists one against a Session.
+    expect(screen.getByTestId('failure-detail')).toHaveTextContent('— · requestId —');
+  });
+
   it('archived — read-only bar, Resume as new session and no Clone', () => {
     renderComposer(makeSession({ state: 'archived' }));
     expect(screen.queryByTestId('composer-input')).toBeNull();

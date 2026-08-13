@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { serviceStatusPresentation, UNKNOWN_STATUS_NOTE } from '../../lib/service-health.js';
 import { type ApiMock, dataBody, mockApi } from '../../test/api-mock.js';
 import { ServicesSettingsPanel } from './panels/ServicesSettingsPanel.js';
 import { makeHealth, renderPanel } from './test-support.js';
@@ -52,7 +53,34 @@ describe('<ServicesSettingsPanel>', () => {
     expect(statusOf('queue')).toBe('▲degraded');
     expect(statusOf('sync-worker')).toBe('✕down');
     expect(statusOf('telegram-worker')).toBe('◌disabled');
-    expect(statusOf('ollama')).toBe('?unknown');
+    // §5.7.12 names no glyph for `unknown`; `lib/service-health.ts` is the single place that
+    // does. Asserted through that module, never as a literal `?`, so a panel that starts
+    // hard-coding its own fails here — which is how two surfaces picked `?` independently.
+    expect(statusOf('ollama')).toBe(`${serviceStatusPresentation('unknown').glyph}unknown`);
+  });
+
+  it('attributes an `unknown` row to the check, not to the service it names', async () => {
+    api.on('GET', '/services/health', {
+      body: dataBody({
+        services: [
+          {
+            name: 'telegram-worker',
+            label: 'Telegram Worker',
+            status: 'unknown',
+            // What the probe returns when the heartbeat SELECT throws: PostgreSQL is the
+            // broken dependency, and this row is titled with the worker's name.
+            detail: 'Heartbeat unreadable: connection terminated',
+            checkedAt: '2026-08-13T11:00:00.000Z',
+            meta: { lastHeartbeatAt: null },
+          },
+        ],
+      }),
+    });
+
+    renderPanel(<ServicesSettingsPanel />);
+
+    const row = await screen.findByTestId('service-row-telegram-worker');
+    expect(row).toHaveTextContent(UNKNOWN_STATUS_NOTE);
   });
 
   it('does not style `disabled` as a failure', async () => {

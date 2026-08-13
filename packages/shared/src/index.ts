@@ -10,10 +10,10 @@
  *   queue    F3 `QueuePort` interface + queue names (pg-boss driver pending WS1)
  *   logger   pino factory, JSON to stdout (TDS 02 §9.4)
  *   runtime  graceful shutdown + worker heartbeat (TDS 02 §7.2)
- *   db       Drizzle client/transaction types; schema is WS3's (deliberately empty)
+ *   db       Drizzle client/transaction types + the WS3 schema
+ *   settings the settings key registry (TDS 04 §7.6) and its category document types
  *
- * Still owed by later workstreams: `schema` (WS3 DDL), full `entities` DTOs and
- * `settings-client` (WS2/WS1).
+ * Still owed by later workstreams: full `entities` DTOs.
  */
 
 export * from './config/index.js';

@@ -4,6 +4,7 @@ import type {
   MessageRole,
   NotificationSeverity,
   NotificationType,
+  ServiceStatus,
   SessionState,
   SessionType,
   TelegramDeliveryStatus,
@@ -82,6 +83,18 @@ export interface Session {
   readonly state: SessionState;
   /** Always a string; `''` is the unset value (§6.1). Display falls back per §9.3. */
   readonly title: string;
+  /**
+   * Why a `failed` Session failed — `spawn_error`, `process_crash`, `backend_restart`, … —
+   * mirroring `sessions.failure_reason` (TDS 03 §3.9). `null` in every other state, and
+   * legitimately `null` in `failed` too when the transition carried no reason.
+   *
+   * It is the whole triage signal, and both surfaces that render it are specified to: the
+   * Needs Attention row (§5.2) and the §5.5 failure banner. Read it from here rather than
+   * from the timeline — the column and the `session.state_changed` payload are written from
+   * the same argument in the same transaction, so the resource is the cheaper of two
+   * identical answers.
+   */
+  readonly failureReason: string | null;
   readonly notes: string | null;
   readonly branch: string | null;
   readonly workingDirectory: string;
@@ -248,18 +261,12 @@ export interface Repository {
 // --------------------------------------------------------------- service health (§7.5)
 
 /**
- * Reconciled with the implemented endpoint 2026-08-13. This declared `'ok'` and
- * `'not_configured'`, which the API never returns, and omitted `label` and `meta` entirely —
- * so a Services panel written against it would have rendered every healthy row as unknown
- * while typechecking clean.
- *
- * `disabled` means *specified but not deployed* — Qdrant and Ollama today, and the Phase 2
- * workers until they ship. It is deliberately distinct from `down`: heartbeat rows persist
- * once written, so a worker that has never run has no row (`disabled`), while one that ran
- * and went silent leaves a row that ages into `down`. Rendering the first as a failure would
- * put permanent red rows in the panel for an install behaving exactly as designed.
+ * Re-exported from `@mc/shared`, not re-declared. This file previously carried its own copy
+ * reading `'ok' | … | 'not_configured'` — no overlap with the API on the two most common
+ * values — so a Services panel written against it typechecked cleanly while rendering every
+ * healthy service as unknown. One declaration makes the next mismatch a compile error.
  */
-export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'disabled' | 'unknown';
+export type { ServiceStatus };
 
 export interface ServiceHealthRow {
   readonly name: string;

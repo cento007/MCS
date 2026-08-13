@@ -1,44 +1,32 @@
-import { type Db, schema } from '@mc/shared';
+import { type Db, normalizeSetting, schema, settingDefault, settingKey } from '@mc/shared';
 import { and, eq } from 'drizzle-orm';
 
 /**
- * The `security` settings the foundation needs before `settings/` exists as a service
- * (TDS 04 §7.2, PRD §4.4.6):
+ * The `security` settings the foundation reads directly (TDS 04 §7.2, PRD §4.4.6):
  *
  *   `security.sessionTimeoutMinutes` -> `('security', 'session_timeout_minutes')`, number
  *   `security.allowedOrigins`        -> `('security', 'allowed_origins')`, array
  *
- * Storage coordinates come from the WS2 §7.6 derivation rule — one row per top-level field,
- * `key = snake_case(field)`, category `security`.
- *
- * SCOPE NOTE: this is deliberately NOT the settings service (TDS 04 §7.3) and not the key
- * registry (TDS 04 §7.6, owned by WS2 and due in `packages/shared/src/settings/`). It is a
- * pair of typed reads with documented defaults, so these are real settings from day one
- * instead of constants that later have to be un-hardcoded. When the registry lands, these
- * readers are replaced by it; the storage coordinates above will not change.
+ * Both are consumed on the request path — the idle-timeout check on every authenticated call,
+ * the origin allowlist on every WebSocket upgrade — so they are read here as single rows
+ * rather than through the settings service, and their defaults and repair rules come from the
+ * key registry (§7.6) so the API and these readers cannot disagree.
  */
 
 /** WS5 §5.7.11 renders the control defaulted to "7 days" of inactivity. */
-export const DEFAULT_SESSION_TIMEOUT_MINUTES = 7 * 24 * 60;
-
-/** One minute floor, one year ceiling — a timeout outside this is a corrupt row, not a policy. */
-const MIN_SESSION_TIMEOUT_MINUTES = 1;
-const MAX_SESSION_TIMEOUT_MINUTES = 365 * 24 * 60;
+export const DEFAULT_SESSION_TIMEOUT_MINUTES = settingDefault<number>(
+  'security.sessionTimeoutMinutes',
+);
 
 export const SECURITY_SETTING_KEYS = Object.freeze({
-  sessionTimeoutMinutes: 'session_timeout_minutes',
-  allowedOrigins: 'allowed_origins',
+  sessionTimeoutMinutes: settingKey('security.sessionTimeoutMinutes'),
+  auditLogRetentionDays: settingKey('security.auditLogRetentionDays'),
+  allowedOrigins: settingKey('security.allowedOrigins'),
 } as const);
 
 /**
- * Hard cap on stored origins. Not a contract number — a corrupt or hostile row must not be
- * able to turn an allowlist lookup into an unbounded set (TDS 04 §14.2 default is `[]`).
- */
-const MAX_ALLOWED_ORIGINS = 64;
-
-/**
  * Read the idle session timeout (TDS 04 §1.4). Falls back to the documented default when
- * the row is absent (first run, before settings are seeded) or unusable.
+ * the row is absent (first run, before anything has been saved) or unusable.
  */
 export async function readSessionTimeoutMinutes(db: Db): Promise<number> {
   const rows = await db
@@ -52,14 +40,7 @@ export async function readSessionTimeoutMinutes(db: Db): Promise<number> {
     )
     .limit(1);
 
-  const raw = rows[0]?.value;
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return DEFAULT_SESSION_TIMEOUT_MINUTES;
-
-  const minutes = Math.floor(raw);
-  if (minutes < MIN_SESSION_TIMEOUT_MINUTES || minutes > MAX_SESSION_TIMEOUT_MINUTES) {
-    return DEFAULT_SESSION_TIMEOUT_MINUTES;
-  }
-  return minutes;
+  return normalizeSetting<number>('security.sessionTimeoutMinutes', rows[0]?.value);
 }
 
 /**
@@ -84,10 +65,5 @@ export async function readAllowedOrigins(db: Db): Promise<readonly string[]> {
     )
     .limit(1);
 
-  const raw = rows[0]?.value;
-  if (!Array.isArray(raw)) return [];
-
-  return raw
-    .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-    .slice(0, MAX_ALLOWED_ORIGINS);
+  return normalizeSetting<readonly string[]>('security.allowedOrigins', rows[0]?.value);
 }

@@ -4,6 +4,7 @@ import type { ServiceHealthRow } from '../lib/api/index.js';
 import { formatClockSeconds } from '../lib/format/index.js';
 import {
   SERVICE_HEALTH_POLL_MS,
+  serviceDetailText,
   serviceStatusPresentation,
   useServiceHealth,
 } from '../lib/service-health.js';
@@ -46,19 +47,24 @@ export function ServicesPanel({ variant = 'full' }: { variant?: 'compact' | 'ful
   if (variant === 'compact') {
     return (
       <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
-        {rows.map((row) => (
-          <li key={row.name} className="min-w-0">
-            <Link
-              to="/settings/services"
-              className="flex min-w-0 items-center gap-1 rounded-xs text-2xs"
-              style={{ minHeight: 24 }}
-              title={row.detail === null ? row.label : `${row.label} — ${row.detail}`}
-            >
-              <StatusGlyph row={row} />
-              <span className="truncate text-text-secondary">{row.label}</span>
-            </Link>
-          </li>
-        ))}
+        {rows.map((row) => {
+          // Never `row.detail` raw: an `unknown` row is a failed *check*, and the shared
+          // helper is what keeps this tooltip from blaming the service it names.
+          const detail = serviceDetailText(row);
+          return (
+            <li key={row.name} className="min-w-0">
+              <Link
+                to="/settings/services"
+                className="flex min-w-0 items-center gap-1 rounded-xs text-2xs"
+                style={{ minHeight: 24 }}
+                title={detail === null ? row.label : `${row.label} — ${detail}`}
+              >
+                <StatusGlyph row={row} />
+                <span className="truncate text-text-secondary">{row.label}</span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     );
   }
@@ -130,7 +136,7 @@ function FullRow({ row }: { row: ServiceHealthRow }) {
           </span>
         </td>
         <td className="py-2 text-text-secondary text-xs">
-          {row.detail ?? '—'}
+          {serviceDetailText(row) ?? '—'}
           {diagnosable ? (
             <button
               type="button"

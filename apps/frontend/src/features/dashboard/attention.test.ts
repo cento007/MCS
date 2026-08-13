@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { UNKNOWN_STATUS_NOTE } from '../../lib/service-health.js';
 import type { AttentionSources } from './attention.js';
 import { ATTENTION_WINDOW_MS, buildAttention, MAX_ATTENTION_ROWS } from './attention.js';
 import {
@@ -125,6 +126,61 @@ describe('failed sessions (24 h window)', () => {
     expect(item?.glyph).toBe('✕');
   });
 
+  it('carries the failure code on the second line — the only part that says why', () => {
+    const digest = buildAttention(
+      sources({
+        failedSessions: [
+          makeSession({
+            state: 'failed',
+            branch: 'main',
+            failureReason: 'spawn_error',
+            completedAt: new Date(NOW - 120_000).toISOString(),
+          }),
+        ],
+      }),
+    );
+
+    // Verbatim, never prettified: `spawn_error` is the Backend's own vocabulary and the
+    // operator greps the Backend log with it.
+    expect(digest.items[0]?.detail).toBe('mission-control · main · spawn_error');
+  });
+
+  it('degrades to `project · branch` when the failure carried no reason', () => {
+    const digest = buildAttention(
+      sources({
+        failedSessions: [
+          makeSession({
+            state: 'failed',
+            branch: 'main',
+            failureReason: null,
+            completedAt: new Date(NOW - 120_000).toISOString(),
+          }),
+        ],
+      }),
+    );
+
+    // No invented `unknown`: that would be indistinguishable from a real `unknown` code.
+    expect(digest.items[0]?.detail).toBe('mission-control · main');
+  });
+
+  it('still renders a code when there is no project or branch to lead with', () => {
+    const digest = buildAttention(
+      sources({
+        projectNames: new Map(),
+        failedSessions: [
+          makeSession({
+            state: 'failed',
+            branch: null,
+            failureReason: 'process_crash',
+            completedAt: new Date(NOW - 120_000).toISOString(),
+          }),
+        ],
+      }),
+    );
+
+    expect(digest.items[0]?.detail).toBe('process_crash');
+  });
+
   it('falls back to updatedAt when completedAt is absent', () => {
     const digest = buildAttention(
       sources({
@@ -195,6 +251,25 @@ describe('services', () => {
     expect(digest.items[0]?.severity).toBe('danger');
     expect(digest.items[1]?.severity).toBe('warning');
     expect(digest.items.every((item) => item.to === '/settings/services')).toBe(true);
+  });
+
+  it('does not blame a worker for an `unknown` its own heartbeat read caused', () => {
+    const digest = buildAttention(
+      sources({
+        services: [
+          makeServiceRow({
+            name: 'telegram-worker',
+            label: 'Telegram Worker',
+            status: 'unknown',
+            // What WS1's probe actually returns when the heartbeat SELECT throws: the broken
+            // dependency is PostgreSQL, on a row that carries the worker's name.
+            detail: 'Heartbeat unreadable: connection terminated',
+          }),
+        ],
+      }),
+    );
+
+    expect(digest.items[0]?.detail).toContain(UNKNOWN_STATUS_NOTE);
   });
 });
 

@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Phase 1 in progress.** The Technical Design Specification (`docs/tds/`) is complete and approved; the monorepo, database schema and authentication are implemented and tested. `Requirements.md` (PRD v2.1) remains the product source of truth.
 
-Built so far: pnpm monorepo scaffold, the full database schema (23 tables, migrated), and authentication (local account with argon2id, DB-backed cookie sessions, hashed scoped API tokens, route guards, audit logging). Next in Phase 1: session tracking and the Claude Code wrapper, then GitHub integration, then the dashboard.
+Built so far: the pnpm monorepo, the full database schema (23 tables, migrated), authentication (argon2id, DB-backed cookie sessions, hashed scoped API tokens, route guards, audit logging), session tracking with the F7 state machine and transactional outbox, the Claude Code wrapper (managed via the Agent SDK; observed via hook ingest and a version-tolerant transcript tailer), the WebSocket hub, projects/repositories including working-tree status, the health/spend/schedule/notifications read models, the settings backend with its key registry and test-connection executors, and the SPA — login, app shell, sessions list, live session view, Dashboard and Settings.
+
+**Next in Phase 1: GitHub integration** (repository sync, commit and PR tracking) — the last roadmap item before Phase 2.
 
 Remote: https://github.com/cento007/MCS. Development work happens on the `DEV` branch; `main` is the stable branch.
 

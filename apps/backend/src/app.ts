@@ -1,5 +1,6 @@
 import { type AppConfig, createNoopQueue, type Db, type LogLevel, type Queue } from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { createEventBus, type EventBus, Outbox } from './events/index.js';
 import {
@@ -22,6 +23,8 @@ import {
 } from './sessions/index.js';
 import { type ObservedIngestModule, registerObservedIngest } from './sessions/observed/index.js';
 import { DEFAULT_MAX_CONCURRENT_SESSIONS } from './settings/claude-code.js';
+import { registerSettings, type SettingsModule } from './settings/index.js';
+import type { ExecutorDeps } from './settings/test-connection/executors.js';
 import { registerSpend } from './spend/index.js';
 import {
   type EventBusPort,
@@ -88,6 +91,12 @@ export interface BuildAppOptions {
   readonly eventBus?: EventBusPort | undefined;
   /** Prompt submission (§6.4). Supplied by the wrapper workstream; until then frames are refused. */
   readonly prompts?: PromptPort | undefined;
+  /**
+   * The network / filesystem / child-process edges of Test Connection (§7.4). Supplying them
+   * is how a test exercises the executors without touching api.github.com; the default is the
+   * real, bounded ports.
+   */
+  readonly testConnectionDeps?: ExecutorDeps | undefined;
 }
 
 export interface BuiltApp {
@@ -103,6 +112,8 @@ export interface BuiltApp {
   readonly serviceHealth: ServiceHealthService;
   readonly schedule: ScheduleService;
   readonly notifications: NotificationService;
+  /** Settings read/write, secrets and Test Connection (TDS 04 §7.1–§7.4). */
+  readonly settings: SettingsModule;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -256,6 +267,19 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
 
   const notifications = registerNotifications(app, { db: options.db });
 
+  // Settings (§7.1–§7.4) and the audit-log read (§12). Registered after the read models
+  // because a settings write is what makes them change: `setting.updated` goes out through the
+  // same outbox every other domain uses, which is how the WS hub invalidates the origin
+  // allowlist and how the Phase 2 workers will refresh their config without a restart.
+  const settings = registerSettings(app, {
+    db: options.db,
+    outbox,
+    config: options.config,
+    testConnectionDeps: options.testConnectionDeps,
+  });
+
+  registerAuditLog(app, { db: options.db });
+
   return {
     app,
     auth,
@@ -267,6 +291,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     serviceHealth,
     schedule,
     notifications,
+    settings,
   };
 }
 

@@ -300,3 +300,34 @@ Also fixed en route: the shared fetch mock built `new Response('', {status: 204}
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.
 - Scaffolding: generate the pnpm monorepo, then replace the "no build/lint/test commands yet" line in `CLAUDE.md` with the real ones.
+
+## 2026-08-13 — Settings backend: the key registry, the routes, Test Connection, the audit log
+
+**1089 unit tests** (still DB-free) and **402 integration tests**, lint and typecheck clean. The Settings panels that rendered disabled behind "route not served yet" notes now have their routes.
+
+**The key registry landed first, and everything else derives from it.** `packages/shared/src/settings/registry.ts` (WS2 §7.6) declares every settable field once: its API path, its `(category, key)`, its `value_type`, its **default**, its JSON Schema, whether it is a secret, and a `normalize` that repairs an untrusted stored row. Storage coordinates are *derived from the path* by one function, so an entry whose DB key disagrees with its API path cannot be written. The five pre-existing typed readers (`general.ts`, `claude-code.ts`, `integrations.ts`, `notifications.ts`, `security.ts`) now source their defaults and keys from it rather than declaring their own — that was the actual drift risk, since `main.ts` reads `maxConcurrentSessions` before the HTTP server exists and the Settings page writes it.
+
+Defaults are **applied at read time, never seeded**: a fresh install has zero rows and still serves a complete, correct document, which is what lets the panels show the truth on first boot instead of a form full of blanks that look like configuration.
+
+**Two contract contradictions arbitrated** (`docs/tds/00-overview.md` §5):
+
+- **A14 — full-category replace wins** over TDS 05 §7.2's "send only dirty fields". A partial body against a full replace silently erases untouched fields. An omitted non-secret field resets to its default; an omitted *secret* is kept (a client forbidden to read a secret cannot resend one); `null` clears it. An unknown field is rejected **by name**, because Fastify's Ajv would otherwise strip it under `removeAdditional: true` — and a stripped field, under full-replace, is a silent reset of the field the caller meant to set. That is why the write schemas deliberately omit `additionalProperties: false`.
+- **A15 — `SecretFieldRead` gains `updatedAt`**. WS5 §4.4 is right that `(saved ‹timestamp›)` is the only honest confirmation a write-only value can give; `{ isSet }` alone cannot distinguish "saved" from "silently failed to save".
+
+**Secrets.** Sealed with AES-256-GCM into `secret_items`, AAD bound to `"{category}/{key}"`, `key_version` 1. The read path cannot decrypt — it reads presence and `updated_at` and nothing else. The only unseal in the Backend is Test Connection's. A row this process cannot decrypt is reported as a **failed check with a specific message** ("sealed with a different `MC_ENCRYPTION_KEY` … re-enter the value"), not a 500: the integration is configured, this process simply cannot read the credential, and a generic error sends the operator looking in the wrong place. Proved live by restarting the backend with a rotated key.
+
+**Test Connection is bounded everywhere.** Network 5 s, filesystem 2 s, CLI 10 s, each enforced *in this process* rather than trusting the transport — a stub that ignores an `AbortSignal` still cannot hang a request, which is what the unit tests assert. GitHub does an identity call and reports the token's scopes; Telegram does `getMe` and **says in words that it sent no message**; Obsidian stats the vault without writing to it; Claude Code runs `--version` through `execFile` with no shell, falling back to PATH when `cliPath` is unset (`''` is the documented "use the SDK's binary", so refusing to test would be refusing a question that has an answer). Qdrant and Ollama answer `INTEGRATION_NOT_CONFIGURED` naming Phase 3 — an honest "not yet" rather than a fabricated pass. Every failure is a `200` with `ok: false`.
+
+**Telegram's token travels in the URL**, so every message built from a transport error passes through a redactor before it can reach a result, a log line or an audit row — the test suite asserts the plaintext is absent from the serialized output rather than trusting the code path.
+
+**Audit and events.** Each write emits `setting.updated` (DB keys only, never values) and writes audit rows in the *same* transaction as the change — `setting.updated` for the values, one `secret_item.updated` per secret with `before`/`after` of `{ set: true|false }` per TDS 03 §3.13. A save that changes nothing writes nothing and emits nothing. `GET /api/v1/audit-log-entries` is the "View audit log →" target, cursor-paginated on `(createdAt, id)` — a shared millisecond is the *normal* case here, since one settings save writes several rows in one transaction.
+
+### Found and fixed en route
+
+- The integration harness dropped `testConnectionDeps`, so the first run of the settings integration suite quietly made real HTTPS requests to `api.github.com`. Forwarded — a suite that reaches the network is a suite that fails on a train.
+
+### Contract problems raised
+
+- **An unknown *query parameter* is silently dropped** on every list route (Fastify's `removeAdditional: true`), so `?actor=` reads as no filter and returns more rows than asked for. Known-filter *values* are validated strictly (`?from=lastTuesday` is a 400, never "everything"), and the fix for unknown keys belongs in one place for all routes rather than in the audit route.
+- **The Telegram card's note says Test Connection "sends a test message to the chat"; it does not.** Frontend copy change needed (`TelegramCard.tsx`), or a decision to send one.
+- `apps/frontend/src/features/settings/types.ts` was written as a provisional copy "deleted when the registry lands". It has landed and the shapes match; the panels can import from `@mc/shared/types` now.

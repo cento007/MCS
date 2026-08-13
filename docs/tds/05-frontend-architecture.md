@@ -349,6 +349,7 @@ Each category/integration panel is a **React Hook Form form driven by a Zod sche
 
 - Zod schemas live beside (or are derived from) the shared settings types in `packages/shared`, so frontend validation and Backend validation cannot drift.
 - Reads come from `['settings', category]`; saves are per-panel mutations sending **only dirty fields**. `setting.updated` events (F6) invalidate the category query — including changes made by another browser tab.
+  - **Corrected by arbitration A14 (2026-08-13):** "only dirty fields" describes the *editing* model, not the request body. `PUT /settings/{category}` is a **full-category replace** (WS2 §7.3), so the panel sends `{...persisted, ...dirty}` — a body carrying only the dirty fields would reset every field the operator did not touch to its default. Secrets are the exception and are present only when replaced (`string`) or cleared (`null`); an omitted secret keeps its stored value. The implemented panels already do this.
 - Every save is audit-logged server-side (PRD §4.4); the UI shows a "Saved" confirmation with timestamp, no optimistic write (§11.3).
 
 ### 7.3 Secret fields (write-only masking)

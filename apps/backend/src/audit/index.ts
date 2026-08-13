@@ -1,8 +1,11 @@
 import { type Db, type DbTransaction, newId, schema } from '@mc/shared';
+import type { FastifyInstance } from 'fastify';
+import { AuditLogService } from './query.js';
+import { registerAuditRoutes } from './routes.js';
 
 /**
- * `audit/` — the writer for `audit_log_entries` (TDS 03 §3.14, PRD §10), shaped by the
- * `AuditLogEntry` contract in TDS 04 §12.
+ * `audit/` — the writer for `audit_log_entries` (TDS 03 §3.14, PRD §10) and the read model
+ * behind `GET /api/v1/audit-log-entries`, shaped by the `AuditLogEntry` contract in TDS 04 §12.
  *
  * NOTE FOR THE CONTRACT OWNERS: TDS 02 §2's module list does not name an `audit/` module —
  * it mentions audit writes only inside `settings/`. Auth (this phase), settings and session
@@ -15,8 +18,20 @@ import { type Db, type DbTransaction, newId, schema } from '@mc/shared';
  *     acting, so it is recorded as `actorType: 'user'` with the acting token identified in
  *     the payload (`after.apiTokenId` / `after.apiTokenName`), never as a fourth actor type.
  *  2. **`before`/`after` never carry secret material** — no password, no cookie token, no
- *     API token value. Callers pass field subsets; this module does not introspect them.
+ *     API token value. Callers pass field subsets; this module does not introspect them. A
+ *     settings secret is recorded as `{ set: true | false }` by `settings/service.ts`, per
+ *     TDS 03 §3.13.
+ *
+ * Layout:
+ *   index.ts    the writer (`recordAuditEntry`) and the module registration
+ *   query.ts    the §12 read model and its filters
+ *   cursors.ts  the `(createdAt, id)` ordering key behind the opaque F5.3 cursor
+ *   routes.ts   `/api/v1/audit-log-entries`
  */
+
+export * from './cursors.js';
+export * from './query.js';
+export * from './routes.js';
 
 export type AuditActorType = 'user' | 'agent' | 'system';
 
@@ -81,4 +96,18 @@ export async function recordAuditEntry(
   });
 
   return id;
+}
+
+export interface RegisterAuditLogOptions {
+  readonly db: Db;
+}
+
+/** Registers the §12 read routes. The writer is a function, not a service — it has no state. */
+export function registerAuditLog(
+  app: FastifyInstance,
+  options: RegisterAuditLogOptions,
+): AuditLogService {
+  const audit = new AuditLogService({ db: options.db });
+  registerAuditRoutes(app, { audit });
+  return audit;
 }

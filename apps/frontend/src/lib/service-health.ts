@@ -62,11 +62,45 @@ const PRESENTATION: Readonly<Record<ServiceStatus, ServiceStatusPresentation>> =
   // §5.7.12 names no glyph for `unknown` — it predates the enum's fifth member. `?` is used
   // rather than borrowing `▲`, because "the probe could not answer" and "the service is
   // misbehaving" are different facts; the colour is `warning` because it still needs a look.
+  //
+  // **This line is the only definition of that glyph.** Both consumers reach it through
+  // `serviceStatusPresentation`, and their tests assert against this table rather than
+  // against a literal `?`, so a surface that starts hard-coding one fails immediately —
+  // which is the failure that produced two independent `?` choices in the first place.
   unknown: { label: 'unknown', glyph: '?', colorVar: '--color-warning', attention: true },
 });
 
 export function serviceStatusPresentation(status: ServiceStatus): ServiceStatusPresentation {
   return PRESENTATION[status];
+}
+
+/**
+ * The clause every `unknown` row carries, because `unknown` names a failed *check*, not a
+ * failed service.
+ *
+ * The worker rows are the case that makes this load-bearing. WS1's probe returns `unknown`
+ * when the heartbeat **read** threw — i.e. PostgreSQL is the broken dependency — and the row
+ * it lands on is labelled "Telegram Worker". Rendering `Heartbeat unreadable: …` under that
+ * label, with a warning glyph beside it, reads as an accusation against a worker that may be
+ * running perfectly. The row cannot be moved (the operator did ask about that service) so the
+ * detail line has to carry the attribution.
+ */
+export const UNKNOWN_STATUS_NOTE = 'the check failed, not necessarily the service';
+
+/**
+ * The detail text a surface should render for a row — the server's `detail`, except for
+ * `unknown`, where it is qualified.
+ *
+ * Shared for the same reason `serviceStatusPresentation` is: the Dashboard strip (tooltip),
+ * the Settings table (Detail column) and the Needs Attention row all state this, and three
+ * copies of the qualification is three chances for one of them to keep blaming the worker.
+ */
+export function serviceDetailText(row: ServiceHealthRow): string | null {
+  if (row.status !== 'unknown') return row.detail;
+  const detail = row.detail?.trim() ?? '';
+  return detail.length === 0
+    ? `Status could not be determined — ${UNKNOWN_STATUS_NOTE}.`
+    : `${detail} — ${UNKNOWN_STATUS_NOTE}.`;
 }
 
 /**

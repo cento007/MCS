@@ -1,6 +1,6 @@
 import type { Notification, ServiceHealthRow, Session, Spend } from '../../lib/api/index.js';
 import { formatMoneyUsd, sessionLabel } from '../../lib/format/index.js';
-import { attentionServices } from '../../lib/service-health.js';
+import { attentionServices, serviceDetailText } from '../../lib/service-health.js';
 
 /**
  * Needs Attention — the aggregation, pure (TDS 06 §5.2).
@@ -101,7 +101,7 @@ function sessionItems(sources: AttentionSources): readonly AttentionItem[] {
       // §9.3: title first, never a UUIDv7 prefix — those leading hex characters are the
       // millisecond the Session started and are identical across a busy hour.
       title: `Session failed — ${sessionLabel({ id: session.id, title: session.title })}`,
-      detail: secondaryLine(session, sources.projectNames),
+      detail: failedSecondaryLine(session, sources.projectNames),
       occurredAt: failedAt(session),
       to: `/sessions/${session.id}`,
     }));
@@ -124,9 +124,14 @@ function serviceItems(services: readonly ServiceHealthRow[]): readonly Attention
     id: `service:${service.name}`,
     source: 'service' as const,
     severity: service.status === 'down' ? ('danger' as const) : ('warning' as const),
+    // The `✕`/`▲` pair here is §5.2's *row severity* vocabulary, not §5.7.12's status glyphs —
+    // two different alphabets for two different questions, so this is not a second definition
+    // of the status glyph. `unknown` maps to `▲`; its `?` belongs to the Services surfaces.
     glyph: service.status === 'down' ? '✕' : '▲',
     title: `${service.label} ${service.status}`,
-    detail: service.detail,
+    // Via the shared helper: an `unknown` worker row means the heartbeat read failed, and the
+    // row is titled with the worker's name, so the detail has to say where the fault is.
+    detail: serviceDetailText(service),
     occurredAt: service.checkedAt,
     to: '/settings/services',
   }));
@@ -223,6 +228,31 @@ function withinWindow(timestamp: string, now: number): boolean {
 export function secondaryLine(session: Session, names: ReadonlyMap<string, string>): string | null {
   const parts = [names.get(session.projectId), session.branch].filter(
     (part): part is string => typeof part === 'string' && part.length > 0,
+  );
+  return parts.length === 0 ? null : parts.join(' · ');
+}
+
+/**
+ * The failed row's second line: `project · branch · code` (§5.2).
+ *
+ * §5.2 specifies the failed-session row as "`✕ Session failed` · title · project · time ·
+ * `code` + `requestId`", and the code is the only part of that which answers *why*. It comes
+ * from `Session.failureReason`, verbatim — `spawn_error`, `process_crash`, `backend_restart`
+ * are the Backend's own vocabulary (TDS 03 §3.9) and prettifying them would break the
+ * operator's grep against the Backend log, which is the entire point of showing a code.
+ *
+ * **Degrades to exactly the old line when it is `null`.** A `failed` Session whose transition
+ * carried no reason is a real case, and inventing `unknown` for it would be indistinguishable
+ * from a Session that genuinely failed with an `unknown` code. `requestId` is deliberately
+ * absent: nothing persists one against a Session today, so there is no honest value to show.
+ */
+export function failedSecondaryLine(
+  session: Session,
+  names: ReadonlyMap<string, string>,
+): string | null {
+  const reason = session.failureReason?.trim() ?? '';
+  const parts = [secondaryLine(session, names), reason.length === 0 ? null : reason].filter(
+    (part): part is string => part !== null,
   );
   return parts.length === 0 ? null : parts.join(' · ');
 }

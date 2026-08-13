@@ -64,7 +64,11 @@ export function TelegramCard() {
         <TestConnection
           form={form}
           integration="telegram"
-          note="→ sends a test message to the chat"
+          // The executor calls `getMe` and sends nothing (WS2 §7.4 declined the test message
+          // for V1: an unannounced external side effect, for a worker that ships in Phase 2).
+          // The old copy promised a message that never arrives — an operator would have read
+          // a silent chat as a broken integration when the token was in fact fine.
+          note="→ checks the bot token (no message sent)"
           describeSuccess={(result) => result.message}
         />
       }

@@ -1,12 +1,5 @@
-import type { Db } from '@mc/shared';
-import {
-  booleanValue,
-  enumValue,
-  integerValue,
-  readCategoryValues,
-  readSecretKeys,
-  stringValue,
-} from './values.js';
+import { type Db, normalizeSetting, type ObsidianSyncMode, settingKey } from '@mc/shared';
+import { readCategoryValues, readSecretKeys } from './values.js';
 
 /**
  * The `integrations.obsidian` / `.github` / `.telegram` fields the schedule read model needs
@@ -14,8 +7,8 @@ import {
  * contributes two or three fields; `claude-code.ts` stays separate because the Session domain
  * consumes it on a different path.
  *
- * Storage coordinates per the §7.6 derivation rule (`integrations` is one DB category holding
- * every integration, key prefixed with the integration name):
+ * Storage coordinates and defaults come from the key registry (§7.6) — `integrations` is one
+ * DB category holding every integration, key prefixed with the integration name:
  *
  *   `integrations.obsidian.vaultPath`          -> `('integrations', 'obsidian_vault_path')`
  *   `integrations.obsidian.syncMode`           -> `('integrations', 'obsidian_sync_mode')`
@@ -31,21 +24,17 @@ import {
  * sync that no worker has been told to run.
  */
 
+export type { ObsidianSyncMode };
+
 export const INTEGRATION_SETTING_KEYS = Object.freeze({
-  obsidianVaultPath: 'obsidian_vault_path',
-  obsidianSyncMode: 'obsidian_sync_mode',
-  obsidianSyncIntervalMinutes: 'obsidian_sync_interval_minutes',
-  githubSyncIntervalMinutes: 'github_sync_interval_minutes',
-  githubToken: 'github_token',
-  telegramEnabled: 'telegram_enabled',
-  telegramBotToken: 'telegram_bot_token',
+  obsidianVaultPath: settingKey('integrations.obsidian.vaultPath'),
+  obsidianSyncMode: settingKey('integrations.obsidian.syncMode'),
+  obsidianSyncIntervalMinutes: settingKey('integrations.obsidian.syncIntervalMinutes'),
+  githubSyncIntervalMinutes: settingKey('integrations.github.syncIntervalMinutes'),
+  githubToken: settingKey('integrations.github.token'),
+  telegramEnabled: settingKey('integrations.telegram.enabled'),
+  telegramBotToken: settingKey('integrations.telegram.botToken'),
 } as const);
-
-/** A schedule interval nobody sane configures beyond this; a larger row is corrupt. */
-const MAX_INTERVAL_MINUTES = 60 * 24 * 365;
-
-const OBSIDIAN_SYNC_MODES = ['two_way', 'one_way', 'paused'] as const;
-export type ObsidianSyncMode = (typeof OBSIDIAN_SYNC_MODES)[number];
 
 export interface ObsidianScheduleSettings {
   /** Absolute native path (F8.1), or `null` when no vault is configured. */
@@ -77,28 +66,31 @@ export function parseScheduleIntegrationSettings(
 ): ScheduleIntegrationSettings {
   return {
     obsidian: {
-      vaultPath: stringValue(values.get(INTEGRATION_SETTING_KEYS.obsidianVaultPath)),
-      syncMode: enumValue(
-        values.get(INTEGRATION_SETTING_KEYS.obsidianSyncMode),
-        OBSIDIAN_SYNC_MODES,
-        'two_way',
+      vaultPath: normalizeSetting<string | null>(
+        'integrations.obsidian.vaultPath',
+        values.get(INTEGRATION_SETTING_KEYS.obsidianVaultPath),
       ),
-      syncIntervalMinutes: integerValue(
+      syncMode: normalizeSetting<ObsidianSyncMode>(
+        'integrations.obsidian.syncMode',
+        values.get(INTEGRATION_SETTING_KEYS.obsidianSyncMode),
+      ),
+      syncIntervalMinutes: normalizeSetting<number>(
+        'integrations.obsidian.syncIntervalMinutes',
         values.get(INTEGRATION_SETTING_KEYS.obsidianSyncIntervalMinutes),
-        0,
-        { min: 0, max: MAX_INTERVAL_MINUTES },
       ),
     },
     github: {
       tokenIsSet: secretKeys.has(INTEGRATION_SETTING_KEYS.githubToken),
-      syncIntervalMinutes: integerValue(
+      syncIntervalMinutes: normalizeSetting<number>(
+        'integrations.github.syncIntervalMinutes',
         values.get(INTEGRATION_SETTING_KEYS.githubSyncIntervalMinutes),
-        0,
-        { min: 0, max: MAX_INTERVAL_MINUTES },
       ),
     },
     telegram: {
-      enabled: booleanValue(values.get(INTEGRATION_SETTING_KEYS.telegramEnabled), false),
+      enabled: normalizeSetting<boolean>(
+        'integrations.telegram.enabled',
+        values.get(INTEGRATION_SETTING_KEYS.telegramEnabled),
+      ),
       botTokenIsSet: secretKeys.has(INTEGRATION_SETTING_KEYS.telegramBotToken),
     },
   };

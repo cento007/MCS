@@ -1,0 +1,261 @@
+import type { Db, IntegrationSlug, IntegrationsSettings, SettingsDocument } from '@mc/shared';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Principal } from '../auth/principal.js';
+import { registerHttpConventions } from '../http/index.js';
+import { registerSettingsRoutes, type SettingsPort } from './routes.js';
+import { SecretVault } from './secrets.js';
+import { TestConnectionService } from './test-connection/index.js';
+
+/**
+ * The `/api/v1/settings/*` routing surface — **no database, no auth guard** (TDS 07 §1; the
+ * guard is covered by the integration tier).
+ *
+ * What is worth testing at this layer is exactly what the layer decides: which path reaches
+ * which handler, what an unknown category answers, and what the router does — and does not do
+ * — to a body on its way through.
+ */
+
+const NO_DATABASE = new Proxy(
+  {},
+  {
+    get() {
+      throw new Error('unit tests must not touch the database');
+    },
+  },
+) as Db;
+
+const PRINCIPAL: Principal = {
+  userId: '018f6b2e-1111-7abc-8def-0123456789ab',
+  username: 'operator',
+  authMethod: 'cookie',
+  scopes: ['full'],
+  authSession: null,
+  apiToken: null,
+};
+
+function fakeSettings(overrides: Partial<SettingsPort> = {}): SettingsPort {
+  return {
+    readAll: overrides.readAll ?? (async () => ({ general: {} }) as unknown as SettingsDocument),
+    readCategory: overrides.readCategory ?? (async (category) => ({ category })),
+    readIntegrations:
+      overrides.readIntegrations ?? (async () => ({}) as unknown as IntegrationsSettings),
+    replaceCategory: overrides.replaceCategory ?? (async (_p, category) => ({ category })),
+    replaceIntegration: overrides.replaceIntegration ?? (async (_p, slug) => ({ slug })),
+  };
+}
+
+let app: FastifyInstance | null = null;
+
+afterEach(async () => {
+  await app?.close();
+  app = null;
+});
+
+function build(settings: SettingsPort = fakeSettings()): FastifyInstance {
+  const instance = Fastify({ logger: false });
+  registerHttpConventions(instance);
+  // The guard is not registered here; a principal is supplied so `requirePrincipal` behaves as
+  // it does in production without pulling the whole auth stack into a routing test.
+  instance.decorateRequest('principal', null);
+  instance.addHook('onRequest', async (request) => {
+    request.principal = PRINCIPAL;
+  });
+
+  registerSettingsRoutes(instance, {
+    settings,
+    // The real service: `qdrant`/`ollama` refuse before touching anything, which is precisely
+    // the behaviour under test, and the proxy above proves they touch no database doing it.
+    testConnection: new TestConnectionService({
+      db: NO_DATABASE,
+      vault: new SecretVault({ encryptionKey: null }),
+    }),
+  });
+
+  app = instance;
+  return instance;
+}
+
+describe('reads (§7.3)', () => {
+  it('serves one category', async () => {
+    const response = await build().inject({ method: 'GET', url: '/api/v1/settings/general' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ data: { category: 'general' } });
+  });
+
+  it('serves the whole document', async () => {
+    const response = await build().inject({ method: 'GET', url: '/api/v1/settings' });
+
+    expect(response.statusCode).toBe(200);
+    expect(Object.keys(response.json<{ data: unknown }>())).toEqual(['data']);
+  });
+
+  it('routes `integrations` to the static route, not to the category handler', async () => {
+    const readCategory = vi.fn<SettingsPort['readCategory']>(async () => ({}));
+    const response = await build(fakeSettings({ readCategory })).inject({
+      method: 'GET',
+      url: '/api/v1/settings/integrations',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(readCategory).not.toHaveBeenCalled();
+  });
+
+  it('answers NOT_FOUND for a category that does not exist (§7.3)', async () => {
+    const response = await build().inject({ method: 'GET', url: '/api/v1/settings/favourites' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json<{ error: { code: string } }>().error.code).toBe('NOT_FOUND');
+  });
+
+  it('serves the Phase 3/4 placeholder categories rather than 404ing them', async () => {
+    // They exist in the storage CHECK and in the Settings rail; a 404 would tell the UI the
+    // category is unknown, which is a different statement from "it has no fields yet".
+    for (const category of ['memory', 'agents']) {
+      const response = await build().inject({
+        method: 'GET',
+        url: `/api/v1/settings/${category}`,
+      });
+      expect(response.statusCode).toBe(200);
+    }
+  });
+});
+
+describe('writes (§7.3)', () => {
+  it('replaces a category and answers with the masked document', async () => {
+    const replaceCategory = vi.fn<SettingsPort['replaceCategory']>(async () => ({
+      theme: 'light',
+    }));
+    const response = await build(fakeSettings({ replaceCategory })).inject({
+      method: 'PUT',
+      url: '/api/v1/settings/general',
+      payload: { theme: 'light' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ data: { theme: 'light' } });
+    expect(replaceCategory.mock.calls[0]?.[0]).toBe(PRINCIPAL);
+  });
+
+  it('rejects a value outside the registry schema before the domain sees it', async () => {
+    const replaceCategory = vi.fn<SettingsPort['replaceCategory']>(async () => ({}));
+    const response = await build(fakeSettings({ replaceCategory })).inject({
+      method: 'PUT',
+      url: '/api/v1/settings/general',
+      payload: { theme: 'chartreuse' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: { code: string } }>().error.code).toBe('VALIDATION_FAILED');
+    expect(replaceCategory).not.toHaveBeenCalled();
+  });
+
+  it('does NOT strip an unknown field on the way through', async () => {
+    // Ajv would delete it under `removeAdditional: true`, and a deleted field is a *reset*
+    // under full-replace semantics. The schema therefore omits `additionalProperties: false`
+    // and the domain rejects the field by name — which only works if it arrives.
+    const replaceCategory = vi.fn<SettingsPort['replaceCategory']>(async () => ({}));
+    await build(fakeSettings({ replaceCategory })).inject({
+      method: 'PUT',
+      url: '/api/v1/settings/general',
+      payload: { theme: 'dark', instanceNam: 'typo' },
+    });
+
+    expect(replaceCategory.mock.calls[0]?.[2]).toEqual({ theme: 'dark', instanceNam: 'typo' });
+  });
+
+  it('accepts a secret as a string or as `null`, and refuses `""`', async () => {
+    const instance = build();
+
+    const set = await instance.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/github',
+      payload: { token: 'ghp_example' },
+    });
+    const cleared = await instance.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/github',
+      payload: { token: null },
+    });
+    const empty = await instance.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/github',
+      payload: { token: '' },
+    });
+
+    expect(set.statusCode).toBe(200);
+    expect(cleared.statusCode).toBe(200);
+    expect(empty.statusCode).toBe(400);
+  });
+
+  it('points a `PUT /settings/integrations` at the per-integration route', async () => {
+    const response = await build().inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations',
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+    const error = response.json<{ error: { code: string; message: string } }>().error;
+    expect(error.code).toBe('VALIDATION_FAILED');
+    expect(error.message).toContain('/settings/integrations/{integration}');
+  });
+
+  it('answers NOT_FOUND for a PUT to an unknown category or integration', async () => {
+    const instance = build();
+
+    const category = await instance.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/favourites',
+      payload: {},
+    });
+    const integration = await instance.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/pinecone',
+      payload: {},
+    });
+
+    expect(category.statusCode).toBe(404);
+    expect(integration.statusCode).toBe(404);
+  });
+});
+
+describe('test connection (§7.4)', () => {
+  it('refuses the Phase 3 integrations with INTEGRATION_NOT_CONFIGURED, touching nothing', async () => {
+    const instance = build();
+
+    for (const slug of ['qdrant', 'ollama'] satisfies IntegrationSlug[]) {
+      const response = await instance.inject({
+        method: 'POST',
+        url: `/api/v1/settings/integrations/${slug}/test-connection`,
+      });
+
+      expect(response.statusCode).toBe(409);
+      const error = response.json<{ error: { code: string; message: string } }>().error;
+      expect(error.code).toBe('INTEGRATION_NOT_CONFIGURED');
+      // Not a fake success and not a blamed configuration: the client does not exist yet.
+      expect(error.message).toContain('Phase 3');
+    }
+  });
+
+  it('has no test-connection route for an integration nobody defined', async () => {
+    const response = await build().inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/pinecone/test-connection',
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('takes no request body — a test can only ever cover persisted state (WS5 §5.7.2)', async () => {
+    const response = await build().inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/qdrant/test-connection',
+      payload: { host: 'unsaved-value' },
+    });
+
+    // The body is ignored entirely; the answer is the same 409 as without it.
+    expect(response.statusCode).toBe(409);
+  });
+});

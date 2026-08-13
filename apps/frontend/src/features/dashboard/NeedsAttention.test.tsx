@@ -26,6 +26,7 @@ const FAILED = makeSession({
   title: 'Fix nginx TLS renewal',
   state: 'failed',
   branch: 'main',
+  failureReason: 'spawn_error',
   completedAt: new Date(Date.now() - 120_000).toISOString(),
 });
 
@@ -71,6 +72,32 @@ describe('aggregation across all four sources', () => {
     expect(budget).toHaveAttribute('href', '/settings/integrations');
 
     expect(screen.getByRole('heading', { name: /Needs attention/i })).toHaveTextContent('(4)');
+  });
+});
+
+describe('the failed row says why (§5.2)', () => {
+  it('renders the failure code on the row, beneath the title', async () => {
+    stubDashboard(api, { sessions: [FAILED], spend: makeSpend({ dayStatus: 'ok' }) });
+
+    renderWithProviders(<NeedsAttention />);
+
+    const row = await screen.findByTestId('attention-session');
+    // "Session failed" without a code is a notification, not a triage signal.
+    expect(row).toHaveTextContent('mission-control · main · spawn_error');
+  });
+
+  it('renders the row without a code rather than an invented one', async () => {
+    stubDashboard(api, {
+      sessions: [makeSession({ ...FAILED, failureReason: null })],
+      spend: makeSpend({ dayStatus: 'ok' }),
+    });
+
+    renderWithProviders(<NeedsAttention />);
+
+    const row = await screen.findByTestId('attention-session');
+    expect(row).toHaveTextContent('Session failed — Fix nginx TLS renewal');
+    expect(row).toHaveTextContent('mission-control · main');
+    expect(row).not.toHaveTextContent(/unknown|null|undefined/);
   });
 });
 

@@ -1,5 +1,6 @@
 import { act, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { serviceStatusPresentation, UNKNOWN_STATUS_NOTE } from '../../lib/service-health.js';
 import { DashboardPage } from './DashboardPage.js';
 import {
   type ApiMock,
@@ -147,6 +148,35 @@ describe('Services strip', () => {
     // …and it is not promoted into Needs Attention.
     const attention = await screen.findByTestId('needs-attention-all-clear');
     expect(attention).toHaveTextContent('All clear');
+  });
+
+  it('takes the `unknown` glyph from the one module that defines it', async () => {
+    stubDashboard(api, {
+      services: [
+        makeServiceRow({
+          name: 'telegram-worker',
+          label: 'Telegram Worker',
+          status: 'unknown',
+          detail: 'Heartbeat unreadable: connection terminated',
+        }),
+      ],
+      spend: makeSpend({ dayStatus: 'ok' }),
+    });
+
+    renderWithProviders(<DashboardPage />);
+
+    const widget = await screen.findByRole('region', { name: /^Services/i });
+    const glyph = await within(widget).findByLabelText('Telegram Worker: unknown');
+    // The compact strip and the Settings table are the same component reading the same
+    // table — asserted through the module so a divergence cannot pass.
+    expect(glyph).toHaveTextContent(serviceStatusPresentation('unknown').glyph);
+
+    // The strip's only detail affordance is the tooltip, and it must not read as an
+    // accusation against a worker whose heartbeat merely could not be read.
+    expect(within(widget).getByRole('link', { name: /Telegram Worker/ })).toHaveAttribute(
+      'title',
+      expect.stringContaining(UNKNOWN_STATUS_NOTE),
+    );
   });
 });
 

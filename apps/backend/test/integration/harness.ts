@@ -147,6 +147,12 @@ export function createTestApp(
       : { loginRateLimiter: options.loginRateLimiter }),
     ...(options.prompts === undefined ? {} : { prompts: options.prompts }),
     ...(options.eventBus === undefined ? {} : { eventBus: options.eventBus }),
+    // Test Connection's network / filesystem / child-process edges (§7.4). Forwarded so an
+    // integration test can exercise the settings routes end to end **without** an outbound
+    // request: a suite that quietly reaches api.github.com is a suite that fails on a train.
+    ...(options.testConnectionDeps === undefined
+      ? {}
+      : { testConnectionDeps: options.testConnectionDeps }),
   });
 
   openApps.push(built.app);

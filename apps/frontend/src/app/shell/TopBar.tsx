@@ -1,15 +1,19 @@
 import { useNavigate } from 'react-router';
 import { useCurrentUser, useLogout } from '../../features/auth/queries.js';
 import { ConnectionChip } from './ConnectionChip.js';
+import { SpendChip } from './SpendChip.js';
 
 /**
  * The slim top bar (TDS 06 §3.1).
  *
- * Left→right: wordmark, global search entry, the **ConnectionChip** (§3.3), and the account
- * menu. The spend chip and the notification bell are deliberately absent in this
- * foundation: `GET /spend` and the Notification entity are WS2 surfaces the Backend does
- * not serve yet, and TDS 06 §4.5 is explicit that the bell "lights up in Phase 2". A chip
- * that renders `$0.00/$0.00` because the endpoint 404s would be worse than no chip.
+ * Left→right: wordmark, global search entry, the **SpendChip** (§3.1 / WC1), the
+ * **ConnectionChip** (§3.3), and the account menu.
+ *
+ * The notification bell is still deliberately absent: the Notification entity has no producer
+ * for most types in Phase 1 and §4.5 is explicit that the bell "lights up in Phase 2", so an
+ * always-zero unread count would be furniture. The spend chip's own absence — "`GET /spend`
+ * is a WS2 surface the Backend does not serve yet" — no longer holds: the endpoint exists,
+ * and the chip renders only once it has answered (see `SpendChip`).
  */
 export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
   const navigate = useNavigate();
@@ -37,6 +41,7 @@ export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
       </button>
 
       <div className="ml-auto flex items-center gap-3">
+        <SpendChip />
         <ConnectionChip />
 
         <span className="hidden text-text-secondary text-xs sm:inline">

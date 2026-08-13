@@ -4,6 +4,7 @@ import {
   HEARTBEAT_STALE_MS,
   heartbeatStatus,
   type QueueDepth,
+  type ServiceStatus,
   schema,
 } from '@mc/shared';
 import { sql } from 'drizzle-orm';
@@ -55,7 +56,8 @@ export const SERVICE_NAMES = [
 export type ServiceName = (typeof SERVICE_NAMES)[number];
 
 /** TDS 04 §7.5. `disabled` is WS5's `◌ not configured / disabled`. */
-export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'disabled' | 'unknown';
+/** Re-exported for local consumers; the single declaration lives in `@mc/shared` (F4.1). */
+export type { ServiceStatus };
 
 export interface ServiceHealthRow {
   readonly name: ServiceName;

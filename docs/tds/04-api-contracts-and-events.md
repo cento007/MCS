@@ -1,8 +1,8 @@
 # TDS 04 — API Contracts & Event Models (WS2)
 
-- **Status:** Revised — WS7 §7.2 leaf items closed (2026-08-12): item 1 spend aggregate (§7.8), item 2 Session-scoped Commits/Files (§6.10), the A13 session-title derivation contract (§6.11, with pointers from §6.1/§6.2/§6.4/§6.8), non-blocking N16 (§6.2) and N17 (§11). Earlier: WS7 integration-review package 2 applied (2026-08-11) — blocking findings B3, B5, B6, B9, B11b, B12, B13 and non-blocking N1, N4, N5, N10, per arbitrations A1–A11 in `docs/tds/00-overview.md` §5.
+- **Status:** Revised — Settings implemented (2026-08-13): arbitration **A14** (full-category replace, §7.3) and **A15** (`SecretFieldRead.updatedAt`, §7.1) recorded, §7.4 test-connection behaviour pinned, §7.6 registry marked shipped. Earlier: WS7 §7.2 leaf items closed (2026-08-12) — item 1 spend aggregate (§7.8), item 2 Session-scoped Commits/Files (§6.10), the A13 session-title derivation contract (§6.11, with pointers from §6.1/§6.2/§6.4/§6.8), non-blocking N16 (§6.2) and N17 (§11). Earlier: WS7 integration-review package 2 applied (2026-08-11) — blocking findings B3, B5, B6, B9, B11b, B12, B13 and non-blocking N1, N4, N5, N10, per arbitrations A1–A11 in `docs/tds/00-overview.md` §5.
 - **Owner:** WS2 / backend-architect (instance B)
-- **Date:** 2026-08-12
+- **Date:** 2026-08-13
 - **Inputs:** `docs/tds/01-foundation-decisions.md` (Foundation Contract — consumed verbatim), `docs/tds/00-overview.md` (WS7 arbitrated decisions §5, blocking findings §7 — authoritative), `docs/tds/03-database-schema.md` (WS3 storage shapes this contract matches), `Requirements.md` (PRD v2.1, esp. §4, §5, §8, §12), `docs/project-plan.md` (WS2 row), `docs/research/claude-code-control-spike.md`
 - **Foundation decisions consumed:** F1.5 (wrapper/session facts), F4 (entities, ID/naming/timestamp conventions), F5 (API conventions), F6 (event grammar/envelope/delivery), F7 (session state machine), F9 (doc conventions)
 - **Non-goals:** process/deployment layout (WS1), table DDL (WS3), frontend consumption (WS4), UI layouts (WS5)
@@ -722,13 +722,15 @@ Typed per-category documents, stored in the DB (`settings` / `secret_items`, F4.
 
 ```ts
 // READ shape (always masked):
-type SecretFieldRead = { isSet: boolean };
+type SecretFieldRead = { isSet: boolean; updatedAt: string | null };   // ISO 8601 UTC; null when unset
 // WRITE shape within a PUT body:
 //   string        → set/replace the secret
 //   null          → clear the secret
 //   field omitted → keep current value unchanged
 type SecretFieldWrite = string | null | undefined;
 ```
+
+**`updatedAt` added 2026-08-13 (arbitration A15).** This section originally read `{ isSet: boolean }`. WS5 §4.4/§5.7.3 render the masked row as `•••••••••••• (saved 2026-08-10 09:14)` and call the changed timestamp "the only honest confirmation possible for a write-only value" — and they are right: a value the client is forbidden to read back cannot be confirmed any other way, so with `isSet` alone an operator who pastes a credential has no evidence it landed. The field is `secret_items.updated_at`, and it is `null` exactly when `isSet` is `false`. It carries no part of the value — not a prefix, not a length (TDS 03 §3.13 forbids storing either).
 
 ### 7.2 Category schemas
 
@@ -810,6 +812,17 @@ interface SecuritySettings {                            // PUT /api/v1/settings/
 | `GET /api/v1/settings/integrations` | All integrations, masked | |
 | `PUT /api/v1/settings/integrations/{integration}` | `github`, `claude-code`, `telegram`, `obsidian`, `qdrant`, `ollama` → `200`, masked | `VALIDATION_FAILED`, `NOT_FOUND` |
 
+**Full replace, and what "full" means (arbitration A14, recorded 2026-08-13).** TDS 05 §7.2 describes the client "sending only dirty fields", which is mutually exclusive with the full-category replace above; **the API's semantics win**, because a partial body interpreted as a full replace silently erases every field the operator did not touch. Precisely:
+
+- an **omitted non-secret field resets to its registry default** (§7.6) — the body is the new state of the category, in full;
+- an **omitted secret keeps its stored value**, `null` clears it, a string sets it (§7.1). This exception is not optional: the client is forbidden to read a secret, so it cannot resend one, and "omitted = reset" would make every save of an integration destroy its credential;
+- an **unknown field is rejected** with `VALIDATION_FAILED` naming it, rather than ignored — under full-replace semantics an ignored `instanceNam` means `instanceName` was omitted, which means it is reset;
+- a body that changes nothing writes nothing: no rows, no audit entry, no `setting.updated`.
+
+`PUT /api/v1/settings/integrations` does not exist and will not: the category is read whole and written one integration at a time, and a full replace of all six would include three secrets no client can resend. The route answers `VALIDATION_FAILED` naming the per-integration path.
+
+A `null` value for a nullable field (`github.account`, `telegram.chatId`, `obsidian.vaultPath`) is stored as **row absence** — `settings.value_type` has no `null` member (TDS 03 §3.12), so deletion is the only representation PostgreSQL admits, and reads map absence back to the registry default.
+
 ### 7.4 Test connection (PRD §4.4 + F8.1)
 
 **`POST /api/v1/settings/integrations/{integration}/test-connection`** for `github`, `claude-code`, `telegram`, `obsidian` (Phase 1–2) and `qdrant`, `ollama` (Phase 3+ stubs — routes reserved, return `INTEGRATION_NOT_CONFIGURED` until their phases land).
@@ -829,6 +842,22 @@ A completed check is a **200 regardless of outcome** — failure of the *integra
 ```
 
 Checks per integration: `github` → authenticated API call with the stored PAT; `claude-code` → `execFile(cliPath, ['--version'])` (F8.1 validation); `telegram` → `getMe` + optional test message; `obsidian` → vault path exists/readable/writable.
+
+**As implemented (2026-08-13), with three clarifications the contract left open:**
+
+| Integration | Check | Not-configured (409) when |
+|---|---|---|
+| `github` | `GET https://api.github.com/user` with the stored PAT; `detail: { account, scopes }` from `x-oauth-scopes` | no `github_token` row |
+| `telegram` | `getMe`; **no test message is sent** — `detail: { botUsername, chatIdConfigured, testMessageSent: false }` | no `telegram_bot_token` row |
+| `obsidian` | `stat` + `access(R_OK\|W_OK)` on `vaultPath`; nothing is written to the vault | `vaultPath` unset |
+| `claude-code` | `execFile(cliPath \|\| 'claude', ['--version'])`, no shell; `detail.source` is `setting` or `path_lookup` | never — see below |
+| `qdrant`, `ollama` | none | always, with a message naming Phase 3 |
+
+1. **Telegram sends no message.** §7.4's "optional test message" is declined for V1: an externally visible side effect the operator cannot take back needs a stronger justification than confirming a chat id, and the Telegram Worker that would use the confirmation is Phase 2. The result says so in words, so a green tick is not read as "delivery works".
+2. **`claude-code` with an unset `cliPath` is not `INTEGRATION_NOT_CONFIGURED`.** `''` is §7.2's documented "use the binary the SDK ships with", so the honest check is the one the runtime would perform — resolve `claude` on PATH — and `detail.source` reports which was tested.
+3. **A stored secret that cannot be decrypted is a *result*, not a 500** — `ok: false` with `detail.reason = 'secret_unreadable'` and the `key_version`. The integration is configured; this process cannot read the credential (the realistic cause is a database restored beside a different `MC_ENCRYPTION_KEY`), and a generic error would send the operator looking in the wrong place.
+
+Every outbound call is bounded in-process (network 5 s, filesystem 2 s, CLI 10 s) and every failure — refused connection, stalled network share, missing binary — is a `200` with `ok: false`, never a hung request and never a 500.
 
 ### 7.5 Service health (PRD §4.4.7)
 
@@ -886,6 +915,15 @@ interface SettingKeyEntry {
 | `security.allowedOrigins` | `('security', 'allowed_origins')` | `array` | no |
 
 `setting.updated`'s `changedKeys` (§15.2, event 21) carries **DB keys** from this registry — names only, never values. Bootstrap variables (F8.2) have no registry entries by construction.
+
+**Shipped 2026-08-13** as `packages/shared/src/settings/registry.ts`, with four notes on the entry shape above:
+
+- `category`, `integration`, `field` and `key` are **derived from `path`** by one function rather than declared, so an entry whose key disagrees with its API path is unrepresentable rather than merely discouraged.
+- A secret entry carries `valueType: null` (the `—` of the table above) and `default: null`: it has no `settings` row and "absent" is the only default a write-only credential can have.
+- Each value entry adds `normalize(raw)` — the repair function that turns an untrusted stored row into a valid value of that field, falling back to `default`. It runs on **read** (a corrupt row must not break the Settings page or a read model) and on **write** (canonicalisation, so a value reads back as it was written). `nullable` marks the fields whose `null` is stored as row-absence (§7.3).
+- `default` is *not* "seeded on first boot" — nothing is written until an operator saves. Defaults are applied at read time, so a fresh install serves a complete, correct document from zero rows, and a value equal to its default is stored as row-absence.
+
+The registry is also the single source the pre-existing typed readers now consume (`apps/backend/src/settings/{general,claude-code,integrations,notifications,security}.ts`), which is what closes the drift this section exists to prevent: `main.ts` reads `maxConcurrentSessions` before the HTTP server exists and the Settings page writes it, and the two can no longer disagree about what an unwritten row means. `packages/shared/src/settings/registry.test.ts` asserts the derivation table above verbatim, the absence of any F8.2 variable, and — through a per-document field manifest — that the registry and the §7.2 interfaces describe the same fields.
 
 ### 7.7 Schedule — computed read model (B13 / arbitration A1)
 

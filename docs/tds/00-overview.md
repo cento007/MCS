@@ -119,6 +119,8 @@ Deliberate, reasoned departures from the PRD or from the literal Foundation enti
 
 Decisions taken by WS7 to resolve cross-document conflicts. These are binding on the owning workstreams; where a decision requires a document change, the change is tracked as a finding in §7.
 
+A1–A13 were taken at the review gate (2026-08-11). **A14 onwards are recorded during implementation**, when a contradiction that survived the gate is found by the code that has to satisfy both sides of it; each carries the date it was settled and names the document it amended.
+
 ### A1 — "Upcoming Tasks" dashboard widget (PRD §8.1) → **schedule read model (WS5's position)**
 
 **Decision: the widget renders scheduled *system* activity, computed at read time. WS4 §2.2's empty-state placeholder is rejected.**
@@ -212,6 +214,29 @@ On persisting the **first user Message** of a Session — managed prompt path or
 Reasoning: the title is read by Telegram notifications, Obsidian notes, session exports, and the search index — WS3 §4.6 weights `sessions.title` as rank class `A`, the highest. A client-side-only derivation would leave every one of those surfaces reading "Untitled" while the browser alone showed the right label. **No new event is required:** WS4 §9.3's display-only fallback already renders the derived label immediately, and the stored value arrives with the next `['sessions', id]` fetch — so this costs one `COALESCE`-style write, not a contract.
 
 Owners: **WS2** states the rule in the contract (§6.4 prompt path and §6.8 ingest); **WS1** implements it in the session manager and observed ingest; **WS3** unchanged (column exists, nullable). Recorded as outstanding item 2 in §7.2.
+
+### A14 — Settings writes are a **full-category replace**, not a partial patch (WS2 §7.3 wins over WS5 §7.2)
+
+WS2 §7.3 specifies `PUT /api/v1/settings/{category}` as a "full-category replace"; WS5 §7.2 describes the client "sending only dirty fields". The two are mutually exclusive, and the disagreement is not cosmetic: **a partial body interpreted as a full replace silently erases every field the operator did not touch.**
+
+**Decision: full replace wins.** It is what the API contract states, it is what the Settings UI already implements (`apps/frontend/src/features/settings/mutations.ts` builds `{...persisted, ...dirty}` for exactly this reason), and it is the only one of the two that a server can implement without guessing which absent fields were "not dirty" and which were "cleared".
+
+Consequences, now stated in WS2 §7.3:
+
+1. An **omitted non-secret field resets to its registry default** (§7.6). The body is the new state of the category, in full.
+2. An **omitted secret keeps its stored value**; `null` clears it; a string sets it (§7.1). This exception is forced, not chosen — the client may not read a secret, so it cannot resend one, and "omitted = reset" would make every save of an integration destroy its credential.
+3. An **unknown field is rejected by name** rather than ignored: under (1), an ignored `instanceNam` is a silent reset of `instanceName`. (Fastify's Ajv would strip it under `removeAdditional: true`, so the settings write schemas deliberately omit `additionalProperties: false` and the write planner rejects instead.)
+4. A body that changes nothing writes nothing — no rows, no audit entry, no `setting.updated`.
+
+WS5 needs no change: "send only dirty fields" describes the *editing* model, and the panel already merges its dirty set onto the persisted document before writing. Recorded 2026-08-13, implemented in `apps/backend/src/settings/documents.ts`.
+
+### A15 — `SecretFieldRead` carries `updatedAt` (WS5 §4.4's requirement is real)
+
+WS2 §7.1 defined the masked read shape as `{ isSet: boolean }`. WS5 §4.4/§5.7.3 render `•••••••••••• (saved 2026-08-10 09:14)` and call that timestamp "the only honest confirmation possible for a write-only value".
+
+**Decision: `SecretFieldRead` becomes `{ isSet: boolean; updatedAt: string | null }`.** The alternative was for the UI to drop the timestamp, and that costs the operator the only evidence available to them: a credential they are forbidden to read back cannot be confirmed any other way, so a paste that silently failed to save would look exactly like one that succeeded. The value is `secret_items.updated_at` — a timestamp, carrying no prefix, no length and no part of the secret (TDS 03 §3.13 stores none of those). `null` exactly when `isSet` is `false`.
+
+Recorded 2026-08-13; WS2 §7.1 updated, and the Frontend's provisional `SecretFieldRead` (which already anticipated this, optionally) can now import the shared type.
 
 ---
 
