@@ -5,6 +5,7 @@ import {
   type BackendSelfReport,
   collectServiceHealth,
   type HeartbeatProbeRow,
+  NEVER_REPORTED_DETAIL,
   registerServiceHealthRoutes,
   type ServiceHealthProbes,
   type ServiceHealthReadModel,
@@ -409,8 +410,26 @@ describe('worker heartbeats (TDS 02 §7.2 bands, WS5 §5.7.12 vocabulary)', () =
     const row = rowOf(await collect({ heartbeats: async () => [] }), 'telegram-worker');
 
     expect(row.status).toBe('disabled');
-    expect(row.detail).toBe('Not deployed — this worker ships in Phase 2');
+    expect(row.detail).toContain('Has never reported');
     expect(row.meta).toMatchObject({ lastHeartbeatAt: null, heartbeatStatus: 'never_reported' });
+  });
+
+  it('does not tell the operator to wait for a phase that has already shipped', () => {
+    // The detail said "Not deployed — this worker ships in Phase 2" until well after Phase 2
+    // shipped, so the Services panel was advising operators to wait for something they already
+    // had. Paired with `disabled` — which implies a switch — it made "where do I configure the
+    // Sync Worker?" unanswerable, because the honest answer is "you don't, you start it".
+    for (const detail of Object.values(NEVER_REPORTED_DETAIL)) {
+      expect(detail).not.toMatch(/ships in Phase|Not deployed/);
+      expect(detail).toContain('pnpm dev:workers');
+    }
+  });
+
+  it('tells the Sync Worker operator there is nothing to configure', () => {
+    // The Telegram Worker genuinely has settings; the Sync Worker has none of its own. Sending
+    // someone to Settings for a toggle that was never built is the specific confusion here.
+    expect(NEVER_REPORTED_DETAIL['sync-worker']).toContain('nothing to configure');
+    expect(NEVER_REPORTED_DETAIL['telegram-worker']).toContain('Settings');
   });
 
   it('still reports a worker that once ran and went silent as down', async () => {

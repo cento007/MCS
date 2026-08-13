@@ -179,7 +179,7 @@ describe('worker heartbeats read from service_heartbeats (TDS 03 §4.4)', () => 
    * The Phase 2 transition, end to end and through the **real** sink the worker uses.
    *
    * Before the Telegram Worker has ever run there is no row and the panel says `disabled`
-   * ("Not deployed"). The first heartbeat is the entire deployment signal: nothing else about
+   * ("Has never reported"). The first heartbeat is the entire deployment signal: nothing about
    * the worker is visible to the Backend, because it has no port (TDS 02 §1.1). Asserting the
    * flip with `createDatabaseHeartbeatSink` rather than the `seedHeartbeat` fixture is the
    * point — it proves the row the worker actually writes is the row this view actually reads.
@@ -187,7 +187,7 @@ describe('worker heartbeats read from service_heartbeats (TDS 03 §4.4)', () => 
   it('flips from disabled to healthy the first time the worker heartbeats', async () => {
     const before = rowOf(await readHealth(), 'telegram-worker');
     expect(before.status).toBe('disabled');
-    expect(before.detail).toContain('Not deployed');
+    expect(before.detail).toContain('Has never reported');
 
     await createHeartbeat({
       service: 'telegram-worker',

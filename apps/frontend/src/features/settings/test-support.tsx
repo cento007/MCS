@@ -189,7 +189,8 @@ export function makeHealth(): ServiceHealth {
         name: 'telegram-worker',
         label: 'Telegram Worker',
         status: 'disabled',
-        detail: 'Not deployed — this worker ships in Phase 2',
+        detail:
+          'Has never reported. Start it with `pnpm dev:workers`; it also needs a bot token in Settings → Integrations.',
         checkedAt,
         meta: { lastHeartbeatAt: null, heartbeatStatus: 'never_reported' },
       },

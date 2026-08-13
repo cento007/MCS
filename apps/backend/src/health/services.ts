@@ -351,6 +351,25 @@ function queueRow(result: Settled<QueueProbeResult | null>, checkedAt: string): 
   return row('queue', 'healthy', checkedAt, `depth ${depth} · 0 failed jobs`, meta);
 }
 
+/**
+ * What a worker that has never reported a heartbeat should say.
+ *
+ * Per service, because the two answer different operator questions. The Telegram Worker has
+ * settings behind it, so "not configured" is a fair reading and the Settings page is a real
+ * destination. The **Sync Worker has no settings of its own at all** — it runs Obsidian sync and
+ * the memory backfill's vault stage — so an operator who reads `disabled` goes looking for a
+ * toggle that was never built. Naming `pnpm dev:workers` is the only actionable thing that can
+ * be said, and it is true of both.
+ */
+export const NEVER_REPORTED_DETAIL: Partial<Record<ServiceName, string>> = {
+  'telegram-worker':
+    'Has never reported. Start it with `pnpm dev:workers`; it also needs a bot token in Settings → Integrations.',
+  'sync-worker':
+    'Has never reported. Start it with `pnpm dev:workers` — there is nothing to configure, it is a process to run.',
+};
+
+const NEVER_REPORTED_FALLBACK = 'Has never reported. Start it with `pnpm dev:workers`.';
+
 function workerRow(
   name: ServiceName,
   heartbeatService: string,
@@ -370,19 +389,28 @@ function workerRow(
   if (heartbeat === undefined) {
     // TDS 02 §7.2 reads "down (older **or no row**)", but those are two different facts and
     // only one of them is a failure. Heartbeat rows are upserted and persist, so the absence
-    // of a row means the worker has *never* run — not that it stopped. In Phase 1 the workers
-    // do not exist yet, and reporting `down` would put two permanently red rows in the
-    // Services panel and two permanent entries in WS5's Needs Attention widget, for an
-    // install that is behaving exactly as designed. A panel that always shows failures is a
-    // panel operators learn to ignore, which costs more than the fidelity it buys.
-    //
-    // `disabled` is the same reading already given to Qdrant and Ollama: specified, not
-    // deployed yet. A worker that has *ever* reported has a row, so its later silence still
+    // of a row means the worker has *never* run — not that it stopped. Reporting `down` would
+    // put two permanently red rows in the Services panel, and two permanent entries in WS5's
+    // Needs Attention widget, on an install where nobody has started the workers. A panel that
+    // always shows failures is a panel operators learn to ignore, which costs more than the
+    // fidelity it buys. A worker that has *ever* reported has a row, so its later silence still
     // ages through `degraded` into `down` below — a real crash is still a real crash.
-    return row(name, 'disabled', checkedAt, 'Not deployed — this worker ships in Phase 2', {
-      lastHeartbeatAt: null,
-      heartbeatStatus: 'never_reported',
-    });
+    //
+    // **The detail must not say "ships in Phase 2".** It did until Phase 2 shipped, and it then
+    // told operators to wait for something that had already arrived — while `disabled` implied
+    // a switch that, for these two rows, does not exist. That combination is what makes the
+    // question "where do I configure the Sync Worker?" unanswerable: there is nothing to
+    // configure, there is a process to start. So the detail names the process and the command.
+    return row(
+      name,
+      'disabled',
+      checkedAt,
+      NEVER_REPORTED_DETAIL[name] ?? NEVER_REPORTED_FALLBACK,
+      {
+        lastHeartbeatAt: null,
+        heartbeatStatus: 'never_reported',
+      },
+    );
   }
 
   const ageMs = Math.max(0, now.getTime() - heartbeat.lastHeartbeatAt.getTime());
