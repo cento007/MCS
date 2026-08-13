@@ -203,6 +203,12 @@ export function createTestApp(
     githubHttp: options.githubHttp ?? createDenyingGithubHttp('the integration harness'),
     ...(options.githubBaseUrl === undefined ? {} : { githubBaseUrl: options.githubBaseUrl }),
     ...(options.githubLimits === undefined ? {} : { githubLimits: options.githubLimits }),
+    // Sources per memory backfill slice. Forwarded so a test can prove the sweep is *bounded
+    // and resumable* — with the production default a small fixture fits in one slice, and a
+    // one-slice sweep demonstrates neither.
+    ...(options.memoryBackfillBatchSize === undefined
+      ? {}
+      : { memoryBackfillBatchSize: options.memoryBackfillBatchSize }),
     // `GET /search`'s statement timeout (TDS 04 §11). Forwarded so the timeout path can be
     // exercised by shrinking the budget rather than by building a corpus large enough to
     // exceed a real one.

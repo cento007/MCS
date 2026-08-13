@@ -80,6 +80,18 @@ export interface EmbeddingModelInfo {
    * disagreement is worth showing rather than silently preferring one.
    */
   readonly declaredDimension: number | null;
+  /**
+   * The model's input window in tokens, as the runtime declares it (`nomic-bert.context_length`
+   * = 2048 for `nomic-embed-text`), or `null` when it declares none.
+   *
+   * **This is the number the chunker's byte ceiling is derived from** (`chunk.ts`), and it is
+   * the one piece of model metadata that cannot be measured cheaply: finding it by experiment
+   * means binary-searching the prefix at which the model's output stops changing, which is
+   * ~20 embedding calls. So it is read from the manifest and, when absent, replaced by a
+   * deliberately small assumption rather than an optimistic one — an over-long chunk is
+   * silently truncated by the runtime, which is the failure this whole layer is built around.
+   */
+  readonly contextTokens: number | null;
 }
 
 export type EmbeddingModelOutcome = EmbeddingModelInfo | EmbeddingFailure;

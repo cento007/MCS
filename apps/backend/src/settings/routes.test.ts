@@ -1,9 +1,15 @@
-import type { Db, IntegrationSlug, IntegrationsSettings, SettingsDocument } from '@mc/shared';
+import {
+  type Db,
+  INTEGRATION_SLUGS,
+  type IntegrationSlug,
+  type IntegrationsSettings,
+  type SettingsDocument,
+} from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '../auth/principal.js';
 import { registerHttpConventions } from '../http/index.js';
-import { registerSettingsRoutes, type SettingsPort } from './routes.js';
+import { registerSettingsRoutes, type SettingsPort, type TestConnectionPort } from './routes.js';
 import { SecretVault } from './secrets.js';
 import { TestConnectionService } from './test-connection/index.js';
 
@@ -52,7 +58,15 @@ afterEach(async () => {
   app = null;
 });
 
-function build(settings: SettingsPort = fakeSettings()): FastifyInstance {
+function build(
+  settings: SettingsPort = fakeSettings(),
+  testConnection: TestConnectionPort = new TestConnectionService({
+    // The real service by default. Every executor reads persisted settings before it does
+    // anything, so the proxy above is what proves a route reached the handler at all.
+    db: NO_DATABASE,
+    vault: new SecretVault({ encryptionKey: null }),
+  }),
+): FastifyInstance {
   const instance = Fastify({ logger: false });
   registerHttpConventions(instance);
   // The guard is not registered here; a principal is supplied so `requirePrincipal` behaves as
@@ -62,18 +76,28 @@ function build(settings: SettingsPort = fakeSettings()): FastifyInstance {
     request.principal = PRINCIPAL;
   });
 
-  registerSettingsRoutes(instance, {
-    settings,
-    // The real service: `qdrant`/`ollama` refuse before touching anything, which is precisely
-    // the behaviour under test, and the proxy above proves they touch no database doing it.
-    testConnection: new TestConnectionService({
-      db: NO_DATABASE,
-      vault: new SecretVault({ encryptionKey: null }),
-    }),
-  });
+  registerSettingsRoutes(instance, { settings, testConnection });
 
   app = instance;
   return instance;
+}
+
+/** Records which slug the router dispatched, and answers a fixed result. */
+function recordingTestConnection(): TestConnectionPort & { readonly slugs: IntegrationSlug[] } {
+  const slugs: IntegrationSlug[] = [];
+  return {
+    slugs,
+    async run(slug) {
+      slugs.push(slug);
+      return {
+        ok: true,
+        checkedAt: '2026-08-13T09:00:00.000Z',
+        latencyMs: 1,
+        message: `checked ${slug}`,
+        detail: null,
+      };
+    },
+  };
 }
 
 describe('reads (§7.3)', () => {
@@ -234,21 +258,24 @@ describe('writes (§7.3)', () => {
 });
 
 describe('test connection (§7.4)', () => {
-  it('refuses the Phase 3 integrations with INTEGRATION_NOT_CONFIGURED, touching nothing', async () => {
-    const instance = build();
+  it('routes every defined integration to the service, Phase 3 ones included', async () => {
+    // `qdrant` and `ollama` used to be refused here with "Phase 3 — there is no client for it
+    // yet". There is now: both are reached like any other integration and answer from persisted
+    // settings, so what this layer still owns is only *which slug reached the service*.
+    const service = recordingTestConnection();
+    const instance = build(fakeSettings(), service);
 
-    for (const slug of ['qdrant', 'ollama'] satisfies IntegrationSlug[]) {
+    for (const slug of INTEGRATION_SLUGS) {
       const response = await instance.inject({
         method: 'POST',
         url: `/api/v1/settings/integrations/${slug}/test-connection`,
       });
 
-      expect(response.statusCode).toBe(409);
-      const error = response.json<{ error: { code: string; message: string } }>().error;
-      expect(error.code).toBe('INTEGRATION_NOT_CONFIGURED');
-      // Not a fake success and not a blamed configuration: the client does not exist yet.
-      expect(error.message).toContain('Phase 3');
+      expect(response.statusCode).toBe(200);
+      expect(response.json<{ data: { message: string } }>().data.message).toBe(`checked ${slug}`);
     }
+
+    expect(service.slugs).toEqual([...INTEGRATION_SLUGS]);
   });
 
   it('has no test-connection route for an integration nobody defined', async () => {
@@ -261,27 +288,32 @@ describe('test connection (§7.4)', () => {
   });
 
   it('refuses a request body — a test can only ever cover persisted state (WS5 §5.7.2)', async () => {
-    const response = await build().inject({
+    const service = recordingTestConnection();
+    const response = await build(fakeSettings(), service).inject({
       method: 'POST',
       url: '/api/v1/settings/integrations/qdrant/test-connection',
       payload: { host: 'unsaved-value' },
     });
 
-    // The body used to be ignored, and the answer was the same 409 as without it. That is the
-    // worst of both: a caller who sends `{ host }` believes they are testing an unsaved value,
-    // and gets a verdict about the *stored* one with nothing to distinguish the two. The route
-    // declares no body schema, so the body guard now says so — 400, naming `host`.
+    // The body used to be ignored, and the answer was the same as without it. That is the worst
+    // of both: a caller who sends `{ host }` believes they are testing an unsaved value, and
+    // gets a verdict about the *stored* one with nothing to distinguish the two. The route
+    // declares no body schema, so the body guard says so — 400, naming `host`.
     expect(response.statusCode).toBe(400);
     const error = response.json<{ error: { code: string; details: Record<string, unknown> } }>()
       .error;
     expect(error.code).toBe('VALIDATION_FAILED');
     expect(error.details['unknownFields']).toEqual(['host']);
+    // And it was refused *before* the service ran: an unsaved value must never be tested, not
+    // even by a check that would have ignored it.
+    expect(service.slugs).toEqual([]);
 
-    // Without a body it is the ordinary 409: nothing is configured for qdrant.
-    const bodiless = await build().inject({
+    // Without a body the same route reaches the service and returns its result.
+    const bodiless = await build(fakeSettings(), service).inject({
       method: 'POST',
       url: '/api/v1/settings/integrations/qdrant/test-connection',
     });
-    expect(bodiless.statusCode).toBe(409);
+    expect(bodiless.statusCode).toBe(200);
+    expect(service.slugs).toEqual(['qdrant']);
   });
 });

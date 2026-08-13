@@ -47,6 +47,12 @@ export interface FakeEmbedderOptions {
   readonly dimension?: number;
   /** Recorded for assertions: every batch this port was asked to embed, in order. */
   readonly recordCalls?: boolean;
+  /**
+   * What `describeModel` declares as the input window. Defaults to `nomic-embed-text`'s real
+   * 2048 so a chunking fixture written against the fake keeps its shape against the real model;
+   * `null` exercises the "the runtime declares nothing" branch of `chunkBudget`.
+   */
+  readonly contextTokens?: number | null | undefined;
 }
 
 export interface FakeEmbeddingPort extends EmbeddingPort {
@@ -81,6 +87,7 @@ export function createFakeEmbedder(options: FakeEmbedderOptions = {}): FakeEmbed
         capabilities: ['embedding'],
         runtimeVersion: 'fake',
         declaredDimension: dimension,
+        contextTokens: options.contextTokens === undefined ? 2048 : options.contextTokens,
       };
     },
   };

@@ -260,6 +260,43 @@ export function createQdrantVectorStore(options: QdrantStoreOptions): VectorStor
       return { kind: 'ok', value: { created: false, adopted: false, info } };
     },
 
+    async resetCollection(
+      stamp: EmbeddingStamp,
+      callOptions?: VectorStoreCallOptions,
+    ): Promise<VectorStoreOutcome<MemoryEnsureResult>> {
+      const timeoutMs = callOptions?.timeoutMs ?? defaultTimeoutMs;
+
+      // `DELETE /collections/{name}` answers `200 {"result":true}` whether or not it existed,
+      // so there is no "not found" case to special-case here.
+      const dropped = await call(
+        'DELETE',
+        `/collections/${encodeURIComponent(collection)}`,
+        undefined,
+        timeoutMs,
+      );
+      if (dropped.kind !== 'ok') return dropped.outcome;
+
+      // Forget the previous verification: the collection this port verified no longer exists.
+      verified = null;
+
+      const created = await call(
+        'PUT',
+        `/collections/${encodeURIComponent(collection)}`,
+        {
+          vectors: { size: stamp.dimension, distance: DISTANCE },
+          metadata: stampMetadata(stamp),
+        },
+        timeoutMs,
+      );
+      if (created.kind !== 'ok') return created.outcome;
+
+      const after = await readInfo(timeoutMs);
+      if (after.kind !== 'ok') return after;
+
+      verified = stamp;
+      return { kind: 'ok', value: { created: true, adopted: false, info: after.value } };
+    },
+
     async describeCollection(
       callOptions?: VectorStoreCallOptions,
     ): Promise<VectorStoreOutcome<MemoryCollectionInfo>> {

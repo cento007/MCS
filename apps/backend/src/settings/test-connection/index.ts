@@ -6,6 +6,7 @@ import {
   type TestConnectionResult,
 } from '@mc/shared';
 import { ApiError } from '../../http/errors.js';
+import { readMemoryConfig } from '../../memory/settings.js';
 import { SecretUnreadableError, type SecretVault } from '../secrets.js';
 import { findSecretRow } from '../store.js';
 import { readCategoryValues } from '../values.js';
@@ -14,9 +15,16 @@ import {
   testClaudeCode,
   testGithub,
   testObsidian,
+  testOllama,
+  testQdrant,
   testTelegram,
 } from './executors.js';
-import { createCommandProbe, createHttpProbe, createPathProbe } from './ports.js';
+import {
+  createCommandProbe,
+  createHttpProbe,
+  createMemoryPortFactory,
+  createPathProbe,
+} from './ports.js';
 
 /**
  * `POST /api/v1/settings/integrations/{integration}/test-connection` (TDS 04 §7.4).
@@ -60,6 +68,7 @@ export class TestConnectionService {
       http: createHttpProbe(),
       path: createPathProbe(),
       command: createCommandProbe(),
+      memory: createMemoryPortFactory(),
     };
     this.#onSecretUnreadable = options.onSecretUnreadable;
   }
@@ -74,16 +83,10 @@ export class TestConnectionService {
         return this.#obsidian();
       case 'claude-code':
         return this.#claudeCode();
-      default:
-        // §7.4: "`qdrant`, `ollama` (Phase 3+ stubs — routes reserved, return
-        // INTEGRATION_NOT_CONFIGURED until their phases land)". There is no client for either
-        // in this build, so a green tick would be a fabrication and a red cross would blame
-        // the operator's configuration for a feature that does not exist yet.
-        throw new ApiError(
-          'INTEGRATION_NOT_CONFIGURED',
-          `${slug === 'qdrant' ? 'Qdrant' : 'Ollama'} is a Phase 3 integration — Mission Control has no client for it yet, so there is nothing to test. Settings saved here are stored and picked up when that phase ships.`,
-          { integration: slug, phase: 3 },
-        );
+      case 'qdrant':
+        return this.#qdrant();
+      case 'ollama':
+        return this.#ollama();
     }
   }
 
@@ -128,6 +131,96 @@ export class TestConnectionService {
       values.get(settingKey('integrations.claudeCode.cliPath')),
     );
     return testClaudeCode(this.#deps, { cliPath });
+  }
+
+  /**
+   * Qdrant (§7.4, Phase 3).
+   *
+   * `readMemoryConfig` is the same read the Services panel and the startup verification make,
+   * so this button cannot form a different opinion about the same machine than the health row
+   * next to it. Its three answers map onto the three things that can be true:
+   *
+   *  - **not configured** — no embedding model. That is a refused request (409), not a failed
+   *    check: without a model there is no stamp to compare a collection against, and answering
+   *    "reachable ✓" while memory is switched off is precisely the dishonesty being removed
+   *    here. Its `reason` explains why Mission Control will not pick a model on the operator's
+   *    behalf.
+   *  - **secret unreadable** — configured, but this process cannot decrypt the stored API key.
+   *    A completed check that failed, exactly as for GitHub, because the fix is
+   *    `MC_ENCRYPTION_KEY` and not a settings field.
+   *  - **configured** — hand the plaintext to the executor and nowhere else.
+   */
+  async #qdrant(): Promise<TestConnectionResult> {
+    const result = await readMemoryConfig({ db: this.#db, vault: this.#vault });
+
+    if (result.kind === 'not_configured') {
+      throw new ApiError('INTEGRATION_NOT_CONFIGURED', result.reason, {
+        integration: 'qdrant',
+        missing: [...result.missing],
+      });
+    }
+    if (result.kind === 'secret_unreadable') {
+      return {
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        latencyMs: null,
+        message: result.reason,
+        detail: {
+          reason: 'secret_unreadable',
+          key: settingKey('integrations.qdrant.apiKey'),
+          keyVersion: result.keyVersion,
+        },
+      };
+    }
+
+    const { config } = result;
+    return testQdrant(this.#deps, {
+      host: config.qdrant.host,
+      port: config.qdrant.port,
+      apiKey: config.qdrant.apiKey,
+      model: config.embeddingModel,
+      ollamaHost: config.ollama.host,
+      ollamaPort: config.ollama.port,
+    });
+  }
+
+  /**
+   * Ollama (§7.4, Phase 3).
+   *
+   * Reads the settings directly rather than through `readMemoryConfig`, for one reason: that
+   * helper opens the **Qdrant** API key, and a Qdrant key this process cannot decrypt would
+   * then fail the Ollama check for a fault Ollama has nothing to do with. Ollama holds no
+   * credential, so this path never touches the vault at all.
+   *
+   * The model under test is `integrations.qdrant.embeddingModel` — the embedder is configured on
+   * the Qdrant card because it is stamped onto the Qdrant collection, and it is *that* name
+   * whose capabilities decide whether anything can ever be indexed.
+   * `integrations.ollama.defaultModel` is the agent-runtime choice and is a different question,
+   * for a phase that has not shipped.
+   */
+  async #ollama(): Promise<TestConnectionResult> {
+    const values = await readCategoryValues(this.#db, 'integrations');
+    const read = <T>(path: string): T => normalizeSetting<T>(path, values.get(settingKey(path)));
+
+    const model = read<string>('integrations.qdrant.embeddingModel').trim();
+    if (model.length === 0) {
+      throw new ApiError(
+        'INTEGRATION_NOT_CONFIGURED',
+        'No embedding model is configured, so there is nothing to ask Ollama about. Set the ' +
+          'embedding model on the Qdrant card (`integrations.qdrant.embeddingModel`) to a model ' +
+          'Ollama can embed with — for example `nomic-embed-text` — then test again.',
+        {
+          integration: 'ollama',
+          missing: [settingKey('integrations.qdrant.embeddingModel')],
+        },
+      );
+    }
+
+    return testOllama(this.#deps, {
+      host: read<string>('integrations.ollama.host'),
+      port: read<number>('integrations.ollama.port'),
+      model,
+    });
   }
 
   /**

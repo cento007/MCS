@@ -175,6 +175,28 @@ export interface VectorStorePort {
     options?: VectorStoreCallOptions,
   ): Promise<VectorStoreOutcome<MemoryEnsureResult>>;
 
+  /**
+   * **Destroy the collection and recreate it stamped `stamp`.** Every vector is lost.
+   *
+   * This exists for exactly one situation, and it is not an escape hatch for the others: the
+   * operator changed `integrations.qdrant.embeddingModel`. Under a changed model
+   * `ensureCollection` throws — correctly, because the stored vectors are no longer comparable
+   * with anything the new model produces — and there is then *no* legal operation left on the
+   * collection. Without this method the only cure is `curl -X DELETE` against Qdrant by hand.
+   *
+   * It is a separate verb from `ensureCollection` precisely so it cannot be reached by
+   * accident: nothing calls it on a code path an operator has not explicitly asked for, and
+   * `memory/index.ts` gates it behind a request that names the two models involved.
+   *
+   * The caller is responsible for the `memory_items` rows the deleted points belonged to —
+   * see `deleteRowsForOtherModels`. Leaving them would leave every one of them claiming
+   * `indexed_at` for a vector that no longer exists.
+   */
+  resetCollection(
+    stamp: EmbeddingStamp,
+    options?: VectorStoreCallOptions,
+  ): Promise<VectorStoreOutcome<MemoryEnsureResult>>;
+
   /** Read the collection's state without creating or changing anything. Never throws on stamp. */
   describeCollection(
     options?: VectorStoreCallOptions,

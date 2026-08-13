@@ -9,20 +9,35 @@ import type { OllamaSettings, QdrantSettings } from '../types.js';
 import { numberOr, useIntegrationForm } from './integration-form.js';
 
 /**
- * Integrations → Qdrant and Ollama (TDS 04 §7.2 Phase 3 stubs, TDS 06 §5.7.7).
+ * Integrations → Qdrant and Ollama (TDS 04 §7.2, TDS 06 §5.7.7).
  *
- * > "Both forms are wireframed … but render behind a phase notice; fields are editable so
- * > configuration can be staged, and Test Connection is present but returns the WS2 stub
- * > behavior until Phase 3."
+ * These two cards were written when both services were staging forms behind a phase notice:
+ * "Semantic memory arrives in Phase 3 … nothing is indexed yet", and a Test Connection button
+ * whose route answered `INTEGRATION_NOT_CONFIGURED` because there was no client to test with.
+ * **Both halves of that have stopped being true.** The memory foundation ships the Qdrant and
+ * Ollama adapters, the Services panel probes them, and the two test routes now run real checks.
+ * Copy that describes a build from two phases ago is not a harmless leftover — it is the reason
+ * an operator ignores a red cross that means something.
  *
- * The phase notice is a **notice**, not a disablement: the card header carries a muted badge
- * and the fields stay live, because staging configuration ahead of the phase is the stated
- * purpose. Per §7.4 their test routes answer `INTEGRATION_NOT_CONFIGURED` until Phase 3, which
- * `TestConnection` renders as the refused-request case with its code and requestId — an honest
- * "not yet", not a fake pass.
+ * Two rules the replacement copy follows:
+ *
+ *  1. **Say what the panel does, not what it will do.** Each note describes the check the button
+ *     actually performs, including the one an operator would never guess at: a stamp mismatch is
+ *     a *failure*, not a warning, because vectors from two models are not comparable and
+ *     searching across them returns confident nonsense rather than an error.
+ *  2. **Never state a temporary observation as a permanent fact.** "Nothing is indexed yet" was
+ *     true when it was written and stops being true the first time anything is indexed. Index
+ *     state is *reported by the test result*, which is measured; the copy only says where to
+ *     look for it.
+ *
+ * The `P3` badge **stays** on both cards, for a narrower reason than before: the connection is
+ * live, but the product surface these settings serve — retrieval, the Memory screen, memory in
+ * a session — is Phase 3 work still landing. On the Ollama card it also covers the `enabled`
+ * toggle, which offers Ollama as an *agent runtime* and is consumed by nothing in this build.
+ * The badge now means "the feature is still arriving", not "this form does nothing".
  */
 
-function phaseNote(text: string) {
+function integrationNote(text: string) {
   return (
     <p
       className="rounded-sm border p-3 text-2xs text-text-secondary leading-150"
@@ -75,14 +90,32 @@ export function QdrantCard() {
       endpoint={endpoints.settings.integration('qdrant')}
       status={
         <span className="flex items-center gap-2">
-          <PanelStatus glyph="◌" label="Not active" />
+          {/*
+            The chip states the one fact this card can know for certain from its own document:
+            whether an embedding model is set. That single field is what makes memory configured
+            at all — the backend refuses to test either service without it, because the model is
+            stamped permanently onto the collection and Mission Control will not choose it for
+            you. "Not active" used to sit here and was simply wrong: the Services panel probes
+            this host on every load.
+          */}
+          {String(form.value('embeddingModel') ?? '').trim().length > 0 ? (
+            <PanelStatus glyph="●" label="Embedding model set" colorVar="--color-success" />
+          ) : (
+            <PanelStatus glyph="○" label="No embedding model" />
+          )}
           <PhaseBadge phase={3} />
         </span>
       }
       actions={<TestConnection form={form} integration="qdrant" />}
     >
-      {phaseNote(
-        'Semantic memory arrives in Phase 3. You can configure and test the connection now; nothing is indexed yet.',
+      {integrationNote(
+        'Mission Control stores semantic memory as vectors here. Test Connection checks that ' +
+          'Qdrant answers and that the mc_memory collection’s embedding stamp still matches ' +
+          'the model below — a mismatch fails the test rather than warning, because vectors ' +
+          'from two different models are not comparable and searching across them returns ' +
+          'confident nonsense instead of an error. The check only reads: it reports how many ' +
+          'points are indexed and creates nothing. Retrieval and the Memory screen are the ' +
+          'Phase 3 work still landing.',
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -118,10 +151,14 @@ export function QdrantCard() {
         name="apiKey"
         label="API key"
         current={form.document?.apiKey ?? null}
-        clearConsequence="Clear Qdrant API key? Semantic search will lose access to the vector store when Phase 3 ships."
+        clearConsequence="Clear Qdrant API key? Mission Control will then connect without one — indexing and search stop working if the server requires a key."
       />
 
-      <SettingsField label="Embedding model" changed={form.isChanged('embeddingModel')}>
+      <SettingsField
+        label="Embedding model"
+        changed={form.isChanged('embeddingModel')}
+        description="Run by Ollama, stamped onto the collection. Changing it after anything is indexed makes the stored vectors unusable until the collection is rebuilt — Test Connection is what tells you that has happened."
+      >
         {({ id }) => (
           <TextControl
             id={id}
@@ -174,17 +211,36 @@ export function OllamaCard() {
       endpoint={endpoints.settings.integration('ollama')}
       status={
         <span className="flex items-center gap-2">
-          <PanelStatus glyph="◌" label="Not active" />
+          {/*
+            Deliberately narrow wording. The toggle governs Ollama as an *agent runtime* and
+            nothing else; embeddings go through this host whenever an embedding model is
+            configured, whatever the toggle says. A chip reading "Disabled" beside a service
+            Mission Control is actively embedding through would be the same class of untruth
+            this card is being corrected for.
+          */}
+          {form.value('enabled') === true ? (
+            <PanelStatus glyph="●" label="Agent runtime on" colorVar="--color-success" />
+          ) : (
+            <PanelStatus glyph="○" label="Agent runtime off" />
+          )}
           <PhaseBadge phase={3} />
         </span>
       }
       actions={<TestConnection form={form} integration="ollama" />}
     >
-      {phaseNote(
-        'Ollama is an optional local runtime from Phase 3+. Configuration can be staged now; no session runs on it yet.',
+      {integrationNote(
+        'Ollama produces the embedding vectors for semantic memory, using the model set on the ' +
+          'Qdrant card. Test Connection checks that Ollama is running and that the model is ' +
+          'genuinely an embedder: asking a chat model to embed costs about half a minute before ' +
+          'it fails, so the capability is read from the model manifest instead. On success the ' +
+          'result reports the dimension — the number that has to match the collection.',
       )}
 
-      <SettingsField label="Enabled" changed={form.isChanged('enabled')}>
+      <SettingsField
+        label="Enabled"
+        changed={form.isChanged('enabled')}
+        description="Agent runtimes are a later phase, and nothing reads this flag yet. Embeddings do not depend on it: they use the host and port below whenever an embedding model is configured."
+      >
         {({ id }) => (
           <ToggleControl
             id={id}
@@ -227,7 +283,7 @@ export function OllamaCard() {
       <SettingsField
         label="Default model"
         changed={form.isChanged('defaultModel')}
-        description="Populated from the server after a successful Test Connection, once Phase 3 ships."
+        description="The model offered to agents that run on Ollama — not the embedding model, which is set on the Qdrant card and is what Test Connection checks."
       >
         {({ id }) => (
           <TextControl

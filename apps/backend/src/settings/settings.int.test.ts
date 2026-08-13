@@ -1,10 +1,15 @@
 import {
+  createFakeEmbedder,
+  DEFAULT_MEMORY_COLLECTION,
   type EventEnvelope,
   type IntegrationsSettings,
+  type MemoryCollectionInfo,
   type PgBossQueue,
   QUEUE_NAMES,
   schema,
   settingKey,
+  type VectorStoreOutcome,
+  type VectorStorePort,
 } from '@mc/shared';
 import { and, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -35,6 +40,30 @@ import type { ExecutorDeps } from './test-connection/executors.js';
 
 const GITHUB_TOKEN = 'ghp_int_test_plaintext_value';
 const TELEGRAM_TOKEN = '123456:int-test-bot-token';
+const QDRANT_KEY = 'qdrant-int-test-api-key-plaintext';
+const EMBEDDING_MODEL = 'nomic-embed-text';
+
+/**
+ * What the stubbed Qdrant answers, as a function of **the API key it was constructed with**.
+ *
+ * A function rather than a value so a test can prove the whole credential path in one
+ * assertion: the key travels from `secret_items` through the vault into the adapter, the double
+ * echoes the plaintext it received back as a failure reason, and the response must still not
+ * contain it. Reset in `beforeEach`; the double reads it at call time.
+ */
+let qdrantAnswer: (apiKey: string | null) => VectorStoreOutcome<MemoryCollectionInfo>;
+
+const HEALTHY_COLLECTION: VectorStoreOutcome<MemoryCollectionInfo> = {
+  kind: 'ok',
+  value: {
+    name: DEFAULT_MEMORY_COLLECTION,
+    exists: true,
+    pointCount: 3,
+    stamp: { model: EMBEDDING_MODEL, dimension: 768 },
+    schemaVersion: 1,
+    vectorSize: 768,
+  },
+};
 
 let queue: PgBossQueue;
 let built: TestApp;
@@ -64,6 +93,27 @@ const testConnectionDeps: ExecutorDeps = {
     writable: true,
   }),
   command: async () => ({ kind: 'exit', code: 0, stdout: '2.1.4', stderr: '' }),
+  memory: {
+    // `@mc/shared`'s own fake, so this double tracks `EmbeddingPort` rather than freezing a
+    // copy of last month's shape.
+    embedder: (target) => createFakeEmbedder({ model: target.model, dimension: 768 }),
+    store: (target): VectorStorePort => {
+      // A Test Connection reads. Anything that would change the collection fails the suite
+      // rather than the assertion, so the guarantee survives a future refactor of the executor.
+      const refuse = (): never => {
+        throw new Error('Test Connection must not write to Qdrant');
+      };
+      return {
+        collection: DEFAULT_MEMORY_COLLECTION,
+        describeCollection: async () => qdrantAnswer(target.apiKey),
+        ensureCollection: refuse,
+        resetCollection: refuse,
+        upsert: refuse,
+        search: refuse,
+        deleteByFilter: refuse,
+      };
+    },
+  },
 };
 
 function auth(): Record<string, string> {
@@ -120,6 +170,7 @@ async function events(): Promise<EventEnvelope[]> {
 beforeEach(async () => {
   await truncateAll();
   queue = await testQueue();
+  qdrantAnswer = () => HEALTHY_COLLECTION;
 
   const user = await seedUser();
   userId = user.id;
@@ -520,6 +571,79 @@ describe('test connection (§7.4)', () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain('MC_ENCRYPTION_KEY');
     expect(result.detail).toMatchObject({ reason: 'secret_unreadable', keyVersion: 1 });
+  });
+
+  it('refuses Qdrant and Ollama until an embedding model is saved, then answers both', async () => {
+    // The embedding model is what makes memory configured at all (`memory/settings.ts`), and it
+    // is the same key for both cards — the model is stamped onto the Qdrant collection, and it
+    // is Ollama that has to be able to produce vectors with it. So neither is testable without
+    // it, and "Mission Control declined to ask" is a refused request, not a failed check.
+    for (const slug of ['qdrant', 'ollama']) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/settings/integrations/${slug}/test-connection`,
+        headers: auth(),
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json<{ error: { code: string } }>().error.code).toBe(
+        'INTEGRATION_NOT_CONFIGURED',
+      );
+      expect(response.json<{ error: { message: string } }>().error.message).toContain(
+        'embedding model',
+      );
+    }
+
+    await put('/api/v1/settings/integrations/qdrant', { embeddingModel: EMBEDDING_MODEL });
+
+    const qdrant = await app.inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/qdrant/test-connection',
+      headers: auth(),
+    });
+    const ollama = await app.inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/ollama/test-connection',
+      headers: auth(),
+    });
+
+    expect(qdrant.statusCode).toBe(200);
+    expect(qdrant.json<{ data: { ok: boolean; message: string } }>().data).toMatchObject({
+      ok: true,
+      message: expect.stringContaining('3 points stamped nomic-embed-text (768d)'),
+    });
+    expect(ollama.statusCode).toBe(200);
+    expect(ollama.json<{ data: { ok: boolean; message: string } }>().data).toMatchObject({
+      ok: true,
+      message: expect.stringContaining('768 dimensions'),
+    });
+  });
+
+  it('unseals the Qdrant API key for the adapter and never lets it back out', async () => {
+    await put('/api/v1/settings/integrations/qdrant', {
+      embeddingModel: EMBEDDING_MODEL,
+      apiKey: QDRANT_KEY,
+    });
+
+    // The stub echoes back the plaintext it was constructed with — which it can only have if the
+    // key came out of `secret_items` through the vault. The response must still not contain it.
+    qdrantAnswer = (apiKey) => ({
+      kind: 'unreachable',
+      reason: `connect ECONNREFUSED 127.0.0.1:6333 (api-key ${String(apiKey)})`,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/settings/integrations/qdrant/test-connection',
+      headers: auth(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).not.toContain(QDRANT_KEY);
+    const result = response.json<{ data: { ok: boolean; message: string } }>().data;
+    expect(result.ok).toBe(false);
+    // Present-and-redacted, not merely absent: the key really did reach the adapter.
+    expect(result.message).toContain('«redacted»');
+    expect(result.message).toContain('Is the Qdrant service running?');
   });
 });
 

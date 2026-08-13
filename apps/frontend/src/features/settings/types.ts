@@ -125,7 +125,12 @@ export interface ObsidianSettings {
   readonly conflictPolicy: ObsidianConflictPolicy;
 }
 
-/** Phase 3 — interface only (§7.2). The form exists so configuration can be staged. */
+/**
+ * Phase 3 — **live**, not staged. These values are consumed: `embeddingModel` decides whether
+ * memory is configured at all, and `host`/`port`/`apiKey` reach a real Qdrant through the
+ * shared vector-store port. Test Connection verifies reachability *and* that the collection's
+ * embedding stamp agrees with `embeddingModel` (§7.4).
+ */
 export interface QdrantSettings {
   readonly host: string;
   readonly port: number;
@@ -133,7 +138,12 @@ export interface QdrantSettings {
   readonly embeddingModel: string;
 }
 
-/** Phase 3+ — interface only (§7.2). */
+/**
+ * Phase 3 — `host`/`port` are live: embeddings are produced through this runtime regardless of
+ * the `enabled` toggle, which nothing currently reads (it is reserved for using Ollama as an
+ * *agent* runtime, PRD §5.4). `defaultModel` is the agent-runtime model, not the embedding one —
+ * that lives on `QdrantSettings.embeddingModel`, beside the collection it must match.
+ */
 export interface OllamaSettings {
   readonly host: string;
   readonly port: number;

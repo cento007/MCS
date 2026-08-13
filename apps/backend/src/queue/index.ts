@@ -100,6 +100,30 @@ export const BACKEND_QUEUES = Object.freeze([
    */
   OBSIDIAN_SYNC_QUEUE,
   ADR_GENERATE_QUEUE,
+  /**
+   * `memory.index` — indexing one source, one backfill slice, or one purge (PRD §6.3).
+   *
+   * Produced *and* consumed here; see `QUEUE_NAMES.MEMORY_INDEX` for why the Backend and not
+   * the Sync Worker.
+   *
+   * **`retryLimit: 0`, deliberately, and it is the interesting decision.** Every failure this
+   * handler can see is already recorded as data — a source-level failure lands on the backfill
+   * run's `failures`/`lastError`, and a dependency failure halts the run with a reason on the
+   * row — so a pg-boss retry could only repeat work that will fail identically. Worse, the
+   * backfill slice **enqueues its own successor**, exactly like `github.poll`: a retry of a
+   * slice that had already enqueued its continuation would fork the sweep into two chains
+   * racing over the same cursor. Nothing is lost by dropping a failed job: the run row holds
+   * the cursor, and the next trigger resumes from it.
+   *
+   * `expireInSeconds: 900` against a slice of `BACKFILL_BATCH_SIZE` sources. Generous, because
+   * a cold Ollama takes seconds to load its weights before the first batch of a run answers,
+   * and a lease that expired mid-slice would hand a second delivery the same cursor.
+   */
+  Object.freeze({
+    name: QUEUE_NAMES.MEMORY_INDEX,
+    retryLimit: 0,
+    expireInSeconds: 900,
+  }),
 ]);
 
 export interface CreateBackendQueueOptions {

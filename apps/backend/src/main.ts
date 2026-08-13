@@ -108,6 +108,12 @@ async function main(): Promise<void> {
     log.error({ err: error }, 'memory startup verification failed unexpectedly');
   });
 
+  // The single `memory.index` consumer (arbitration A16), its domain-event triggers, and the
+  // reclamation of any backfill run a previous process left `running`. Awaited, unlike the
+  // verification above, because it only subscribes and reclaims — it makes no outbound call and
+  // does no work until a job arrives, which cannot happen before a model is configured.
+  await memory.indexing.start();
+
   // Hooks run in REVERSE registration order, so the pool is registered first and drained
   // last — nothing can still be querying it once the HTTP server has closed.
   shutdown.onShutdown('database-pool', async () => {
@@ -121,6 +127,9 @@ async function main(): Promise<void> {
   });
   shutdown.onShutdown('github', async () => {
     await github.stop();
+  });
+  shutdown.onShutdown('memory-indexing', async () => {
+    memory.indexing.stop();
   });
   shutdown.onShutdown('http-server', async () => {
     await app.close();

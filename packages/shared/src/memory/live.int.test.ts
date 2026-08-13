@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chunkBudget, chunkText } from './chunk.js';
 import { cosineSimilarity, isEmbeddingSuccess } from './embedding-port.js';
 import { createMemoryHttpPort } from './http.js';
 import { createOllamaEmbedder } from './ollama.js';
@@ -212,6 +213,96 @@ describe('the real Ollama', () => {
     }).embed(['x']);
 
     expect(outcome.kind).toBe('unreachable');
+  });
+});
+
+// ------------------------------------------------------------------- the truncation finding
+
+describe('silent truncation, and the bound that answers it', () => {
+  /**
+   * A document far larger than the model's context, whose **tail** carries a distinctive fact.
+   *
+   * 108 000 characters is the measured size at which Ollama returned `200` and a normal-looking
+   * 768-dimension vector on this machine, having read only the opening ~10 000 of it.
+   */
+  const FILLER =
+    'The queue substrate is PostgreSQL and every outbound call is bounded by a deadline. ';
+  const TAIL =
+    'The hummingbird migration route over the Gulf of Mexico spans eight hundred kilometres.';
+  const HUGE = `${FILLER.repeat(Math.ceil(108_000 / FILLER.length))}\n\n${TAIL}`;
+
+  it('CONFIRMS Ollama truncates silently: the whole document embeds identically to a prefix', async ({
+    skip,
+  }) => {
+    if (!ollamaUp) skip();
+    expect(HUGE.length).toBeGreaterThan(108_000);
+
+    const port = embedder();
+    const whole = await port.embed([HUGE]);
+    const prefix = await port.embed([HUGE.slice(0, 12_000)]);
+    if (!isEmbeddingSuccess(whole) || !isEmbeddingSuccess(prefix)) throw new Error('embed failed');
+
+    // No error, no warning, a full-width vector — and it is the *prefix's* vector. This is the
+    // failure the chunker exists for: it looks exactly like success.
+    expect(whole.vectors[0]).toHaveLength(768);
+    const similarity = cosineSimilarity(whole.vectors[0] ?? [], prefix.vectors[0] ?? []);
+    expect(similarity).toBeGreaterThan(0.99999);
+
+    console.info(
+      `[live] Ollama: ${String(HUGE.length)} chars -> 200 OK, 768d, identical to a ` +
+        `12 000-char prefix (cos ${similarity.toFixed(6)}). Silent truncation confirmed.`,
+    );
+  });
+
+  it('SPLITS it instead, and the tail becomes retrievable', async ({ skip }) => {
+    if (!ollamaUp) skip();
+
+    const port = embedder();
+    const described = await port.describeModel();
+    if (described.kind !== 'ok') throw new Error('describeModel failed');
+
+    // The bound comes from the model's own declared window, then downwards.
+    const budget = chunkBudget(described.contextTokens);
+    expect(described.contextTokens).toBe(2048);
+    expect(budget.maxBytes).toBeLessThanOrEqual(2048 - 8);
+
+    const { chunks, truncated } = chunkText(HUGE, { budget, maxChunks: 200 });
+    expect(truncated).toBe(false);
+    expect(chunks.length).toBeGreaterThan(50);
+    for (const chunk of chunks) expect(chunk.bytes).toBeLessThanOrEqual(budget.maxBytes);
+
+    const embedded = await port.embed(chunks.map((chunk) => chunk.text));
+    if (!isEmbeddingSuccess(embedded)) throw new Error('embed failed');
+
+    const query = await port.embed(['hummingbird migration across the Gulf of Mexico']);
+    if (!isEmbeddingSuccess(query)) throw new Error('embed failed');
+
+    let best = -1;
+    let bestOrdinal = -1;
+    embedded.vectors.forEach((vector, index) => {
+      const score = cosineSimilarity(query.vectors[0] ?? [], vector);
+      if (score > best) {
+        best = score;
+        bestOrdinal = index;
+      }
+    });
+
+    // The tail is in the LAST chunk and it is the one that answers the query. Against the
+    // single whole-document vector above, this fact is simply not in the index.
+    expect(chunks[bestOrdinal]?.text).toContain('hummingbird');
+    expect(bestOrdinal).toBe(chunks.length - 1);
+    expect(best).toBeGreaterThan(0.6);
+
+    const wholeDocument = await port.embed([HUGE]);
+    if (!isEmbeddingSuccess(wholeDocument)) throw new Error('embed failed');
+    const unchunked = cosineSimilarity(query.vectors[0] ?? [], wholeDocument.vectors[0] ?? []);
+
+    console.info(
+      `[live] chunked: ${String(chunks.length)} chunks <= ${String(budget.maxBytes)} bytes; ` +
+        `the tail fact scores ${best.toFixed(3)} in chunk ${String(bestOrdinal)}. ` +
+        `Unchunked, the same query scores ${unchunked.toFixed(3)} against the whole document.`,
+    );
+    expect(best).toBeGreaterThan(unchunked);
   });
 });
 

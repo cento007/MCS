@@ -29,15 +29,51 @@ const SYNC_RUN_STATES = ['queued', 'running', 'completed', 'failed'] as const;
 /** Non-terminal run states — the guard behind the 409 on overlapping triggers (WS2 §10). */
 const SYNC_RUN_ACTIVE_STATES = ['queued', 'running'] as const;
 
-const SYNC_RUN_KINDS = ['obsidian'] as const;
+/**
+ * ⚠ **`memory_index` widens TDS 03 §4.5, deliberately and on the record.**
+ *
+ * The table arrived for Obsidian sync alone. The Phase 3 memory backfill needs the same four
+ * things this table already provides — a durable run record, the four run states, a
+ * `user`/`schedule` trigger, and above all `ux_sync_runs_active`, which makes "at most one
+ * active run **per kind**" a database constraint rather than an application convention.
+ *
+ * The alternative was a `memory_index_runs` table with the same seven columns, the same CHECKs
+ * and a second copy of that partial unique index — a second implementation of a guard whose
+ * whole value is that it is not re-implemented. `kind` exists to discriminate; this is the
+ * second kind. Every existing read is already `kind`-filtered, so `GET /sync-runs` continues to
+ * mean "Obsidian sync runs" and nothing about §10 changes.
+ */
+const SYNC_RUN_KINDS = ['obsidian', 'memory_index'] as const;
 
 const SYNC_RUN_TRIGGERS = ['user', 'schedule'] as const;
 
-/** WS2 §10 shape — small, whole-read, display-only. */
+/**
+ * WS2 §10 shape — small, whole-read, display-only.
+ *
+ * Two disjoint field sets, one per `kind`, because a run's progress is exactly what this column
+ * is for and neither kind ever reads the other's fields. The `memory_index` half is owned by
+ * `memory/backfill.ts` (`BackfillProgress`) and is always read back through its `readProgress`,
+ * which validates rather than trusts — the row may have been written by an older build.
+ */
 export interface SyncRunStats {
+  // kind = 'obsidian'
   notesExported?: number;
   notesImported?: number;
   conflicts?: number;
+
+  // kind = 'memory_index'
+  readonly mode?: string;
+  readonly stage?: string | null;
+  readonly cursor?: string | null;
+  readonly sourcesSeen?: number;
+  readonly sourcesIndexed?: number;
+  readonly sourcesSkipped?: number;
+  readonly chunksEmbedded?: number;
+  readonly chunksDeleted?: number;
+  readonly failures?: number;
+  readonly lastError?: string | null;
+  readonly pruned?: number;
+  readonly notesDone?: boolean;
 }
 
 /**

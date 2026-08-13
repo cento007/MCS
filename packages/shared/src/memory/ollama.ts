@@ -147,10 +147,13 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): EmbeddingP
   }
 
   /** `/api/show` — capabilities and the declared dimension, without loading the model. */
-  async function show(
-    timeoutMs: number,
-  ): Promise<
-    | { kind: 'ok'; capabilities: readonly string[]; declaredDimension: number | null }
+  async function show(timeoutMs: number): Promise<
+    | {
+        kind: 'ok';
+        capabilities: readonly string[];
+        declaredDimension: number | null;
+        contextTokens: number | null;
+      }
     | EmbeddingFailure
   > {
     const outcome = await request('/api/show', { model }, timeoutMs);
@@ -176,7 +179,12 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): EmbeddingP
         )
       : [];
 
-    return { kind: 'ok', capabilities, declaredDimension: declaredDimensionOf(parsed) };
+    return {
+      kind: 'ok',
+      capabilities,
+      declaredDimension: modelInfoNumber(parsed, '.embedding_length'),
+      contextTokens: modelInfoNumber(parsed, '.context_length'),
+    };
   }
 
   /**
@@ -229,6 +237,7 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): EmbeddingP
         stamp: { model, dimension: first.length },
         capabilities: shown.capabilities,
         declaredDimension: shown.declaredDimension,
+        contextTokens: shown.contextTokens,
       },
     };
   }
@@ -370,6 +379,7 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): EmbeddingP
         capabilities: verified.info.capabilities,
         runtimeVersion,
         declaredDimension: verified.info.declaredDimension,
+        contextTokens: verified.info.contextTokens,
       };
     },
   };
@@ -379,6 +389,7 @@ interface Verified {
   readonly stamp: EmbeddingStamp;
   readonly capabilities: readonly string[];
   readonly declaredDimension: number | null;
+  readonly contextTokens: number | null;
 }
 
 /** `http://host:port`, with an IPv6 literal bracketed so the URL stays parseable. */
@@ -406,15 +417,20 @@ async function readVersion(
 }
 
 /**
- * `model_info` carries one `<family>.embedding_length` key, e.g. `nomic-bert.embedding_length`.
- * Reported for information only — see the header for why it is not trusted as the dimension.
+ * `model_info` keys are family-prefixed — `nomic-bert.embedding_length`,
+ * `nomic-bert.context_length` — and the family is the model's, not something we can predict.
+ * So the lookup is by suffix.
+ *
+ * `.embedding_length` is reported for information only (see the header: it is the hidden size,
+ * not proof of an embedding head). `.context_length` is load-bearing — `chunk.ts` derives the
+ * byte ceiling from it.
  */
-function declaredDimensionOf(parsed: Record<string, unknown> | null): number | null {
+function modelInfoNumber(parsed: Record<string, unknown> | null, suffix: string): number | null {
   const info = parsed?.['model_info'];
   if (typeof info !== 'object' || info === null) return null;
 
   for (const [key, value] of Object.entries(info as Record<string, unknown>)) {
-    if (key.endsWith('.embedding_length') && typeof value === 'number' && Number.isFinite(value)) {
+    if (key.endsWith(suffix) && typeof value === 'number' && Number.isFinite(value)) {
       return value;
     }
   }

@@ -23,7 +23,7 @@ export const STATIC_CHANNELS = Object.freeze({
   notifications: 2,
   sync: 2,
   adrs: 2,
-  /** Reserved (§14.3). Subscribable so a Phase 3 client is not blocked, but nothing routes here. */
+  /** §14.3, live in Phase 3: indexing outcomes and backfill-run progress. */
   memory: 3,
   /** Reserved (§14.3). Subscribable so a Phase 4 client is not blocked, but nothing routes here. */
   agents: 4,
@@ -101,6 +101,13 @@ const STATIC_ROUTES: Readonly<Record<string, readonly StaticChannel[]>> = Object
   'notification.created': ['notifications'],
   'notification.sent': ['notifications'],
   'notification.failed': ['notifications'],
+  // Phase 3 (§15.4's reserved names, now produced). The `memory` channel carries indexing
+  // outcomes so a Memory UI can watch a backfill without polling; it is deliberately NOT
+  // widened onto `sessions` or `adrs`, because indexing a Session is not a Session event and
+  // a client watching the session list has no use for it.
+  'memory.item_stored': ['memory'],
+  'memory.item_deleted': ['memory'],
+  'memory.reindexed': ['memory'],
 });
 
 const SESSIONS_CHANNEL_SET: ReadonlySet<string> = new Set(SESSIONS_CHANNEL_EVENTS);

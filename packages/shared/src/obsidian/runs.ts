@@ -173,6 +173,15 @@ export interface ReclaimOptions {
   /** Runs untouched for longer than this are presumed dead. */
   readonly olderThanMs?: number;
   readonly reason?: string;
+  /**
+   * Which kind to reclaim. Defaults to `obsidian`, which is what every existing caller means.
+   *
+   * It is a parameter rather than an assumption because `sync_runs` now holds a second kind
+   * (`memory_index`, TDS 03 §4.5 deviation) owned by a *different process*: the Sync Worker
+   * reclaiming a live memory backfill because it had been running for sixteen minutes would
+   * kill a legitimate long run and free its guard while it was still writing.
+   */
+  readonly kind?: string;
 }
 
 /**
@@ -203,6 +212,7 @@ export async function reclaimAbandonedSyncRuns(
     })
     .where(
       and(
+        eq(schema.syncRuns.kind, options.kind ?? SYNC_RUN_KIND),
         inArray(schema.syncRuns.state, [...ACTIVE_SYNC_RUN_STATES]),
         lt(schema.syncRuns.updatedAt, cutoff),
       ),

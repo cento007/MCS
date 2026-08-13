@@ -2,6 +2,12 @@ import { execFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
 import process from 'node:process';
+import {
+  createOllamaEmbedder,
+  createQdrantVectorStore,
+  type EmbeddingPort,
+  type VectorStorePort,
+} from '@mc/shared';
 
 /**
  * The outbound edges of Test Connection (TDS 04 §7.4), as narrow injectable ports.
@@ -27,6 +33,20 @@ export const NETWORK_TIMEOUT_MS = 5_000;
 export const PATH_TIMEOUT_MS = 2_000;
 /** A cold `claude --version` on Windows pays for process start plus an on-access scanner. */
 export const COMMAND_TIMEOUT_MS = 10_000;
+/**
+ * Qdrant and Ollama, which are local services that can be *cold*.
+ *
+ * Looser than `NETWORK_TIMEOUT_MS` for one measured reason: identifying an Ollama model means
+ * embedding one probe string, and that is the only call in the memory layer that loads weights.
+ * Warm it is ~30 ms; cold, a 137M-parameter embedder must first be read off disk. A 5 s bound
+ * would turn a working first-run configuration into "Timed out", which is the worst possible
+ * answer — it blames the operator's settings for a stopwatch. 10 s matches `QDRANT_TIMEOUT_MS`
+ * and the Claude CLI probe, both bounded for the same "first use pays for a cold start" reason.
+ *
+ * It is a bound on the **whole check**, not per round trip: the Qdrant probe makes two or three
+ * calls and the operator is waiting on the total.
+ */
+export const MEMORY_TIMEOUT_MS = 10_000;
 
 /** Response bodies here are small JSON documents; anything larger is not an answer. */
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -250,6 +270,67 @@ export function createCommandProbe(): CommandProbe {
         },
       );
     });
+}
+
+// ------------------------------------------------------------------------------- memory ports
+
+/**
+ * The Qdrant and Ollama edges — **not a new client**.
+ *
+ * `@mc/shared/memory` already speaks to both services, and it was written against a measured
+ * Ollama 0.32.9 and Qdrant 1.19.0 rather than from documentation: it knows that a chat model
+ * answers the embedding endpoint with a `501` after ~29 s of loading itself while `/api/show`
+ * settles the same question in ~5 ms, that the two Ollama embedding endpoints return
+ * differently-scaled vectors, and that Qdrant carries the embedding stamp in collection
+ * metadata. Re-deriving any of that here — in a second HTTP client, for a button — would mean
+ * Test Connection and the Services panel could disagree about the same machine.
+ *
+ * So this port is a **factory over those adapters**, not a transport. It is the seam a test
+ * replaces: unit tests hand it either a real adapter over a stubbed `MemoryHttpPort` (which
+ * proves the message an operator actually sees) or a port that never settles (which proves the
+ * executor's own bound).
+ */
+export interface OllamaProbeTarget {
+  readonly host: string;
+  readonly port: number;
+  readonly model: string;
+  readonly timeoutMs: number;
+}
+
+export interface QdrantProbeTarget {
+  readonly host: string;
+  readonly port: number;
+  /** Never logged, never returned. See `redactSecret` at every call site that builds a message. */
+  readonly apiKey: string | null;
+  readonly timeoutMs: number;
+}
+
+export interface MemoryPortFactory {
+  embedder(target: OllamaProbeTarget): EmbeddingPort;
+  store(target: QdrantProbeTarget): VectorStorePort;
+}
+
+/** The real adapters. Constructed per check, because settings can change between clicks. */
+export function createMemoryPortFactory(): MemoryPortFactory {
+  return {
+    embedder: (target) =>
+      createOllamaEmbedder({
+        host: target.host,
+        port: target.port,
+        model: target.model,
+        // Every call site passes an explicit deadline as well; these are the belt to that
+        // brace, so a port built here is bounded even if a future caller forgets.
+        probeTimeoutMs: target.timeoutMs,
+        embedTimeoutMs: target.timeoutMs,
+      }),
+    store: (target) =>
+      createQdrantVectorStore({
+        host: target.host,
+        port: target.port,
+        apiKey: target.apiKey,
+        timeoutMs: target.timeoutMs,
+      }),
+  };
 }
 
 // ------------------------------------------------------------------------------------ shared

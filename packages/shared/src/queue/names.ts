@@ -84,6 +84,29 @@ export const QUEUE_NAMES = Object.freeze({
    * row in `pgboss.job` rather than a token that means nothing.
    */
   ADR_GENERATE: 'adr.generate',
+  /**
+   * Memory indexing — payload `{ kind: 'source' | 'backfill' | 'purge', … }` (PRD §6.3).
+   *
+   * A job name, not an event: the *outcomes* are `memory.item_stored` / `memory.item_deleted` /
+   * `memory.reindexed`, the three names TDS 04 §15.4 reserved for Phase 3.
+   *
+   * **Produced and consumed by the Backend**, which is arbitration A16 applied rather than
+   * worked around: the queue has exactly one consuming process. The Sync Worker was the
+   * intuitive home — it already does the slow filesystem work — and it is the wrong one here
+   * for three reasons. Retrieval runs in the Backend and must go through the *same*
+   * `ensureCollection` stamp verification the writer used, so putting the writer elsewhere
+   * means two verifications and two chances to disagree about which model the collection holds.
+   * The Qdrant API key is decrypted through the Backend's `SecretVault`, which is where
+   * `MC_ENCRYPTION_KEY` is already wired. And the work itself is a bounded HTTP call to
+   * loopback — the same class of I/O the Backend already does for GitHub — not the vault churn
+   * F2.2 wanted kept off the API path.
+   *
+   * One queue rather than one per job kind, with `concurrency: 1`: it makes every write to the
+   * index serial by construction, so two jobs can never race on the same
+   * `(source, chunk, model)` row. Backfill slices are bounded (`BACKFILL_BATCH_SIZE`) precisely
+   * so an incremental index queued behind one waits seconds, not minutes.
+   */
+  MEMORY_INDEX: 'memory.index',
 } as const);
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

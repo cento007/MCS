@@ -36,6 +36,13 @@
       "when": 1786636654866,
       "tag": "0004_memory_items",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786640108755,
+      "tag": "0005_memory_index_runs",
+      "breakpoints": true
     }
   ]
 }

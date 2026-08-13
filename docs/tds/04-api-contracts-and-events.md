@@ -825,7 +825,7 @@ A `null` value for a nullable field (`github.account`, `telegram.chatId`, `obsid
 
 ### 7.4 Test connection (PRD §4.4 + F8.1)
 
-**`POST /api/v1/settings/integrations/{integration}/test-connection`** for `github`, `claude-code`, `telegram`, `obsidian` (Phase 1–2) and `qdrant`, `ollama` (Phase 3+ stubs — routes reserved, return `INTEGRATION_NOT_CONFIGURED` until their phases land).
+**`POST /api/v1/settings/integrations/{integration}/test-connection`** for all six: `github`, `claude-code`, `telegram`, `obsidian` (Phase 1–2) and `qdrant`, `ollama` — **both implemented 2026-08-13**; the `INTEGRATION_NOT_CONFIGURED` stub arm is gone. This is Phase 3 landing as specified, not a deviation.
 
 A completed check is a **200 regardless of outcome** — failure of the *integration* is data, not an API error:
 
@@ -851,7 +851,12 @@ Checks per integration: `github` → authenticated API call with the stored PAT;
 | `telegram` | `getMe`; **no test message is sent** — `detail: { botUsername, chatIdConfigured, testMessageSent: false }` | no `telegram_bot_token` row |
 | `obsidian` | `stat` + `access(R_OK\|W_OK)` on `vaultPath`; nothing is written to the vault | `vaultPath` unset |
 | `claude-code` | `execFile(cliPath \|\| 'claude', ['--version'])`, no shell; `detail.source` is `setting` or `path_lookup` | never — see below |
-| `qdrant`, `ollama` | none | always, with a message naming Phase 3 |
+| `ollama` | model capability probe via the shared embedder port — reachable, model pulled, and genuinely an *embedding* model; reports the measured dimension | when the host is unreachable, the model is not pulled, or it is a chat model |
+| `qdrant` | reachable, and — if the collection exists — its **embedding stamp is compared against current settings**. Read-only: `verifyStamp`, never `ensureCollection`, so a test cannot create or mutate a collection | on unreachable, a rejected API key, or a **stamp mismatch** |
+
+> **A reachable Qdrant with a mismatched stamp is a failing test, not a warning.** It is the exact condition under which retrieval returns confident nonsense instead of an error — vectors from two different embedding models are not comparable, and cosine distance will rank them happily. The message names both the stored and the configured model and gives both ways out (restore the setting, or delete the collection and re-index). Verified live: a collection stamped `mxbai-embed-large` against settings naming `nomic-embed-text` returns `ok: false` with `reason: 'stamp_mismatch'`.
+>
+> The Ollama capability gate is also why this is cheap: asking a chat model to embed costs **28.6 s and a 501**, because Ollama loads the entire model before discovering it has no embedding head. The gate answers in **12 ms** and names the capabilities the model actually reports.
 
 1. **Telegram sends no message.** §7.4's "optional test message" is declined for V1: an externally visible side effect the operator cannot take back needs a stronger justification than confirming a chat id, and the Telegram Worker that would use the confirmation is Phase 2. The result says so in words, so a green tick is not read as "delivery works".
 2. **`claude-code` with an unset `cliPath` is not `INTEGRATION_NOT_CONFIGURED`.** `''` is §7.2's documented "use the binary the SDK ships with", so the honest check is the one the runtime would perform — resolve `claude` on PATH — and `detail.source` reports which was tested.

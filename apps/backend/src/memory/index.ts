@@ -1,5 +1,7 @@
-import type { Db } from '@mc/shared';
+import type { Db, Queue } from '@mc/shared';
 import { type MemoryProvisionReport, provisionMemoryCollection } from '@mc/shared';
+import type { FastifyInstance } from 'fastify';
+import type { EventBus, Outbox } from '../events/index.js';
 import type { SecretVault } from '../settings/secrets.js';
 import {
   createMemoryClients,
@@ -7,40 +9,62 @@ import {
   type MemoryClients,
   type MemoryProbes,
 } from './health.js';
+import { MemoryIndexService } from './indexing.js';
+import { MemorySearchService } from './retrieval.js';
+import { registerMemoryRoutes } from './routes.js';
+import { createMemoryRuntime, type MemoryRuntime } from './runtime.js';
 import { describeMemoryConfig, type MemoryConfig, readMemoryConfig } from './settings.js';
 
 /**
- * `memory/` — the Backend's half of the Phase 3 memory foundation (PRD §6).
+ * `memory/` — the Backend's half of Phase 3 (PRD §6).
  *
- * The ports, adapters, fakes and the embedding stamp live in `@mc/shared/memory`, because the
- * Sync Worker will index and the Backend will retrieve and F2.2 forbids a worker importing
- * Backend modules. What lives *here* is the part that needs the database: reading the
- * configuration out of `settings` / `secret_items`, the Services health rows, and the startup
- * verification.
+ * The ports, adapters, fakes, the embedding stamp, the chunker, the projections, the indexer and
+ * the backfill live in `@mc/shared/memory`, because F2.2 forbids a worker importing Backend
+ * modules and the vocabulary has to be identical on both sides of the queue. What lives *here*
+ * is everything that needs the database, the settings vault, or a route:
  *
- * **No routes.** This is foundation only — ingestion, the search API and the Memory UI are the
- * follow-ups, and shipping an endpoint before there is anything to serve would be a promise the
- * product cannot keep.
+ *   settings.ts   read the qdrant/ollama configuration; "configured" vs "not configured"
+ *   health.ts     the two `GET /services/health` rows, bounded and never throwing
+ *   runtime.ts    the one verified (embedder, store, stamp, budget) both halves share
+ *   indexing.ts   the `memory.index` producer and its single consumer; the backfill run
+ *   notes.ts      the Obsidian vault stage — unmanaged notes only
+ *   retrieval.ts  `POST /memory-items/search`, scope filtering, the relevance floor
+ *   routes.ts     the four routes, and the two §13.1 reserved ones deliberately not built
+ *   index.ts      wiring
  *
- * Layout:
- *   settings.ts  read the qdrant/ollama configuration; "configured" vs "not configured"
- *   health.ts    the two `GET /services/health` rows, bounded and never throwing
- *   index.ts     wiring: the probes the app installs, and the startup verification
+ * **Nothing here runs until an operator sets `integrations.qdrant.embeddingModel`.** No outbound
+ * call is made, no collection is created, no job does any work: `MemoryRuntime.ready()` answers
+ * `not_configured` and every path returns early. That is what lets an install that never opens
+ * the Memory settings behave exactly as it did in Phase 2.
  */
 
 export * from './health.js';
+export * from './indexing.js';
+export * from './notes.js';
+export * from './retrieval.js';
+export * from './runtime.js';
 export * from './settings.js';
 
 export interface MemoryModuleOptions {
   readonly db: Db;
   readonly vault: SecretVault;
+  readonly queue: Queue;
+  readonly outbox: Outbox;
+  readonly bus: EventBus;
   /** Injected by tests so nothing reaches the network. */
   readonly build?: ((config: MemoryConfig) => MemoryClients) | undefined;
   readonly probeTimeoutMs?: number | undefined;
+  /** Sources per backfill slice. Tests shrink it so a sweep takes two slices instead of one. */
+  readonly backfillBatchSize?: number | undefined;
+  readonly now?: (() => Date) | undefined;
+  readonly onError?: ((error: unknown, context: string) => void) | undefined;
 }
 
 export interface MemoryModule {
   readonly probes: MemoryProbes;
+  readonly runtime: MemoryRuntime;
+  readonly indexing: MemoryIndexService;
+  readonly search: MemorySearchService;
   /**
    * Identify the model, then create-or-verify the stamped collection. Safe to call at startup
    * and safe to call again; returns a report and never throws.
@@ -54,12 +78,33 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
   const readConfig = () => readMemoryConfig({ db: options.db, vault: options.vault });
   const build = options.build ?? createMemoryClients;
 
+  const runtime = createMemoryRuntime({
+    readConfig,
+    build,
+  });
+
+  const indexing = new MemoryIndexService({
+    db: options.db,
+    queue: options.queue,
+    outbox: options.outbox,
+    bus: options.bus,
+    runtime,
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.backfillBatchSize === undefined ? {} : { batchSize: options.backfillBatchSize }),
+    ...(options.onError === undefined ? {} : { onError: options.onError }),
+  });
+
+  const search = new MemorySearchService({ db: options.db, runtime });
+
   return {
     probes: createMemoryProbes({
       readConfig,
       build,
       ...(options.probeTimeoutMs === undefined ? {} : { timeoutMs: options.probeTimeoutMs }),
     }),
+    runtime,
+    indexing,
+    search,
 
     async verify() {
       const result = await readConfig();
@@ -73,12 +118,32 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
 }
 
 /**
+ * Build the module and register its routes.
+ *
+ * The `memory.index` consumer is **not** subscribed here. Registration happens while the app is
+ * being built; subscribing a queue consumer at that moment would start doing work before the
+ * process is ready to serve, and — in the integration tier, where an app is built per test —
+ * would attach a consumer to a queue that the test may never start. `start()` is called from
+ * `main.ts` after the queue is up, exactly as the GitHub poller is.
+ */
+export function registerMemory(app: FastifyInstance, options: MemoryModuleOptions): MemoryModule {
+  const memory = createMemoryModule(options);
+  registerMemoryRoutes(app, { search: memory.search, indexing: memory.indexing });
+
+  app.addHook('onClose', async () => {
+    memory.indexing.stop();
+  });
+
+  return memory;
+}
+
+/**
  * Startup verification, as one call `main.ts` makes and logs.
  *
  * Never fatal, and that is the design: Phase 1 and Phase 2 do not need a vector store, so
  * refusing to boot because Qdrant is down would take out session management to protect a search
- * box that does not exist yet. A stamp mismatch is logged at `error` — the one condition here
- * that means "stop trusting this index" rather than "this dependency is offline".
+ * box. A stamp mismatch is logged at `error` — the one condition here that means "stop trusting
+ * this index" rather than "this dependency is offline".
  */
 export async function verifyMemoryAtStartup(
   memory: MemoryModule,

@@ -181,6 +181,19 @@ export function createInMemoryVectorStore(
       return { kind: 'ok', value: { created: false, adopted: false, info: info() } };
     },
 
+    async resetCollection(stamp): Promise<VectorStoreOutcome<MemoryEnsureResult>> {
+      calls.push('resetCollection');
+      if (failure !== null) return failure;
+
+      stored = new Map();
+      phantomPoints = 0;
+      collectionStamp = { ...stamp };
+      schemaVersion = MEMORY_SCHEMA_VERSION;
+      exists = true;
+      verified = collectionStamp;
+      return { kind: 'ok', value: { created: true, adopted: false, info: info() } };
+    },
+
     async describeCollection(): Promise<VectorStoreOutcome<MemoryCollectionInfo>> {
       calls.push('describeCollection');
       if (failure !== null) return failure;

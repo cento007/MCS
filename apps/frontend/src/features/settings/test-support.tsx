@@ -175,7 +175,9 @@ export function makeHealth(): ServiceHealth {
         name: 'qdrant',
         label: 'Qdrant',
         status: 'disabled',
-        detail: 'Not configured — vector store arrives in Phase 3',
+        // `disabled` here means "no embedding model is set", which is what actually decides
+        // whether memory is configured — not a phase gate. Qdrant is live as of Phase 3.
+        detail: 'No embedding model is set, so nothing is indexed',
         checkedAt,
         meta: null,
       },

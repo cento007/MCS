@@ -49,7 +49,29 @@ export const PHASE_2_EVENT_TYPES = [
   'notification.failed',
 ] as const;
 
-export const EVENT_TYPES = [...PHASE_1_EVENT_TYPES, ...PHASE_2_EVENT_TYPES] as const;
+/**
+ * Phase 3 event types — the three names TDS 04 §15.4 reserved, now produced.
+ *
+ * They graduate from `RESERVED_EVENT_TYPES.phase3` below (which keeps them listed, so the
+ * reservation still reads as the record of where they came from) into the live registry,
+ * because the memory indexer produces them and the WebSocket hub relays them on the reserved
+ * `memory` channel. Payloads carry ids and counts only, per F6.2.
+ *
+ *   `memory.item_stored`  — one source's chunks were (re-)indexed
+ *   `memory.item_deleted` — one source's chunks were removed (archive, delete, empty source)
+ *   `memory.reindexed`    — a backfill or rebuild run reached a terminal state
+ */
+export const PHASE_3_EVENT_TYPES = [
+  'memory.item_stored',
+  'memory.item_deleted',
+  'memory.reindexed',
+] as const;
+
+export const EVENT_TYPES = [
+  ...PHASE_1_EVENT_TYPES,
+  ...PHASE_2_EVENT_TYPES,
+  ...PHASE_3_EVENT_TYPES,
+] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
 

@@ -33,10 +33,10 @@ import {
 } from './health/index.js';
 import { generateRequestId, registerHttpConventions } from './http/index.js';
 import {
-  createMemoryModule,
   type MemoryClients,
   type MemoryConfig,
   type MemoryModule,
+  registerMemory,
 } from './memory/index.js';
 import { type NotificationsModule, registerNotifications } from './notifications/index.js';
 import { type ObsidianModule, registerObsidian } from './obsidian/index.js';
@@ -177,6 +177,11 @@ export interface BuildAppOptions {
   readonly memoryClients?: ((config: MemoryConfig) => MemoryClients) | undefined;
   /** Shrink the memory health probes' bound (tests only). */
   readonly memoryProbeTimeoutMs?: number | undefined;
+  /**
+   * Sources per memory backfill slice (TDS 04 §13.1 / `backfill.ts`). Tests shrink it so a
+   * sweep provably takes more than one slice — resumability is not demonstrable in one batch.
+   */
+  readonly memoryBackfillBatchSize?: number | undefined;
 }
 
 /** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
@@ -218,9 +223,9 @@ export interface BuiltApp {
   /** Obsidian sync runs, the dry-run preview, and nothing that writes a vault (TDS 04 §10). */
   readonly obsidian: ObsidianModule;
   /**
-   * Phase 3 memory foundation (PRD §6): the Services health probes for Qdrant and Ollama, and
-   * the startup collection verification. **No routes** — ingestion, search and the Memory UI
-   * are follow-ups.
+   * Phase 3 memory (PRD §6): the Services health probes, the startup collection verification,
+   * the `memory.index` producer/consumer and `POST /memory-items/search`. The Memory UI is the
+   * follow-up.
    */
   readonly memory: MemoryModule;
 }
@@ -356,16 +361,29 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   // health probes *before* settings registration happens — see `registerSettings`'s `vault`.
   const vault = new SecretVault({ encryptionKey: options.config?.encryptionKey ?? null });
 
-  // Phase 3 memory (PRD §6). Registers no routes: it exists here so the Services panel can stop
-  // claiming Qdrant and Ollama are Phase 3 placeholders once an operator has configured them,
-  // and so `main.ts` can verify the collection stamp at startup.
-  const memory = createMemoryModule({
+  // Phase 3 memory (PRD §6): the Services rows, `POST /memory-items/search`, and the
+  // `memory.index` producer whose single consumer `main.ts` starts once the queue is up.
+  //
+  // Registered before the read models below because `serviceHealth` consumes `memory.probes`,
+  // and after `sessions`/`adrs` in *effect* rather than in order: its event triggers attach to
+  // the same post-commit bus every domain publishes on, so subscription order does not matter.
+  const memory = registerMemory(app, {
     db: options.db,
     vault,
+    queue,
+    outbox,
+    bus,
     ...(options.memoryClients === undefined ? {} : { build: options.memoryClients }),
     ...(options.memoryProbeTimeoutMs === undefined
       ? {}
       : { probeTimeoutMs: options.memoryProbeTimeoutMs }),
+    ...(options.memoryBackfillBatchSize === undefined
+      ? {}
+      : { backfillBatchSize: options.memoryBackfillBatchSize }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    onError: (error, context) => {
+      app.log.error({ err: error, context }, 'memory indexing error');
+    },
   });
 
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
