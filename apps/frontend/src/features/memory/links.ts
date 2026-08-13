@@ -1,4 +1,4 @@
-import type { MemorySourceType } from '@mc/shared/types';
+import { MEMORY_SOURCE_LABELS, memorySourceLabel } from '../../lib/memory-sources.js';
 import type { MemorySearchResult } from './types.js';
 
 /**
@@ -33,18 +33,13 @@ export interface ResultLink {
   readonly reason: string | null;
 }
 
-export const SOURCE_TYPE_LABELS: Readonly<Record<MemorySourceType, string>> = {
-  session: 'Session',
-  commit: 'Commit',
-  adr: 'ADR',
-  obsidian_note: 'Obsidian note',
-  pull_request: 'Pull request',
-  document: 'Document',
-};
-
-export function sourceTypeLabel(sourceType: string): string {
-  return SOURCE_TYPE_LABELS[sourceType as MemorySourceType] ?? sourceType;
-}
+/**
+ * The source-type words live in `lib/memory-sources.ts`, not here: Settings → Memory renders a
+ * toggle per source (PRD §4.4 item 4) and a feature slice may not import another one
+ * (TDS 05 §2.1). Re-exported under their original names so every call site in this slice — and
+ * this slice's suites — keeps reading `sourceTypeLabel`.
+ */
+export { MEMORY_SOURCE_LABELS as SOURCE_TYPE_LABELS, memorySourceLabel as sourceTypeLabel };
 
 export function resultLink(result: MemorySearchResult): ResultLink {
   const { context } = result;
@@ -107,22 +102,85 @@ export function resultLink(result: MemorySearchResult): ResultLink {
           };
 
     case 'obsidian_note':
-    case 'document':
       return {
         to: null,
-        label: sourceTypeLabel(result.sourceType),
+        label: 'Obsidian note',
         reason:
           'This lives in the Obsidian vault rather than in Mission Control; its path is shown ' +
           'above.',
       };
 
+    /**
+     * Repository documentation. It has a **path, not a row**: `sourceId` is null and `sourceRef`
+     * is a repo-relative path, so there is nothing to build an id-shaped route from — and no
+     * screen in this SPA renders a file's contents anyway.
+     *
+     * It is deliberately no longer folded in with `obsidian_note`. Both are file-backed, but the
+     * files are in different places and the reason on the card is the operator's only instruction
+     * for finding the thing: sending someone to their vault to look for `docs/tds/04-api.md` is a
+     * wrong answer that looks like a right one. So the project's Repositories tab is the honest
+     * destination — one level away, exactly like the unattributed-commit fallback above, and
+     * labelled as the destination rather than as the match.
+     */
+    case 'document':
+      return context.projectId === null
+        ? {
+            to: null,
+            label: 'Document',
+            reason:
+              'This document is not attached to a project, so nothing in the app renders it. ' +
+              'The path above is its whole address.',
+          }
+        : {
+            to: `/projects/${context.projectId}?tab=repositories`,
+            label: 'Open project → Repositories',
+            reason:
+              'Documentation is a file in the repository working tree, and no screen renders a ' +
+              'file — the link reaches the repository it lives in; the path above locates it there.',
+          };
+
     default:
       return {
         to: null,
-        label: sourceTypeLabel(result.sourceType),
+        label: memorySourceLabel(result.sourceType),
         reason: 'This client has no screen for that source type.',
       };
   }
+}
+
+/**
+ * The path shown on a file-backed card, and the full reference behind it.
+ *
+ * A `document`'s `source_ref` is `<repositoryId>/<repo-relative path>` — the id is in the key
+ * because `ux_memory_items_source_ref_chunk` is unique over it and every repository has a
+ * `README.md`. That prefix is a database concern: printed on the card it puts a 36-character
+ * UUID in front of the only part an operator reads, and it is the part that makes the line wrap.
+ * So the path is shown and the whole reference stays in the `title`, where nothing is lost.
+ *
+ * The split mirrors `parseDocumentSourceRef` in `@mc/shared`, which is not imported: it lives
+ * under `packages/shared/src/memory/`, which the browser-safe `@mc/shared/types` entry does not
+ * re-export (its siblings reach the database), and TDS 05 §2.1 holds the SPA to that entry.
+ *
+ * It is **stricter** than that function on purpose. `parseDocumentSourceRef` splits on the first
+ * `/` because its callers already know the ref came from `documentSourceRef`; here the ref is
+ * whatever a row happens to hold, and splitting a hand-written `docs/tds/04-api.md` would print
+ * `tds/04-api.md` — a path that looks right and is not. So the prefix is trimmed only when it is
+ * shaped like the id that put it there; anything else is rendered verbatim.
+ */
+const UUID_PREFIX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i;
+
+export function displaySourceRef(result: MemorySearchResult): {
+  readonly text: string;
+  readonly title: string;
+} | null {
+  const ref = result.sourceRef;
+  if (ref === null) return null;
+  if (result.sourceType !== 'document') return { text: ref, title: ref };
+
+  const prefix = UUID_PREFIX.exec(ref);
+  if (prefix === null) return { text: ref, title: ref };
+  const path = ref.slice(prefix[0].length);
+  return path.length === 0 ? { text: ref, title: ref } : { text: path, title: ref };
 }
 
 /**

@@ -2525,7 +2525,39 @@ paths:
           application/json:
             schema:
               type: object
-              properties: {}
+              properties:
+                indexedSources:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    session:
+                      type: boolean
+                    commit:
+                      type: boolean
+                    adr:
+                      type: boolean
+                    obsidianNote:
+                      type: boolean
+                    pullRequest:
+                      type: boolean
+                    document:
+                      type: boolean
+                retentionDays:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    session:
+                      type: integer
+                      minimum: 0
+                      maximum: 3650
+                    project:
+                      type: integer
+                      minimum: 0
+                      maximum: 3650
+                    global:
+                      type: integer
+                      minimum: 0
+                      maximum: 3650
       responses:
         default:
           $ref: '#/components/responses/ErrorEnvelope'

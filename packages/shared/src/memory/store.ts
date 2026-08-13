@@ -216,14 +216,22 @@ export async function countRowsForOtherModels(db: DbLike, embeddingModel: string
   return rows[0]?.count ?? 0;
 }
 
-export async function deleteRowsForOtherModels(
-  tx: DbTransaction,
-  embeddingModel: string,
-): Promise<number> {
-  const deleted = await tx
-    .delete(schema.memoryItems)
-    .where(ne(schema.memoryItems.embeddingModel, embeddingModel))
-    .returning({ id: schema.memoryItems.id });
+/**
+ * Every row, deleted — the rebuild path, and **only** the rebuild path.
+ *
+ * A rebuild destroys the collection (`resetCollection`), so after it every stored row's
+ * `qdrant_point_id` names a point that no longer exists. Leaving those rows behind is not
+ * merely untidy, it is silently fatal to the rebuild: `planChunks` skips a chunk whose hash
+ * matches and whose `indexed_at` is set, so the sweep that follows would decide there was
+ * nothing to do and finish with a full `memory_items` table and an empty collection — an index
+ * that reports itself complete and answers nothing.
+ *
+ * A "delete the rows of every *other* model" used to be the whole of the reset, which happened
+ * to be correct only when the rebuild was triggered by a *model change*.
+ * `POST /memory-items/backfill { "mode": "rebuild" }` is reachable without one.
+ */
+export async function deleteAllMemoryItems(tx: DbTransaction): Promise<number> {
+  const deleted = await tx.delete(schema.memoryItems).returning({ id: schema.memoryItems.id });
   return deleted.length;
 }
 
@@ -582,6 +590,105 @@ export async function listOrphanedMemoryItemIds(db: DbLike, limit: number): Prom
      LIMIT ${limit}
   `);
   return rows.rows.map((row) => row.id);
+}
+
+// ------------------------------------------------------------ repository documentation (files)
+
+export interface DocumentRepositoryRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly name: string;
+  /** Absolute native path (F8.1). May not exist on this machine — that is normal, not a fault. */
+  readonly localPath: string;
+}
+
+/**
+ * The repositories whose documentation is indexable: those assigned to a Project.
+ *
+ * `repositories.project_id` is nullable — discovery registers a repository before the operator
+ * assigns it (TDS 03 §3.6) — and a document cannot be `project`-tier without one
+ * (`ck_memory_items_tier_scope`). Filing an unassigned repository's docs under `global` was
+ * rejected for the reason `listCommitSources` gives: they are not organisation-wide knowledge,
+ * they are knowledge whose scope is not yet decided. Assigning the repository makes the next
+ * backfill pick them up.
+ *
+ * Ordered by id (UUIDv7, so effectively by registration order) and hard-limited, so "which
+ * repositories does a run cover" is deterministic between runs rather than planner-dependent.
+ */
+export async function listDocumentRepositories(
+  db: DbLike,
+  limit: number,
+): Promise<DocumentRepositoryRow[]> {
+  const rows = await db
+    .select({
+      id: schema.repositories.id,
+      projectId: schema.repositories.projectId,
+      name: schema.repositories.name,
+      localPath: schema.repositories.localPath,
+    })
+    .from(schema.repositories)
+    .where(isNotNull(schema.repositories.projectId))
+    .orderBy(schema.repositories.id)
+    .limit(limit);
+
+  return rows.map((row) => ({ ...row, projectId: row.projectId ?? '' }));
+}
+
+/**
+ * Every repository id in the database and whether it is assigned to a Project.
+ *
+ * Unlimited on purpose, and separate from `listDocumentRepositories`: the purge needs to tell
+ * three cases apart that a limited list conflates — "this repository was deleted", "it lost its
+ * Project", and "it exists and is assigned but the run's repository cap did not reach it". Only
+ * the first two justify deleting anything; the third must leave the rows exactly where they are.
+ * The table holds tens of rows in V1 (TDS 03 §3.6), so two ids per row is a trivial read.
+ */
+export async function listRepositoryScopes(
+  db: DbLike,
+): Promise<{ readonly id: string; readonly projectId: string | null }[]> {
+  return db
+    .select({ id: schema.repositories.id, projectId: schema.repositories.projectId })
+    .from(schema.repositories);
+}
+
+/** Distinct `source_ref` values stored under one file-backed source type. */
+export async function listSourceRefs(db: DbLike, sourceType: MemorySourceType): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ sourceRef: schema.memoryItems.sourceRef })
+    .from(schema.memoryItems)
+    .where(eq(schema.memoryItems.sourceType, sourceType));
+  return rows.map((row) => row.sourceRef).filter((ref): ref is string => ref !== null);
+}
+
+// ------------------------------------------------------------------------------- retention
+
+/**
+ * One bounded page of chunks that have outlived their tier's retention window.
+ *
+ * `created_at` is the clock, not `indexed_at`: `indexed_at` moves every time a chunk is
+ * re-embedded, so a document edited weekly under a 30-day policy would never expire, which is
+ * not what "keep session memory for 30 days" says. See `retentionCutoff` for why the row's own
+ * age is the right one rather than its source's.
+ *
+ * Ordered oldest-first so a backlog drains in a defensible order and a bounded sweep makes
+ * progress rather than re-reading the same page.
+ */
+export async function listExpiredMemoryItemIds(
+  db: DbLike,
+  input: { readonly tier: MemoryTier; readonly before: Date; readonly limit: number },
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: schema.memoryItems.id })
+    .from(schema.memoryItems)
+    .where(
+      and(
+        eq(schema.memoryItems.tier, input.tier),
+        sql`${schema.memoryItems.createdAt} < ${input.before}`,
+      ),
+    )
+    .orderBy(schema.memoryItems.createdAt)
+    .limit(input.limit);
+  return rows.map((row) => row.id);
 }
 
 /**

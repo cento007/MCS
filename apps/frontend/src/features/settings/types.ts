@@ -192,6 +192,24 @@ export interface NotificationsSettings {
   };
 }
 
+// ---------------------------------------------------------------------------------- memory
+
+/**
+ * The `memory` category document (PRD §4.4 item 4) — deliberately **open**, and this is the one
+ * shape in this file that is not written to a contract.
+ *
+ * Every other category has a settled key registry behind it. `memory` is being filled in as
+ * Phase 3 lands, and the two apps ship separately: today's Backend answers `{}`, tomorrow's may
+ * answer `retention` + `indexedSources`, and a later one may answer more. Declaring the contract
+ * here as a required interface would make the panel *believe* it — it would draw a retention
+ * control against `undefined` and present a switch for something nothing reads.
+ *
+ * So the document is carried as an open record and interpreted at runtime by
+ * `panels/memory-shape.ts`, which renders only the keys that actually arrived and carries the
+ * rest through the full-category replace untouched.
+ */
+export type MemorySettingsDocument = Readonly<Record<string, unknown>>;
+
 // -------------------------------------------------------------------------------- security
 
 export interface SecuritySettings {

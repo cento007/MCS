@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   adrLabel,
+  documentSourceRef,
   MAX_PROJECTED_COMMIT_FILES,
+  parseDocumentSourceRef,
   projectAdr,
   projectCommit,
+  projectDocument,
   projectNote,
   projectPullRequest,
   projectSession,
@@ -254,6 +257,93 @@ describe('projectNote', () => {
 
   it('produces nothing for an empty note', () => {
     expect(projectNote({ vaultPath: 'Empty.md', body: '\n\n', mtime: AT }).text).toBe('');
+  });
+});
+
+describe('projectDocument — PRD §6.3 "Documentation"', () => {
+  const REPOSITORY = '018f6b2e-3333-7abc-8def-0123456789ab';
+  const PROJECT = '018f6b2e-4444-7abc-8def-0123456789ab';
+
+  it('is project-tier and carries the Project, so it satisfies ck_memory_items_tier_scope', () => {
+    const projection = projectDocument({
+      repositoryId: REPOSITORY,
+      projectId: PROJECT,
+      relativePath: 'docs/tds/03-database-schema.md',
+      body: 'Every table has created_at and updated_at.',
+      mtime: AT,
+    });
+
+    // `project` requires exactly this combination; anything else is a row the database refuses
+    // or a memory that is visible to nobody.
+    expect(projection.tier).toBe('project');
+    expect(projection.projectId).toBe(PROJECT);
+    expect(projection.sessionId).toBeNull();
+    expect(projection.sourceType).toBe('document');
+    expect(projection.sourceId).toBeNull();
+  });
+
+  it('leads with the repo-relative path, which is half of what makes a doc findable', () => {
+    const projection = projectDocument({
+      repositoryId: REPOSITORY,
+      projectId: PROJECT,
+      relativePath: 'docs/deployment/systemd.md',
+      body: 'Unit files live in deploy/systemd.',
+      mtime: AT,
+    });
+
+    expect(projection.title).toBe('docs/deployment/systemd.md');
+    // "deployment" is in the path and not in the body; a bare basename would lose it.
+    expect(projection.text.startsWith('docs/deployment/systemd.md')).toBe(true);
+    expect(projection.text).toContain('Unit files live in deploy/systemd.');
+  });
+
+  it('produces nothing for an empty file, so it is skipped rather than indexed as a title', () => {
+    expect(
+      projectDocument({
+        repositoryId: REPOSITORY,
+        projectId: PROJECT,
+        relativePath: 'docs/empty.md',
+        body: '\n\n  \n',
+        mtime: AT,
+      }).text,
+    ).toBe('');
+  });
+
+  it('keys on (repository, path), so two repositories keep their own README', () => {
+    const other = '018f6b2e-5555-7abc-8def-0123456789ab';
+    expect(documentSourceRef(REPOSITORY, 'README.md')).not.toBe(
+      documentSourceRef(other, 'README.md'),
+    );
+    // Without the repository id, `ux_memory_items_source_ref_chunk` would make the second
+    // repository's README overwrite the first's.
+    expect(parseDocumentSourceRef(documentSourceRef(REPOSITORY, 'docs/a/b.md'))).toEqual({
+      repositoryId: REPOSITORY,
+      relativePath: 'docs/a/b.md',
+    });
+  });
+
+  it('never puts an absolute path in the source ref', () => {
+    const projection = projectDocument({
+      repositoryId: REPOSITORY,
+      projectId: PROJECT,
+      relativePath: 'README.md',
+      body: 'Hello.',
+      mtime: AT,
+    });
+
+    // The column's own rule: an absolute path breaks when the repository moves and leaks the
+    // operator's directory layout into an API response.
+    expect(projection.sourceRef).toBe(`${REPOSITORY}/README.md`);
+    expect(projection.sourceRef).not.toMatch(/^[a-zA-Z]:[\\/]/);
+    expect(projection.sourceRef?.startsWith('/')).toBe(false);
+  });
+
+  it('refuses to parse a ref that is not one of ours', () => {
+    // A ref from an older build or a hand edit must not resolve to a repository id we invented,
+    // because the purge acts on that id.
+    expect(parseDocumentSourceRef('README.md')).toBeNull();
+    expect(parseDocumentSourceRef('/leading-slash')).toBeNull();
+    expect(parseDocumentSourceRef(`${REPOSITORY}/`)).toBeNull();
   });
 });
 

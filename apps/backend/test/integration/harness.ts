@@ -209,6 +209,15 @@ export function createTestApp(
     ...(options.memoryBackfillBatchSize === undefined
       ? {}
       : { memoryBackfillBatchSize: options.memoryBackfillBatchSize }),
+    // The retention sweep's batch bound and tick interval. Forwarded for the same reason as the
+    // backfill batch size: with the production defaults, "a full batch schedules a catch-up
+    // tick" needs five hundred seeded chunks and "the next tick" is six hours away.
+    ...(options.memoryRetentionBatchSize === undefined
+      ? {}
+      : { memoryRetentionBatchSize: options.memoryRetentionBatchSize }),
+    ...(options.memoryRetentionTickMinutes === undefined
+      ? {}
+      : { memoryRetentionTickMinutes: options.memoryRetentionTickMinutes }),
     // `GET /search`'s statement timeout (TDS 04 §11). Forwarded so the timeout path can be
     // exercised by shrinking the budget rather than by building a corpus large enough to
     // exceed a real one.

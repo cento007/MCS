@@ -12,6 +12,7 @@ import { MemoryResults } from './MemoryResults.js';
 import {
   DEFAULT_MEMORY_SEARCH_LIMIT,
   type MemoryConfigurationRead,
+  useIndexedSources,
   useMemoryConfiguration,
   useMemoryIndexStatus,
   useMemorySearch,
@@ -76,6 +77,7 @@ export function MemoryPage() {
   const configuration = useMemoryConfiguration();
   const projects = useScopeProjects();
   const session = useScopeSession(scope.sessionId);
+  const indexedSources = useIndexedSources();
   const trigger = useTriggerBackfill();
 
   const setScope = (next: MemoryScope): void => {
@@ -168,6 +170,7 @@ export function MemoryPage() {
         projects={projects.data ?? []}
         projectsUnavailable={projects.isError}
         session={session.data}
+        indexedSources={indexedSources}
       />
 
       <IndexStatePanel
@@ -364,7 +367,8 @@ function IdleRegion({ configuration }: { configuration: MemoryConfigurationRead 
             Ask a question in prose. Memory is searched by meaning, not by keyword.
           </p>
           <p className="mt-2 max-w-2xl text-text-muted text-xs leading-150">
-            Indexed sources: completed sessions, commits, ADRs, pull requests and Obsidian notes.
+            Indexed sources: completed sessions, commits, ADRs, pull requests, Obsidian notes and
+            repository documentation — whichever of them are switched on in Settings → Memory.
             Results are ranked by cosine similarity and anything below the relevance floor is
             withheld rather than shown as a weak match — “nothing relevant” is an answer here, not
             an empty list.

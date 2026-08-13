@@ -1,4 +1,10 @@
 import {
+  MEMORY_SOURCE_FIELDS,
+  MEMORY_SOURCE_TYPES,
+  memorySourceField,
+  PRODUCIBLE_MEMORY_TIERS,
+} from '../entities/memory.js';
+import {
   booleanValue,
   enumValue,
   integerValue,
@@ -14,7 +20,9 @@ import {
   type CostBudget,
   DATE_FORMATS,
   type DailyReportSettings,
+  type IndexedSourceToggles,
   LANDING_PAGES,
+  type MemoryRetentionDays,
   type NotificationEventToggles,
   OBSIDIAN_CONFLICT_POLICIES,
   OBSIDIAN_SYNC_MODES,
@@ -255,6 +263,15 @@ export const MIN_MAX_CONCURRENT_SESSIONS = 1;
 export const MAX_MAX_CONCURRENT_SESSIONS = 64;
 /** Ten years. `0` means "keep forever" (WS5 §5.7.11). */
 export const MAX_AUDIT_RETENTION_DAYS = 3650;
+/**
+ * Ten years, and `0` means "never expire" — the audit log's convention, reused verbatim so an
+ * operator meets one meaning of zero across the whole Settings page rather than two.
+ *
+ * Its own constant rather than a second use of `MAX_AUDIT_RETENTION_DAYS`: the two policies are
+ * enforced by different sweeps over different tables, and sharing a bound would make changing
+ * one of them silently change the other.
+ */
+export const MAX_MEMORY_RETENTION_DAYS = 3650;
 export const MIN_ALERT_THRESHOLD_PERCENT = 1;
 export const MAX_ALERT_THRESHOLD_PERCENT = 100;
 /** No sane budget is larger, and a runaway value would disable the alert it configures. */
@@ -711,6 +728,91 @@ export const NOTIFICATION_KEYS = {
         start: timeOfDayValue(object['start'], DEFAULT_QUIET_HOURS.start),
         end: timeOfDayValue(object['end'], DEFAULT_QUIET_HOURS.end),
       };
+    },
+  }),
+} as const;
+
+// ------------------------------------------------------------------------------------- memory
+
+/**
+ * Every PRD §6.3 source on, which is what an operator who has just configured an embedding
+ * model expects "index my work" to mean. Built from `MEMORY_SOURCE_TYPES` so the six toggles
+ * and the six source types are the same six by construction.
+ */
+export const DEFAULT_INDEXED_SOURCES: IndexedSourceToggles = Object.freeze(
+  Object.fromEntries(MEMORY_SOURCE_FIELDS.map((field) => [field, true])),
+) as unknown as IndexedSourceToggles;
+
+/**
+ * **Nothing expires by default.** Retention deletes vectors that cost real model time to
+ * produce and cannot be recovered from anywhere but a re-index, so the default has to be the
+ * one an operator opts *out* of. `0` = never expire, exactly as `security.auditLogRetentionDays`
+ * means it.
+ */
+export const DEFAULT_MEMORY_RETENTION: MemoryRetentionDays = Object.freeze(
+  Object.fromEntries(PRODUCIBLE_MEMORY_TIERS.map((tier) => [tier, 0])),
+) as unknown as MemoryRetentionDays;
+
+export const MEMORY_KEYS = {
+  /**
+   * One JSONB row (`('memory', 'indexed_sources')`), per §7.6 rule 1: the six toggles are read
+   * and written as a unit by one panel, so splitting them into six rows would buy nothing and
+   * cost a migration per source type.
+   */
+  indexedSources: define('memory.indexedSources', {
+    valueType: 'object',
+    default: DEFAULT_INDEXED_SOURCES,
+    phase: 3,
+    jsonSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: Object.fromEntries(
+        MEMORY_SOURCE_FIELDS.map((field) => [field, { type: 'boolean' }]),
+      ),
+    },
+    normalize: (raw) => {
+      const object = objectValue(raw) ?? {};
+      // Per field, defaulting to *on*: a corrupt row must not silently stop indexing a source
+      // the operator never turned off — a memory that stops being written is invisible.
+      return Object.fromEntries(
+        MEMORY_SOURCE_TYPES.map((type) => [
+          memorySourceField(type),
+          booleanValue(object[memorySourceField(type)], true),
+        ]),
+      ) as unknown as IndexedSourceToggles;
+    },
+  }),
+  /**
+   * One JSONB row (`('memory', 'retention_days')`) holding one integer per **producible** tier.
+   *
+   * Enforced by `apps/backend/src/memory/retention.ts` — a self-rescheduling `memory.retention`
+   * job that deletes expired chunks from `memory_items` *and* from the vector store, and does
+   * nothing at all while every tier reads `0`.
+   */
+  retentionDays: define('memory.retentionDays', {
+    valueType: 'object',
+    default: DEFAULT_MEMORY_RETENTION,
+    phase: 3,
+    jsonSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: Object.fromEntries(
+        PRODUCIBLE_MEMORY_TIERS.map((tier) => [
+          tier,
+          { type: 'integer', minimum: 0, maximum: MAX_MEMORY_RETENTION_DAYS },
+        ]),
+      ),
+    },
+    normalize: (raw) => {
+      const object = objectValue(raw) ?? {};
+      // Per field, defaulting to 0: a corrupt row must fall back to "never expire", never to a
+      // shorter window that would delete an operator's memory on the strength of bad JSON.
+      return Object.fromEntries(
+        PRODUCIBLE_MEMORY_TIERS.map((tier) => [
+          tier,
+          integerValue(object[tier], 0, { min: 0, max: MAX_MEMORY_RETENTION_DAYS }),
+        ]),
+      ) as unknown as MemoryRetentionDays;
     },
   }),
 } as const;

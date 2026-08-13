@@ -6,6 +6,7 @@ import {
   makeGeneral,
   makeHealth,
   makeIntegrations,
+  makeMemorySettings,
   makeNotifications,
   makeSecurity,
   renderSettingsPage,
@@ -27,6 +28,7 @@ beforeEach(() => {
   api.on('GET', '/settings/general', { body: dataBody(makeGeneral()) });
   api.on('GET', '/settings/integrations', { body: dataBody(makeIntegrations()) });
   api.on('GET', '/settings/notifications', { body: dataBody(makeNotifications()) });
+  api.on('GET', '/settings/memory', { body: dataBody(makeMemorySettings()) });
   api.on('GET', '/settings/security', { body: dataBody(makeSecurity()) });
   api.on('GET', '/services/health', { body: dataBody(makeHealth()) });
   api.on('GET', '/auth/tokens', { body: listBody([]) });
@@ -84,10 +86,12 @@ describe('phase-gated categories (§2.5)', () => {
     expect(memory).toHaveFocus();
 
     await user.keyboard('{Enter}');
-    expect(await screen.findByText(/retention policy per memory tier/)).toBeInTheDocument();
-    // The badge appears twice — on the rail entry and on the placeholder heading — and both
-    // are the muted P3 tag rather than dimmed label text.
-    expect(screen.getAllByTitle('Available in Phase 3').length).toBeGreaterThan(0);
+    // Memory is Phase 3 and Phase 3 has landed: the category routes to its real panel, which
+    // renders whatever `GET /settings/memory` served — see `MemoryPanel.test.tsx`.
+    expect(await screen.findByLabelText('Session memory')).toBeInTheDocument();
+    // The rail keeps the muted P3 tag rather than dimmed label text; it marks the phase the
+    // category belongs to, exactly as the main nav's Memory entry does.
+    expect(within(rail).getAllByTitle('Available in Phase 3').length).toBeGreaterThan(0);
   });
 
   it('routes Agents to its Phase 4 placeholder', async () => {

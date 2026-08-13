@@ -122,10 +122,11 @@ export class SettingsService {
         'notifications',
         stored('notifications'),
       ),
-      // Phase 3 / Phase 4: the categories exist in the storage CHECK and in the Settings rail,
-      // and they have no fields yet. `{}` is the honest answer; inventing placeholder fields
-      // would create settings nothing reads and a migration to remove them.
-      memory: {},
+      memory: categoryDocument<SettingsDocument['memory']>('memory', stored('memory')),
+      // Phase 4: the category exists in the storage CHECK and in the Settings rail, and it has
+      // no fields yet. `{}` is the honest answer; inventing placeholder fields would create
+      // settings nothing reads and a migration to remove them. `memory` was the same until its
+      // two PRD §4.4 fields acquired a consumer — the indexer and the retention sweep.
       agents: {},
       security: categoryDocument<SettingsDocument['security']>('security', stored('security')),
     };

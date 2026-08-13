@@ -166,8 +166,9 @@ function NothingIndexed({
             {/* The distinction this whole component exists for, said out loud once. */}
             <p className="max-w-md text-2xs text-text-muted leading-150">
               Rephrasing will not help — there is nothing to match against yet. A backfill indexes
-              existing ADRs, pull requests, commits, completed sessions and vault notes; after that,
-              new ones are indexed as they happen.
+              existing ADRs, pull requests, commits, completed sessions, vault notes and repository
+              documentation; after that, the row-backed ones are indexed as they happen and the
+              file-backed ones on the next sweep.
             </p>
           </div>
         }

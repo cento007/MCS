@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { formatDateTime } from '../../lib/format/index.js';
 import { formatRelativePast } from '../../lib/format/relative.js';
 import { useLiveClock } from '../../lib/liveness.js';
-import { chunkLabel, resultLink, sourceTypeLabel } from './links.js';
+import { chunkLabel, displaySourceRef, resultLink, sourceTypeLabel } from './links.js';
 import { describeScore, formatScore, HEADROOM_CEILING, headroom } from './relevance.js';
 import type { MemorySearchResult } from './types.js';
 
@@ -54,6 +54,7 @@ export function MemoryResultCard({
   const clock = useLiveClock();
   const link = resultLink(result);
   const chunk = chunkLabel(result);
+  const sourceRef = displaySourceRef(result);
 
   return (
     <article
@@ -93,14 +94,16 @@ export function MemoryResultCard({
             )}
           </p>
 
-          {/* A file-backed source has no row and no route; its path is its identity, so it is
-              shown rather than replaced by a link that would go nowhere. */}
-          {result.sourceRef === null ? null : (
+          {/* A file-backed source has no row of its own — its path *is* its identity — so the
+              path is shown. Where a link exists it reaches what contains the file (a repository),
+              never the file, and `links.ts` says so on the card. `displaySourceRef` decides what
+              of the reference is worth printing; the whole of it stays in the tooltip. */}
+          {sourceRef === null ? null : (
             <p
               className="mt-1 truncate font-mono text-2xs text-text-secondary"
-              title={result.sourceRef}
+              title={sourceRef.title}
             >
-              {result.sourceRef}
+              {sourceRef.text}
             </p>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { MEMORY_SOURCE_TYPES, type MemorySourceType } from '@mc/shared/types';
 import {
   type UseMutationResult,
   type UseQueryResult,
@@ -5,6 +6,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import {
   type ApiError,
   apiGet,
@@ -15,6 +17,7 @@ import {
   queryKeys,
   type Session,
 } from '../../lib/api/index.js';
+import { memorySourceField } from '../../lib/memory-sources.js';
 import type {
   MemoryBackfillStatus,
   MemoryBackfillTrigger,
@@ -149,7 +152,7 @@ export function useScopeProjects(): UseQueryResult<readonly Project[], ApiError>
  * configured-but-never-indexed one were byte-identical in that document (no models, no run) and
  * the operator's next action is completely different for the two. The backfill document now
  * carries **`configured`** for exactly that reason, so the health round trip is gone — one fact,
- * one source, and one fewer request on a screen that already issues three.
+ * one source, and one fewer request on a screen that already issues several.
  *
  * Two properties are kept deliberately:
  *
@@ -200,6 +203,51 @@ export function useMemoryConfiguration(): MemoryConfigurationRead {
   // this is a second *subscription*, not a second request.
   const query = useMemoryIndexStatus();
   return projectMemoryConfiguration(query.data, query.isPending);
+}
+
+// ------------------------------------------------------------------ which sources are indexed
+
+/**
+ * `memory.indexedSources` — which of PRD §6.3's sources the operator has switched on.
+ *
+ * The screen needs this for one reason, and it is the screen's whole reason for existing: the
+ * toggle gates **retrieval as well as indexing** (`isSourceIndexed`, consulted by both), so a
+ * filter chip for a source that is switched off can only ever return nothing — and "nothing"
+ * would arrive as `index_empty` or `below_threshold`, sending the operator to run a backfill that
+ * cannot help. A fifth meaning of empty, arriving disguised as one of the four.
+ *
+ * Two properties make it safe to read a *settings* document from here:
+ *
+ *  - **It shares the Settings cache slot** (`queryKeys.settings.category('memory')`), so saving
+ *    the panel updates these chips without a second round trip or a second source of truth.
+ *  - **An absent or unreadable answer is "cannot tell", never "off".** The same rule `configured`
+ *    follows: a 404 from a Backend that predates these keys must not grey out every chip on the
+ *    screen. `undefined` per source, not `false`.
+ */
+export type IndexedSourceMap = Readonly<Partial<Record<MemorySourceType, boolean>>>;
+
+export function projectIndexedSources(document: unknown): IndexedSourceMap {
+  if (typeof document !== 'object' || document === null) return {};
+  const sources = (document as Record<string, unknown>)['indexedSources'];
+  if (typeof sources !== 'object' || sources === null) return {};
+
+  const map: Partial<Record<MemorySourceType, boolean>> = {};
+  for (const sourceType of MEMORY_SOURCE_TYPES) {
+    const value = (sources as Record<string, unknown>)[memorySourceField(sourceType)];
+    if (typeof value === 'boolean') map[sourceType] = value;
+  }
+  return map;
+}
+
+export function useIndexedSources(): IndexedSourceMap {
+  const query = useQuery<unknown, ApiError>({
+    queryKey: queryKeys.settings.category('memory'),
+    retry: false,
+    staleTime: 60_000,
+    queryFn: ({ signal }) => apiGet<unknown>(endpoints.settings.category('memory'), { signal }),
+  });
+
+  return useMemo(() => projectIndexedSources(query.data), [query.data]);
 }
 
 /**

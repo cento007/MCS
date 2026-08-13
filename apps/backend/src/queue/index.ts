@@ -124,6 +124,22 @@ export const BACKEND_QUEUES = Object.freeze([
     retryLimit: 0,
     expireInSeconds: 900,
   }),
+  /**
+   * `memory.retention` — the per-tier expiry sweep (`memory/retention.ts`).
+   *
+   * `retryLimit: 0`, exactly as `github.poll` and for the identical reason: the tick enqueues
+   * its own successor before it returns, so a pg-boss retry would create a second chain running
+   * beside the first. A dropped tick costs nothing — the next one recomputes every cutoff from
+   * settings and deletes whatever the failed one did not.
+   *
+   * `expireInSeconds: 600` against a bounded batch of `MEMORY_RETENTION_BATCH` deletions plus
+   * one `deleteByFilter` round trip to the vector store.
+   */
+  Object.freeze({
+    name: QUEUE_NAMES.MEMORY_RETENTION,
+    retryLimit: 0,
+    expireInSeconds: 600,
+  }),
 ]);
 
 export interface CreateBackendQueueOptions {

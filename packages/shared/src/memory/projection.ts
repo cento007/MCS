@@ -20,6 +20,7 @@
  * | `adr`          | `project` | the four PRD §7.3 sections under their own headings          |
  * | `pull_request` | `project` | `#42 title` + description                                    |
  * | `obsidian_note`| `global`  | the note body, front matter stripped                         |
+ * | `document`     | `project` | the repo-relative path + the file body, front matter stripped|
  *
  * ### Sessions — turns, not tool traffic
  *
@@ -65,6 +66,15 @@
  * projected — the operator's own writing, which is exactly the knowledge that exists nowhere
  * else in this database. Front matter is stripped: it is metadata, and `tags: [x, y]` embedded
  * into a paragraph shifts the vector without adding meaning.
+ *
+ * ### Repository documentation — the path is half the meaning
+ *
+ * PRD §6.3's sixth source. The projected text **leads with the repo-relative path**, not with
+ * the bare filename the note projection uses, because a repository's documentation is organised
+ * by directory in a way a vault is not: `docs/tds/03-database-schema.md` carries "tds",
+ * "database" and "schema" as signal, and `README` at the root means something different from
+ * `docs/adr/README`. Front matter is stripped for the same reason it is on a note — Docusaurus
+ * and Jekyll headers are metadata, and `sidebar_position: 3` in a vector is noise.
  */
 
 import type { CommitFile } from '../db/index.js';
@@ -264,6 +274,79 @@ export function projectPullRequest(input: PullRequestProjectionInput): SourcePro
     title: heading,
     text: description.length === 0 ? heading : `${heading}\n\n${description}`,
     occurredAt: input.updatedAt,
+  };
+}
+
+// ------------------------------------------------------------------ repository documentation
+
+/**
+ * The `memory_items.source_ref` of one documentation file: `<repositoryId>/<relative path>`.
+ *
+ * The repository id is in the key and the absolute path is not, and both halves are deliberate:
+ *
+ *  - **The id is required for uniqueness.** `ux_memory_items_source_ref_chunk` is over
+ *    `(source_type, source_ref, chunk_ordinal, embedding_model)`, and every repository has a
+ *    `README.md`. Without the prefix, two repositories' READMEs would fight over one row and the
+ *    second would silently overwrite the first.
+ *  - **The absolute path is excluded** for the reason the `source_ref` column's own header
+ *    gives: it would break the moment the repository moved, and it would leak an operator's
+ *    directory layout into an API response. The repository row already holds `local_path`.
+ */
+export function documentSourceRef(repositoryId: string, relativePath: string): string {
+  return `${repositoryId}/${relativePath}`;
+}
+
+/**
+ * The inverse. `null` for a ref that is not shaped like one of ours — an older build, a
+ * hand-edited row — so callers skip it rather than acting on a repository id they invented.
+ */
+export function parseDocumentSourceRef(
+  sourceRef: string,
+): { readonly repositoryId: string; readonly relativePath: string } | null {
+  const slash = sourceRef.indexOf('/');
+  if (slash <= 0 || slash === sourceRef.length - 1) return null;
+  return {
+    repositoryId: sourceRef.slice(0, slash),
+    relativePath: sourceRef.slice(slash + 1),
+  };
+}
+
+export interface DocumentProjectionInput {
+  readonly repositoryId: string;
+  /** The Project the repository is assigned to. Required — see the tier note below. */
+  readonly projectId: string;
+  /** Repo-relative, forward slashes: `docs/tds/03-database-schema.md`. */
+  readonly relativePath: string;
+  /** The file body with front matter already removed. */
+  readonly body: string;
+  readonly mtime: Date;
+}
+
+export function projectDocument(input: DocumentProjectionInput): SourceProjection {
+  const body = input.body.trim();
+
+  return {
+    sourceType: 'document',
+    sourceId: null,
+    sourceRef: documentSourceRef(input.repositoryId, input.relativePath),
+    /**
+     * Project tier. A repository's documentation describes *that repository* — PRD §6.1's
+     * "Project Memory — repository-specific", almost verbatim — and `ck_memory_items_tier_scope`
+     * then requires `project_id IS NOT NULL AND session_id IS NULL AND agent_id IS NULL`, which
+     * is exactly what a document has and exactly what it lacks. `global` was rejected because it
+     * would put one repository's deployment guide into every other project's answers; `session`
+     * is unrepresentable — a file belongs to no conversation.
+     *
+     * The corollary is enforced upstream: a repository with no Project is **not indexed at all**
+     * (the same rule `listCommitSources` applies, for the same reason — its scope is not yet
+     * decided, not global).
+     */
+    tier: 'project',
+    projectId: input.projectId,
+    sessionId: null,
+    title: input.relativePath,
+    text: body.length === 0 ? '' : `${input.relativePath}\n\n${body}`,
+    occurredAt: input.mtime,
   };
 }
 

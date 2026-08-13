@@ -51,7 +51,14 @@ export interface MemorySearchResult {
   readonly sourceType: MemorySourceType;
   /** `null` for file-backed sources, which are addressed by `sourceRef` instead. */
   readonly sourceId: EntityId | null;
-  /** A vault-relative path for `obsidian_note` / `document`; `null` for row-backed sources. */
+  /**
+   * The path of a file-backed source; `null` for row-backed ones (`ck_memory_items_source_identity`
+   * admits exactly one of the two).
+   *
+   * **Which path depends on the source**, and conflating them is a wrong answer that looks right:
+   * an `obsidian_note` is vault-relative, a `document` is relative to the repository it was
+   * indexed from. `links.ts` keeps them apart for exactly that reason.
+   */
   readonly sourceRef: string | null;
   readonly title: string;
   /**

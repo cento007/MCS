@@ -95,8 +95,8 @@ describe('pull requests, whose read route is specified but unbuilt', () => {
   });
 });
 
-describe('file-backed sources, which live outside the app', () => {
-  it('has no link and explains that, rather than offering a dead click', () => {
+describe('file-backed sources, which have a path instead of a row', () => {
+  it('gives a vault note no link and explains that, rather than a dead click', () => {
     const link = resultLink(
       makeResult({
         sourceType: 'obsidian_note',
@@ -108,6 +108,42 @@ describe('file-backed sources, which live outside the app', () => {
     );
     expect(link.to).toBeNull();
     expect(link.reason).toContain('Obsidian vault');
+  });
+
+  it('sends a repository document to its project, not to the vault', () => {
+    // A `document` is indexed from a repository working tree with a repo-relative `sourceRef`.
+    // It used to share the vault note's branch, which sent an operator looking for
+    // `docs/tds/04-api.md` in Obsidian — a wrong answer that reads like a right one.
+    const link = resultLink(
+      makeResult({
+        sourceType: 'document',
+        sourceId: null,
+        sourceRef: 'docs/tds/04-api-contracts.md',
+        tier: 'project',
+        context: { projectId: PROJECT_ID, repositoryId: REPOSITORY_ID, sessionId: null },
+      }),
+    );
+
+    expect(link.to).toBe(`/projects/${PROJECT_ID}?tab=repositories`);
+    // The label names the destination, never the match: there is no document screen to promise.
+    expect(link.label).toBe('Open project → Repositories');
+    expect(link.reason).toContain('no screen renders a file');
+    expect(link.reason).not.toContain('Obsidian');
+  });
+
+  it('offers a document no link when it belongs to no project, and says why', () => {
+    const link = resultLink(
+      makeResult({
+        sourceType: 'document',
+        sourceId: null,
+        sourceRef: 'README.md',
+        tier: 'global',
+        context: { projectId: null, repositoryId: null, sessionId: null },
+      }),
+    );
+
+    expect(link.to).toBeNull();
+    expect(link.reason).toContain('not attached to a project');
   });
 });
 

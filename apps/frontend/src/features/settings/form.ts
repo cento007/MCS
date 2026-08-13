@@ -59,6 +59,22 @@ export interface PanelFormOptions<TDoc> {
   }) => unknown;
   /** See `SaveSettingsOptions.applyResult` — the Integrations cards need a slice merge. */
   readonly applyResult?: SaveSettingsOptions<TDoc>['applyResult'];
+  /**
+   * Ask the operator before the write leaves the browser. Resolving `false` cancels it and
+   * leaves the panel dirty, exactly as a rejected save does.
+   *
+   * It belongs in the engine rather than on a `[Save changes]` click handler because there are
+   * **four** ways a save starts and only one of them is that button: `Ctrl+S` inside a field,
+   * submitting the form, and the unsaved-changes guard's own `[Save]`, which calls this panel
+   * through the dirty registry. A confirmation wired to the button alone would be silently
+   * bypassed by the navigation guard — i.e. by the exact path an operator takes when they are
+   * already distracted and leaving.
+   *
+   * Only Settings → Memory uses it so far: retention is the only setting in the product whose
+   * save deletes data (PRD §4.4 item 4). `[Clear]` on a secret is deliberately **not** routed
+   * through here — it has its own confirm at the call site and is not part of a panel save.
+   */
+  readonly confirmSave?: () => Promise<boolean>;
 }
 
 export interface PanelForm<TDoc> {
@@ -117,6 +133,9 @@ export function usePanelForm<TDoc>(options: PanelFormOptions<TDoc>): PanelForm<T
   const [editedDraft, setDraft] = useState<Draft | null>(null);
   const [secrets, setSecrets] = useState<SecretDrafts>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  const confirmRef = useRef(options.confirmSave);
+  confirmRef.current = options.confirmSave;
 
   const draft = editedDraft ?? baseline;
 
@@ -211,6 +230,11 @@ export function usePanelForm<TDoc>(options: PanelFormOptions<TDoc>): PanelForm<T
 
   const save = useCallback(async (): Promise<boolean> => {
     if (document === null) return false;
+    // Held in a ref, like `save`/`discard` below: the panel's confirmation closes over its own
+    // draft and so changes identity on every keystroke, and depending on it here would rebuild
+    // `save` — and republish the panel to the dirty registry — on every character typed.
+    const confirm = confirmRef.current;
+    if (confirm !== undefined && !(await confirm())) return false;
     const written: Record<string, SecretFieldWrite> = {};
     for (const name of summary.changedSecrets) {
       written[name] = secretOf(name).value;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyScope,
   describeScope,
+  disabledScopeSources,
   EMPTY_SCOPE,
   isScoped,
   readScope,
@@ -161,6 +162,27 @@ describe('the scope sentence', () => {
     expect(sentence).toContain('Searching all memory.');
     expect(sentence).toContain('Relevance floor overridden to 0.00 (default 0.52)');
     expect(sentence).not.toContain('Scoped to floor');
+  });
+});
+
+describe('a filter pinned to a source that is switched off', () => {
+  // The toggle gates retrieval, not just indexing, so such a filter returns nothing whatever the
+  // index holds — and the Backend reports that as `index_empty`, i.e. "run a backfill", which
+  // cannot help. Naming the setting is what keeps "empty" from acquiring a fifth meaning.
+  const scope = { ...EMPTY_SCOPE, sourceTypes: ['commit', 'adr'] as const };
+
+  it('names only the sources actually switched off', () => {
+    expect(disabledScopeSources(scope, { commit: false, adr: true })).toEqual(['commit']);
+  });
+
+  it('says nothing when the setting could not be read', () => {
+    // `undefined` is "cannot tell" — accusing a working filter of being off is the worse error,
+    // and a Backend that predates these keys answers nothing at all.
+    expect(disabledScopeSources(scope, {})).toEqual([]);
+  });
+
+  it('ignores a source that is off but not part of the filter', () => {
+    expect(disabledScopeSources(EMPTY_SCOPE, { commit: false })).toEqual([]);
   });
 });
 

@@ -25,6 +25,7 @@ import type {
   ClaudeCodeSettings,
   GeneralSettings,
   GithubSettings,
+  MemorySettings,
   NotificationsSettingsDocument,
   ObsidianSettings,
   OllamaSettings,
@@ -168,9 +169,17 @@ describe('lookups', () => {
     expect(grouped).toHaveLength(settingsForCategory('integrations').length);
   });
 
-  it('has no entries for the Phase 3/4 placeholder categories', () => {
-    expect(settingsForCategory('memory')).toEqual([]);
+  it('has no entries for the Phase 4 placeholder category', () => {
+    // `memory` was here until Phase 3 gave both of its PRD §4.4 fields a consumer. `agents`
+    // stays: a field nothing reads is a lie, and the agent framework has not landed.
     expect(settingsForCategory('agents')).toEqual([]);
+  });
+
+  it('declares exactly the two PRD §4.4 item 4 memory fields', () => {
+    expect(settingsForCategory('memory').map((entry) => entry.path)).toEqual([
+      'memory.indexedSources',
+      'memory.retentionDays',
+    ]);
   });
 
   it('throws — loudly, with the path — for a path nobody declared', () => {
@@ -224,6 +233,34 @@ describe('defaults an empty database serves (§7.2)', () => {
     });
   });
 
+  it('memory: every source indexed, nothing expires', () => {
+    // The two defaults that matter most, for opposite reasons. Every source **on**, because an
+    // operator who configures an embedding model means "remember my work" and a source that is
+    // off by default is one they will never discover was missing. Every tier at `0` — never
+    // expire — because the other direction deletes vectors that cost real model time and cannot
+    // be recovered from anywhere but a re-index.
+    expect(settingDefault('memory.indexedSources')).toEqual({
+      session: true,
+      commit: true,
+      adr: true,
+      obsidianNote: true,
+      pullRequest: true,
+      document: true,
+    });
+    expect(settingDefault('memory.retentionDays')).toEqual({
+      session: 0,
+      project: 0,
+      global: 0,
+    });
+  });
+
+  it('has no retention control for the `agent` tier, which nothing writes', () => {
+    // A retention window for rows that cannot exist is a policy that can never apply — the same
+    // reasoning that keeps `agent` out of `PRODUCIBLE_MEMORY_TIERS` and out of the search
+    // filter. It arrives with its producer, in Phase 4.
+    expect(Object.keys(settingDefault('memory.retentionDays') as object)).not.toContain('agent');
+  });
+
   it('security: 7 days idle, 180 days retention, no extra origins', () => {
     expect(settingDefault('security.sessionTimeoutMinutes')).toBe(7 * 24 * 60);
     expect(settingDefault('security.auditLogRetentionDays')).toBe(180);
@@ -275,6 +312,39 @@ describe('normalization of stored rows', () => {
   it('treats `""` as unset for the paths that document it, and as absent elsewhere', () => {
     expect(normalizeSetting('integrations.claudeCode.cliPath', '')).toBe('');
     expect(normalizeSetting('integrations.github.account', '')).toBeNull();
+  });
+
+  it('repairs a corrupt source toggle to ON, never to OFF', () => {
+    // The asymmetry is the point: a source silently switched off by a bad row stops being
+    // indexed and stops answering, and nothing reports the absence. A source wrongly left on
+    // costs some embedding.
+    expect(
+      normalizeSetting('memory.indexedSources', { commit: 'nope', adr: false, pullRequest: null }),
+    ).toEqual({
+      session: true,
+      commit: true,
+      adr: false,
+      obsidianNote: true,
+      pullRequest: true,
+      document: true,
+    });
+  });
+
+  it('repairs a corrupt retention window to "never expire", never to a short one', () => {
+    // Same asymmetry, and here the wrong direction *deletes data* on the strength of bad JSON.
+    expect(
+      normalizeSetting('memory.retentionDays', { session: 'thirty', project: 30, global: -5 }),
+    ).toEqual({ session: 0, project: 30, global: 0 });
+  });
+
+  it('rejects a runaway retention window back to "never", never to the ten-year cap', () => {
+    // `integerValue` falls back rather than clamping, which is the registry's convention and
+    // happens to be the only safe direction here: silently clamping 10 000 days to 3 650 would
+    // start deleting ten-year-old memory an operator never asked to expire. The API boundary
+    // rejects the write outright (`maximum: 3650`); this is the repair for a row already stored.
+    expect(
+      normalizeSetting<{ session: number }>('memory.retentionDays', { session: 10_000 }).session,
+    ).toBe(0);
   });
 });
 
@@ -343,6 +413,10 @@ const FIELD_MANIFEST = {
     dailyReport: true,
     quietHours: true,
   } satisfies Record<keyof NotificationsSettingsDocument, true>,
+  memory: {
+    indexedSources: true,
+    retentionDays: true,
+  } satisfies Record<keyof MemorySettings, true>,
   security: {
     sessionTimeoutMinutes: true,
     auditLogRetentionDays: true,

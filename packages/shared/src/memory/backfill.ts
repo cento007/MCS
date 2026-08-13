@@ -46,7 +46,7 @@
  */
 
 import type { Db, DbTransaction } from '../db/index.js';
-import type { MemorySourceType } from '../entities/memory.js';
+import { MEMORY_SOURCE_TYPES, type MemorySourceType } from '../entities/memory.js';
 import type { ChunkBudget } from './chunk.js';
 import type { EmbeddingPort } from './embedding-port.js';
 import { type IndexOutcome, indexSource } from './indexer.js';
@@ -134,6 +134,16 @@ export interface BackfillProgress {
    * module knows how to page through".
    */
   readonly notesDone: boolean;
+  /**
+   * True once the repository documentation stage has run.
+   *
+   * A second flag rather than a second meaning for `notesDone`, and a Backend module
+   * (`memory/documents.ts`) rather than a `BACKFILL_SOURCE_ORDER` member, for exactly the
+   * reasons above: it is a bounded filesystem walk over repository working trees, with its own
+   * bounds and its own way of being absent (a repository whose `local_path` is not on this
+   * machine).
+   */
+  readonly documentsDone: boolean;
 }
 
 export function emptyProgress(): BackfillProgress {
@@ -149,6 +159,7 @@ export function emptyProgress(): BackfillProgress {
     lastError: null,
     pruned: 0,
     notesDone: false,
+    documentsDone: false,
   };
 }
 
@@ -185,6 +196,7 @@ export function readProgress(stats: unknown): BackfillProgress {
     lastError: typeof record['lastError'] === 'string' ? record['lastError'] : null,
     pruned: count('pruned'),
     notesDone: record['notesDone'] === true,
+    documentsDone: record['documentsDone'] === true,
   };
 }
 
@@ -203,6 +215,17 @@ export interface BackfillSliceOptions {
   readonly now?: (() => Date) | undefined;
   /** Aborts mid-slice on shutdown or lease expiry. The handler passes the job's signal. */
   readonly signal?: AbortSignal | undefined;
+  /**
+   * The source types `settings.memory.indexedSources` currently admits
+   * (`enabledMemorySources`). Omitted means all of them — the default policy, and the shape
+   * every existing caller and test already passes.
+   *
+   * A disabled stage is **skipped, not pruned**: its rows stay in `memory_items` and stop being
+   * returned by retrieval (which consults the same policy), so re-enabling the toggle costs
+   * nothing while turning it off costs no embedding work either. `mode: 'rebuild'` is the
+   * explicit path for actually discarding them.
+   */
+  readonly enabledSources?: readonly MemorySourceType[] | undefined;
 }
 
 export interface BackfillSliceResult {
@@ -229,6 +252,7 @@ export async function runBackfillSlice(
   options: BackfillSliceOptions,
 ): Promise<BackfillSliceResult> {
   const batchSize = options.batchSize ?? BACKFILL_BATCH_SIZE;
+  const enabled = options.enabledSources ?? MEMORY_SOURCE_TYPES;
   let progress = options.progress;
 
   const stage = progress.stage;
@@ -237,6 +261,16 @@ export async function runBackfillSlice(
     return {
       progress: { ...progress, pruned: progress.pruned + pruned },
       done: true,
+      halt: null,
+    };
+  }
+
+  // A source the operator has switched off costs one delivery to step over rather than a page
+  // of reads — cheap, and it keeps "which stage is next" in exactly one place.
+  if (!enabled.includes(stage)) {
+    return {
+      progress: { ...progress, stage: nextStageAfter(stage), cursor: null },
+      done: false,
       halt: null,
     };
   }

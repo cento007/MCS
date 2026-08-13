@@ -184,6 +184,13 @@ export interface BuildAppOptions {
    */
   readonly memoryBackfillBatchSize?: number | undefined;
   /**
+   * The retention sweep's batch bound and tick interval (`memory/retention.ts`). Tests shrink
+   * both so "a full batch schedules a catch-up tick" is demonstrable without seeding five
+   * hundred chunks or waiting six hours.
+   */
+  readonly memoryRetentionBatchSize?: number | undefined;
+  readonly memoryRetentionTickMinutes?: number | undefined;
+  /**
    * The context package's two outbound edges (TDS 04 §6.7): the semantic-memory budget and the
    * `git status` budget. Tests shrink them so the degraded branches — "memory did not answer in
    * time", "git did not answer in time" — are demonstrable in milliseconds rather than by
@@ -399,6 +406,12 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     ...(options.memoryBackfillBatchSize === undefined
       ? {}
       : { backfillBatchSize: options.memoryBackfillBatchSize }),
+    ...(options.memoryRetentionBatchSize === undefined
+      ? {}
+      : { retentionBatchSize: options.memoryRetentionBatchSize }),
+    ...(options.memoryRetentionTickMinutes === undefined
+      ? {}
+      : { retentionTickMinutes: options.memoryRetentionTickMinutes }),
     ...(options.now === undefined ? {} : { now: options.now }),
     onError: (error, context) => {
       app.log.error({ err: error, context }, 'memory indexing error');

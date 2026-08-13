@@ -5,6 +5,7 @@ import {
   emptyProgress,
   isBackfillSourceType,
   readProgress,
+  runBackfillSlice,
 } from './backfill.js';
 
 /**
@@ -82,6 +83,66 @@ describe('readProgress — untrusted JSONB in, safe progress out', () => {
   it('reads notesDone only from a real boolean', () => {
     expect(readProgress({ notesDone: 'yes' }).notesDone).toBe(false);
     expect(readProgress({ notesDone: true }).notesDone).toBe(true);
+  });
+
+  it('reads documentsDone the same way, and defaults it to "not yet run"', () => {
+    // A run row written by a build that predates the documentation stage has no such key. It
+    // must read as `false` so the stage runs once, not as `true` — which would silently skip
+    // PRD §6.3's sixth source on every install that upgraded rather than started fresh.
+    expect(readProgress({ stage: null }).documentsDone).toBe(false);
+    expect(readProgress({ documentsDone: 'yes' }).documentsDone).toBe(false);
+    expect(readProgress({ documentsDone: true }).documentsDone).toBe(true);
+  });
+});
+
+describe('the indexed-source toggles gate the sweep', () => {
+  /**
+   * Only the *stage selection* is exercised here — no database, so no page is loaded. The
+   * assertion is that a disabled stage advances the cursor to the next one instead of reading
+   * it, which is what makes `settings.memory.indexedSources` a switch the backfill obeys rather
+   * than a label. The end-to-end proof (nothing written for a disabled source) is in
+   * `apps/backend/src/memory/memory-policy.int.test.ts`.
+   */
+  const NOT_REACHED = {
+    db: null as never,
+    embedder: null as never,
+    store: null as never,
+    stamp: { model: 'x', dimension: 3 },
+    budget: { maxBytes: 1_800, contextTokens: 2_048, contextDeclared: true },
+  } as const;
+
+  it('steps over a disabled stage without touching the database', async () => {
+    const slice = await runBackfillSlice({
+      ...NOT_REACHED,
+      progress: { ...emptyProgress(), stage: 'adr' },
+      enabledSources: ['session', 'commit'],
+    });
+
+    // It reached the next stage without dereferencing `db` — which is `null` here precisely so
+    // that "did it read the table" is answered by whether this line was reached at all.
+    expect(slice.progress.stage).toBe('pull_request');
+    expect(slice.progress.cursor).toBeNull();
+    expect(slice.done).toBe(false);
+    expect(slice.halt).toBeNull();
+  });
+
+  it('walks off the end when every stage is disabled, rather than looping', async () => {
+    let progress = { ...emptyProgress() };
+    for (let step = 0; step < BACKFILL_SOURCE_ORDER.length; step += 1) {
+      progress = (await runBackfillSlice({ ...NOT_REACHED, progress, enabledSources: [] }))
+        .progress;
+    }
+    expect(progress.stage).toBeNull();
+  });
+
+  it('reads an omitted `enabledSources` as "all of them" — the default policy', async () => {
+    // The existing callers and every test that predates the toggles pass nothing; that must
+    // keep meaning "index everything", not "index nothing". With `db: null` the only way to
+    // observe "it tried to read the table" is that dereferencing it threw — which is exactly
+    // the outcome the two cases above must NOT produce.
+    await expect(
+      runBackfillSlice({ ...NOT_REACHED, progress: { ...emptyProgress(), stage: 'adr' } }),
+    ).rejects.toThrow();
   });
 });
 

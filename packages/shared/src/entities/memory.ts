@@ -31,11 +31,27 @@ export const PRODUCIBLE_MEMORY_TIERS = [
 ] as const satisfies readonly MemoryTier[];
 
 /**
+ * The three tiers above, as a type.
+ *
+ * Named so that anything scoped to what Phase 3 can actually write — the retention policy, the
+ * search filter — says so in its signature rather than accepting `MemoryTier` and silently
+ * doing nothing for `agent`.
+ */
+export type ProducibleMemoryTier = (typeof PRODUCIBLE_MEMORY_TIERS)[number];
+
+/**
  * PRD §6.3 — the indexed sources, one snake_case token each.
  *
  * `pull_request` covers §6.3's "PR Descriptions" and `document` its "Documentation"; the six
  * entries map one-to-one onto the bullet list and no further, so the Settings → Memory panel's
- * "indexed sources" toggles (PRD §4.4 item 4) can be generated from this list when they land.
+ * "indexed sources" toggles (PRD §4.4 item 4) are generated from this list — see
+ * `MEMORY_SOURCE_FIELDS` below and `MEMORY_KEYS.indexedSources` in the settings registry.
+ *
+ * **All six have a producer.** `document` was the last one without: it is repository
+ * documentation — the Markdown at a repository's root and under its `docs/` tree — indexed by
+ * `apps/backend/src/memory/documents.ts`. A source type in this list that nothing produces is a
+ * filter an operator can select and never match, which is the same dishonesty
+ * `PRODUCIBLE_MEMORY_TIERS` exists to prevent for the `agent` tier.
  */
 export const MEMORY_SOURCE_TYPES = [
   'session',
@@ -52,11 +68,28 @@ export function isMemorySourceType(value: unknown): value is MemorySourceType {
 }
 
 /**
+ * The Settings → Memory document field for one source type — `pull_request` → `pullRequest`.
+ *
+ * **Derived, never listed.** A hand-written map from source type to field name is a second
+ * declaration of the same vocabulary and the copy that drifts is the one an operator finds: a
+ * toggle whose field name no longer matches its source type silently stops gating anything.
+ */
+export function memorySourceField(sourceType: MemorySourceType): string {
+  return sourceType.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+}
+
+/** `MEMORY_SOURCE_TYPES` as the camelCase field names the settings document uses, in order. */
+export const MEMORY_SOURCE_FIELDS: readonly string[] = Object.freeze(
+  MEMORY_SOURCE_TYPES.map(memorySourceField),
+);
+
+/**
  * Sources identified by a **row id** in this database versus by an external **reference**.
  *
- * `obsidian_note` and `document` live in a vault or on disk and have no `uuid` of their own, so
- * they are addressed by `source_ref` (a vault-relative path). Everything else is a table row.
- * `ck_memory_items_source_identity` enforces exactly one of the two per row.
+ * `obsidian_note` and `document` live in a vault or in a repository working tree and have no
+ * `uuid` of their own, so they are addressed by `source_ref` — a vault-relative path for a note,
+ * `<repositoryId>/<repo-relative path>` for a document (`documentSourceRef`). Everything else is
+ * a table row. `ck_memory_items_source_identity` enforces exactly one of the two per row.
  */
 export const REFERENCE_MEMORY_SOURCE_TYPES = [
   'obsidian_note',

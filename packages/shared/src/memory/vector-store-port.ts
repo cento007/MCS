@@ -189,8 +189,9 @@ export interface VectorStorePort {
    * `memory/index.ts` gates it behind a request that names the two models involved.
    *
    * The caller is responsible for the `memory_items` rows the deleted points belonged to —
-   * see `deleteRowsForOtherModels`. Leaving them would leave every one of them claiming
-   * `indexed_at` for a vector that no longer exists.
+   * see `deleteAllMemoryItems`, which is **every** row and not merely the ones from a different
+   * model. Leaving any of them would leave rows claiming `indexed_at` for vectors that no longer
+   * exist, and the sweep that follows would skip them as unchanged.
    */
   resetCollection(
     stamp: EmbeddingStamp,

@@ -93,6 +93,36 @@ export function makeNotifications(
   };
 }
 
+/**
+ * `GET /settings/memory` (PRD §4.4 item 4) — the Backend's own shape, as a plain record.
+ *
+ * `retentionDays` with **`0` meaning never expire**, which is what `MEMORY_KEYS` in the shared
+ * settings registry defines and what its JSON Schema (`integer, minimum: 0`) will accept; the
+ * three producible tiers only, because `agent` has no producer. Sources are one boolean per
+ * `MEMORY_SOURCE_TYPES` entry, keyed by `memorySourceField`.
+ *
+ * Not typed as an interface on purpose: the panel reads this document defensively because the
+ * `memory` keys landed after the screen was specified, and a fixture typed to the contract would
+ * let a test assert a shape the panel is required *not* to assume. The suites pass `{}` (the
+ * Backend that shipped before those keys), half a document, and this — all through one helper.
+ */
+export function makeMemorySettings(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    indexedSources: {
+      session: true,
+      commit: true,
+      adr: true,
+      obsidianNote: true,
+      pullRequest: true,
+      document: true,
+    },
+    retentionDays: { session: 90, project: 0, global: 0 },
+    ...overrides,
+  };
+}
+
 export function makeSecurity(overrides: Partial<SecuritySettings> = {}): SecuritySettings {
   return {
     sessionTimeoutMinutes: 10_080,

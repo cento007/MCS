@@ -1,12 +1,16 @@
 import {
+  allMemorySourcesEnabled,
   type Db,
   describeEmbeddingFailure,
+  enabledMemorySources,
   type MemoryFilter,
   type MemoryItemRow,
   type MemorySourceType,
   type MemoryTier,
   PRODUCIBLE_MEMORY_TIERS,
+  parseDocumentSourceRef,
   readMemoryItemsByIds,
+  readMemoryPolicy,
   schema,
 } from '@mc/shared';
 import { eq, inArray, or } from 'drizzle-orm';
@@ -57,6 +61,18 @@ import type { MemoryRuntime } from './runtime.js';
  *
  * The floor is **0.52** by default, and it is a *measured* number rather than a guessed one —
  * see `DEFAULT_MIN_SCORE`, which records the score table it came from.
+ *
+ * ## The indexed-source toggles apply here too, and that is the point of them
+ *
+ * `settings.memory.indexedSources` (PRD §4.4 item 4) stops a source being *written*. If it did
+ * only that, an operator who turned `commit` off would keep getting commit chunks back for as
+ * long as the old rows existed — a switch that reads "off" while its results keep arriving,
+ * which is the failure mode this codebase has been bitten by before
+ * (`integrations.ollama.enabled`). So the same predicate gates retrieval: a disabled source is
+ * intersected out of the filter before the query runs.
+ *
+ * Rows are **not** deleted when a toggle goes off (see `indexing.ts` for why), so re-enabling
+ * one restores its results immediately and costs no embedding.
  */
 
 /**
@@ -243,7 +259,25 @@ export class MemorySearchService {
       throw new ApiError('INTERNAL', 'The embedder returned no vector for the query');
     }
 
-    const filters = buildFilters(input);
+    const scoped = await this.#applySourcePolicy(input);
+    if (scoped === null) {
+      return {
+        results: [],
+        // Not its own `emptyReason`: from the client's side this *is* "nothing in the index
+        // matches this scope", and the actionable half is the detail. Adding a seventh reason
+        // for a case whose remedy is a sentence would push a new vocabulary word onto every
+        // consumer of this document for no decision they could make differently.
+        emptyReason: 'index_empty',
+        detail:
+          'No memory source is enabled for this search. Turn one on in Settings → Memory, or ' +
+          'widen the `sourceTypes` filter — every type it names is currently switched off.',
+        minScore,
+        embeddingModel: state.stamp.model,
+        candidatesConsidered: 0,
+      };
+    }
+
+    const filters = buildFilters(scoped);
     const seen = new Map<string, { score: number; ordinal: number }>();
     let candidates = 0;
 
@@ -325,6 +359,32 @@ export class MemorySearchService {
       embeddingModel: state.stamp.model,
       candidatesConsidered: candidates,
     };
+  }
+
+  /**
+   * Narrow a request's `sourceTypes` to the ones `settings.memory.indexedSources` admits.
+   *
+   * `null` means "nothing can match" — every requested type is switched off, or every type is.
+   * The caller answers that as an empty result with a reason rather than running a query whose
+   * answer is known.
+   *
+   * When every source is enabled — the default — the request is returned untouched rather than
+   * carrying a six-value allowlist into the filter. That keeps the common path byte-identical
+   * to what it was before toggles existed, which matters because `MemoryFilter` is a closed
+   * shape the in-memory fake has to implement exactly.
+   */
+  async #applySourcePolicy(input: MemorySearchInput): Promise<MemorySearchInput | null> {
+    const policy = await readMemoryPolicy(this.#db);
+    if (allMemorySourcesEnabled(policy)) return input;
+
+    const enabled = enabledMemorySources(policy);
+    if (enabled.length === 0) return null;
+
+    if (input.sourceTypes === undefined) return { ...input, sourceTypes: enabled };
+
+    const narrowed = input.sourceTypes.filter((type) => enabled.includes(type));
+    if (narrowed.length === 0) return null;
+    return { ...input, sourceTypes: narrowed };
   }
 
   /** `GET /api/v1/memory-items/{id}` — one chunk, with the same reachable context. */
@@ -508,6 +568,54 @@ export class MemorySearchService {
           repositoryId: row.repositoryId,
           sessionId: row.sessionId,
           occurredAt: row.committedAt.toISOString(),
+        });
+      }
+    }
+
+    /**
+     * Repository documentation. The only file-backed source with a row behind it — not the
+     * *file*, but the Repository it belongs to — and without this branch a document hit would
+     * fall back to a bare basename (`03-database-schema`) and no `repositoryId`, which is the
+     * unclickable-result defect this whole method exists to avoid.
+     */
+    const documentRefs = [
+      ...new Set(
+        rows
+          .filter((row) => row.sourceType === 'document' && row.sourceRef !== null)
+          .map((row) => row.sourceRef as string),
+      ),
+    ];
+    if (documentRefs.length > 0) {
+      const parsed = documentRefs
+        .map((ref) => ({ ref, parts: parseDocumentSourceRef(ref) }))
+        .filter(
+          (entry): entry is { ref: string; parts: NonNullable<typeof entry.parts> } =>
+            entry.parts !== null,
+        );
+      const repositoryIds = [...new Set(parsed.map((entry) => entry.parts.repositoryId))];
+
+      const found =
+        repositoryIds.length === 0
+          ? []
+          : await this.#db
+              .select({
+                id: schema.repositories.id,
+                projectId: schema.repositories.projectId,
+              })
+              .from(schema.repositories)
+              .where(inArray(schema.repositories.id, repositoryIds));
+      const byRepository = new Map(found.map((row) => [row.id, row]));
+
+      for (const entry of parsed) {
+        const repository = byRepository.get(entry.parts.repositoryId);
+        meta.set(`document:${entry.ref}`, {
+          // The repo-relative path, which is what `projectDocument` titles it and what an
+          // operator recognises. `docs/tds/03-database-schema.md`, not `03-database-schema`.
+          title: entry.parts.relativePath,
+          projectId: repository?.projectId ?? null,
+          repositoryId: repository?.id ?? null,
+          sessionId: null,
+          occurredAt: null,
         });
       }
     }

@@ -225,7 +225,7 @@ describe('reads on an empty database (§7.2)', () => {
     expect(integrations.qdrant.apiKey).toEqual({ isSet: false, updatedAt: null });
   });
 
-  it('serves the whole document, Phase 3/4 categories included as empty', async () => {
+  it('serves the whole document, with the Phase 4 category still empty', async () => {
     const document = await get<Record<string, unknown>>('/api/v1/settings');
 
     expect(Object.keys(document)).toEqual([
@@ -236,7 +236,20 @@ describe('reads on an empty database (§7.2)', () => {
       'agents',
       'security',
     ]);
-    expect(document['memory']).toEqual({});
+    // `agents` has no fields until Phase 4 gives them a consumer; `memory` now has both of its
+    // PRD §4.4 item 4 fields, served from the registry on a database with no rows at all.
+    expect(document['agents']).toEqual({});
+    expect(document['memory']).toEqual({
+      indexedSources: {
+        session: true,
+        commit: true,
+        adr: true,
+        obsidianNote: true,
+        pullRequest: true,
+        document: true,
+      },
+      retentionDays: { session: 0, project: 0, global: 0 },
+    });
   });
 });
 

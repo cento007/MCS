@@ -177,6 +177,53 @@ export interface NotificationsSettingsDocument {
   readonly quietHours: QuietHoursSettings;
 }
 
+// ------------------------------------------------------------------------------------- memory
+
+/**
+ * PRD §4.4 item 4, first half — "indexed sources (sessions, commits, ADRs, notes, PRs, docs)".
+ *
+ * One boolean per `MEMORY_SOURCE_TYPES` entry, field name = `memorySourceField(type)`, so the
+ * six toggles and the six source types cannot drift apart. Every one of them is **read by the
+ * indexer and by retrieval** — see `readMemoryPolicy` — because a toggle nothing obeys is worse
+ * than no toggle at all.
+ *
+ * Turning a source off stops it being indexed and stops its existing chunks being returned; the
+ * rows are kept, because deletion is irreversible and re-embedding a corpus is not free. The
+ * explicit destructive path is `POST /memory-items/backfill { "mode": "rebuild" }`, which drops
+ * the collection and re-indexes only the sources that are on.
+ */
+export interface IndexedSourceToggles {
+  readonly session: boolean;
+  readonly commit: boolean;
+  readonly adr: boolean;
+  readonly obsidianNote: boolean;
+  readonly pullRequest: boolean;
+  readonly document: boolean;
+}
+
+/**
+ * PRD §4.4 item 4, second half — "retention policy per memory tier", and PRD §6.1's
+ * "Session Memory — temporary" made true.
+ *
+ * Days, per tier, `0` = never expire — the same convention `security.auditLogRetentionDays`
+ * already uses for "keep forever", and the default for all three, so an operator opts into
+ * losing data rather than discovering it gone.
+ *
+ * **Three tiers, not four.** `agent` is Phase 4 and nothing writes it
+ * (`PRODUCIBLE_MEMORY_TIERS`); a retention control for rows that cannot exist would be a policy
+ * that can never apply. It arrives with its producer.
+ */
+export interface MemoryRetentionDays {
+  readonly session: number;
+  readonly project: number;
+  readonly global: number;
+}
+
+export interface MemorySettings {
+  readonly indexedSources: IndexedSourceToggles;
+  readonly retentionDays: MemoryRetentionDays;
+}
+
 // ----------------------------------------------------------------------------------- security
 
 export interface SecuritySettings {
@@ -192,16 +239,17 @@ export interface SecuritySettings {
 /**
  * `GET /api/v1/settings` (§7.3).
  *
- * `memory` (Phase 3) and `agents` (Phase 4) are named by §7.3 and have **no fields yet**, so
- * they serialise as `{}`. That is the honest answer: the categories exist in the storage CHECK
- * and in the UI rail, and inventing placeholder fields for them would create settings nothing
- * reads and a migration to remove.
+ * `agents` (Phase 4) is named by §7.3 and has **no fields yet**, so it serialises as `{}`. That
+ * is the honest answer: the category exists in the storage CHECK and in the UI rail, and
+ * inventing placeholder fields for it would create settings nothing reads and a migration to
+ * remove. `memory` was the same until Phase 3's indexer and retention sweep gave both of its
+ * PRD §4.4 fields a real consumer.
  */
 export interface SettingsDocument {
   readonly general: GeneralSettings;
   readonly integrations: IntegrationsSettings;
   readonly notifications: NotificationsSettingsDocument;
-  readonly memory: Record<string, never>;
+  readonly memory: MemorySettings;
   readonly agents: Record<string, never>;
   readonly security: SecuritySettings;
 }

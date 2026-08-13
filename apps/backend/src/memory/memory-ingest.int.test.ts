@@ -647,6 +647,49 @@ describe('a model change', () => {
     expect(store.points).toHaveLength(afterRows.length);
   });
 
+  /**
+   * The reported defect, reproduced: a rebuild whose model did **not** change.
+   *
+   * `resetCollection` destroys every point, so every stored row's `qdrant_point_id` names
+   * something that no longer exists. The reset used to drop only the rows of *other* models, so
+   * under an unchanged model it kept them all — and `planChunks` then skipped every one of them
+   * as unchanged (hash matches, `indexed_at` set). The run reported success with a full
+   * `memory_items` table and an empty collection: an index that says it is complete and answers
+   * nothing.
+   */
+  it('REBUILDS FROM ZERO UNDER AN UNCHANGED MODEL, not to an empty collection', async () => {
+    const { projectId } = await seedProject();
+    await seedAdr({ projectId, decision: 'PostgreSQL is the single stateful substrate.' });
+
+    const app = await configuredApp({ backfillBatchSize: 5 });
+    const runToCompletion = async (runId: string): Promise<void> => {
+      for (let slice = 0; slice < 20; slice += 1) {
+        await app.memory.indexing.handle({ kind: 'backfill', runId });
+        if ((await app.memory.indexing.status()).state === 'completed') return;
+      }
+      throw new Error('backfill did not finish within the slice budget');
+    };
+
+    const first = await app.memory.indexing.trigger({ mode: 'incremental' });
+    await runToCompletion(first.id);
+
+    const before = await memoryRows();
+    expect(before.length).toBeGreaterThan(0);
+    expect(store.points).toHaveLength(before.length);
+
+    markEmbedBaseline();
+    const rebuild = await app.memory.indexing.trigger({ mode: 'rebuild' });
+    await runToCompletion(rebuild.id);
+
+    const after = await memoryRows();
+    expect(after.length).toBe(before.length);
+    // The claim: every chunk was embedded again, because there was no vector left to reuse.
+    expect(chunksEmbedded()).toBe(before.length);
+    // And the two stores agree again — the failure mode was a full table over an empty store.
+    expect(store.points).toHaveLength(after.length);
+    expect(after.every((row) => row.indexedAt !== null)).toBe(true);
+  });
+
   it('status names every model present, so a straggler is visible', async () => {
     const { projectId } = await seedProject();
     const adr = await seedAdr({ projectId, decision: 'Indexed.' });

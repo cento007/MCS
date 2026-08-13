@@ -6,21 +6,24 @@ import {
   countRowsForOtherModels,
   createJob,
   type Db,
+  deleteAllMemoryItems,
   deleteMemoryItemsForSession,
-  deleteRowsForOtherModels,
   describeProgress,
   type EventEnvelope,
   type EventType,
   emptyProgress,
+  enabledMemorySources,
   failMemoryRun,
   findActiveMemoryRun,
   findLatestMemoryRun,
   findMemoryRun,
   indexSource,
   insertMemoryRun,
+  isSourceIndexed,
   type JobPayload,
   listIndexedModels,
   MEMORY_RUN_KIND,
+  type MemoryPolicy,
   type MemoryRunMode,
   type MemoryRunRow,
   type MemorySourceType,
@@ -31,6 +34,7 @@ import {
   purgeSource,
   QUEUE_NAMES,
   type Queue,
+  readMemoryPolicy,
   readSessionTurns,
   reclaimAbandonedSyncRuns,
   runBackfillSlice,
@@ -49,6 +53,7 @@ import {
 } from '../db/index.js';
 import type { EventBus, Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
+import { type DocumentStageResult, indexRepositoryDocuments } from './documents.js';
 import { indexVaultNotes, type NoteStageResult } from './notes.js';
 import type { MemoryRuntime, MemoryRuntimeKind, MemoryRuntimeState } from './runtime.js';
 
@@ -106,6 +111,27 @@ import type { MemoryRuntime, MemoryRuntimeKind, MemoryRuntimeState } from './run
  * the entire transcript per turn — at 400 chunks that is 400 hashes per message for one chunk's
  * worth of new content — and it would index a conversation that is still being had. A Session
  * is indexed when it reaches a terminal state, which is when its transcript is a fact.
+ *
+ * ## The indexed-source toggles are enforced here, at the consumer
+ *
+ * `settings.memory.indexedSources` (PRD §4.4 item 4) is read **once per job** and consulted in
+ * three places on this path: `#indexOne` refuses a disabled source, `runBackfillSlice` steps
+ * over a disabled stage, and the two filesystem stages below are skipped when their own source
+ * is off. Retrieval consults the identical predicate, so a source that is switched off is
+ * neither written nor returned.
+ *
+ * Gating at the consumer rather than at the producer is deliberate: the triggers are domain
+ * events on a shared bus and the backfill is a self-continuing job, so "did the operator allow
+ * this?" has to be answered at the one place all of them converge or it will be answered
+ * differently in each. The cost is an enqueue that turns out to be a no-op, which is a row in
+ * pg-boss and nothing else.
+ *
+ * **A disabled source's existing rows are kept.** They stop being returned (retrieval applies
+ * the same policy) and stop being maintained, and re-enabling the toggle makes them live again
+ * for free. Purging on toggle-off would discard embedding time that cannot be recovered from
+ * anywhere but a re-index, and doing it silently — on a settings save — is exactly the kind of
+ * surprise a destructive action must not be. `mode: 'rebuild'` is the explicit way to discard
+ * them, and it re-indexes only what is switched on.
  */
 
 /** The `memory.index` job payload. A job name, not an event (TDS 04 §15.2). */
@@ -363,6 +389,11 @@ export class MemoryIndexService {
     const state = await this.#runtime.ready();
     if (state.kind !== 'ready') return;
 
+    // The operator's own answer to "should this be remembered". Nothing is written and nothing
+    // is purged: an existing chunk of a disabled source simply stops being maintained, and
+    // retrieval stops returning it.
+    if (!isSourceIndexed(await readMemoryPolicy(this.#db), sourceType)) return;
+
     const projection = await this.#project(sourceType, sourceId);
     if (projection === null) {
       // The row is gone between the event and the job. Purge rather than skip: whatever was
@@ -495,8 +526,15 @@ export class MemoryIndexService {
   }
 
   /**
-   * The model-change path: destroy the collection, drop the rows that named its points, and
+   * The rebuild path: destroy the collection, drop **every** row that named a point in it, and
    * let the caller's run rebuild from zero.
+   *
+   * ⚠ It used to drop only the rows of *other* models (`deleteRowsForOtherModels`), which was
+   * correct exactly when a rebuild followed a model change and silently wrong otherwise:
+   * `POST /memory-items/backfill { "mode": "rebuild" }` under an unchanged model destroyed the
+   * collection and kept every row, and the sweep that followed skipped all of them as unchanged
+   * (`planChunks` — hash matches, `indexed_at` set). The run completed, reported success, and
+   * left a full `memory_items` with an empty collection. See `deleteAllMemoryItems`.
    *
    * ⚠ **Retrieval is unavailable while this runs, and that is a real limitation** — not an
    * oversight. `memory_items.embedding_model` is per row precisely so old vectors could keep
@@ -505,8 +543,9 @@ export class MemoryIndexService {
    * a second live model in it is exactly what `verifyStamp` exists to refuse. Serving through a
    * model change would need a second collection plus a settings-owned "active collection"
    * pointer to swap atomically — deferred, and named here so it is a decision rather than a
-   * gap. What the per-row model still buys today is the work list (`deleteRowsForOtherModels`)
-   * and a resumable rebuild: rows already written under the new model are hash matches.
+   * gap. What the per-row model still buys today is the work list
+   * (`countRowsForOtherModels` — "how much of this index is stale") and the fact that a row
+   * written *during* a rebuild is a hash match for the next slice of that same rebuild.
    */
   async #rebuild(): Promise<void> {
     const reset = await this.#runtime.reset();
@@ -514,7 +553,7 @@ export class MemoryIndexService {
       throw new ApiError('INTEGRATION_NOT_CONFIGURED', reset.reason, { reason: reset.kind });
     }
     await this.#db.transaction(async (tx) => {
-      await deleteRowsForOtherModels(tx, reset.stamp.model);
+      await deleteAllMemoryItems(tx);
     });
   }
 
@@ -544,13 +583,32 @@ export class MemoryIndexService {
       return;
     }
 
+    const policy = await readMemoryPolicy(this.#db);
+
     // Vault notes are their own stage and run after the database sources, because a vault scan
     // is filesystem I/O with its own bounds and its own way of being absent.
     if (progress.stage === null && !progress.notesDone) {
-      const notes = await this.#runNoteStage(state, progress);
+      const notes = await this.#runNoteStage(state, progress, policy);
       progress = notes.progress;
       if (notes.halt !== null) {
         await failMemoryRun(this.#db, runId, notes.halt, progress, this.#now(), mode);
+        await this.#emitRunFinished(runId, 'failed', progress, mode);
+        return;
+      }
+      await saveMemoryRunProgress(this.#db, runId, progress, this.#now(), mode);
+      await this.enqueue({ kind: 'backfill', runId });
+      return;
+    }
+
+    // Repository documentation — PRD §6.3's sixth source. Its own stage after the notes one,
+    // and after it rather than before for one reason: `documents.ts` excludes anything inside
+    // the configured Obsidian vault, so the vault's own copy of a file is the one that is
+    // already indexed by the time this runs.
+    if (progress.stage === null && progress.notesDone && !progress.documentsDone) {
+      const documents = await this.#runDocumentStage(state, progress, policy);
+      progress = documents.progress;
+      if (documents.halt !== null) {
+        await failMemoryRun(this.#db, runId, documents.halt, progress, this.#now(), mode);
         await this.#emitRunFinished(runId, 'failed', progress, mode);
         return;
       }
@@ -566,6 +624,7 @@ export class MemoryIndexService {
       stamp: state.stamp,
       budget: state.budget,
       progress,
+      enabledSources: enabledMemorySources(policy),
       ...(this.#batchSize === undefined ? {} : { batchSize: this.#batchSize }),
       now: this.#now,
       ...(signal === undefined ? {} : { signal }),
@@ -593,7 +652,14 @@ export class MemoryIndexService {
   async #runNoteStage(
     state: Extract<MemoryRuntimeState, { kind: 'ready' }>,
     progress: BackfillProgress,
+    policy: MemoryPolicy,
   ): Promise<{ progress: BackfillProgress; halt: string | null }> {
+    // Switched off: the stage is marked done without being run, so the sweep moves on rather
+    // than re-entering it every slice. Nothing already indexed is touched.
+    if (!isSourceIndexed(policy, 'obsidian_note')) {
+      return { progress: { ...progress, notesDone: true }, halt: null };
+    }
+
     const result: NoteStageResult = await indexVaultNotes({
       db: this.#db,
       embedder: state.embedder,
@@ -611,6 +677,43 @@ export class MemoryIndexService {
         sourcesIndexed: progress.sourcesIndexed + result.indexed,
         sourcesSkipped: progress.sourcesSkipped + result.skipped,
         chunksEmbedded: progress.chunksEmbedded + result.embedded,
+        failures: progress.failures + result.failures,
+        lastError: result.lastError ?? progress.lastError,
+      },
+      halt: result.halt,
+    };
+  }
+
+  async #runDocumentStage(
+    state: Extract<MemoryRuntimeState, { kind: 'ready' }>,
+    progress: BackfillProgress,
+    policy: MemoryPolicy,
+  ): Promise<{ progress: BackfillProgress; halt: string | null }> {
+    if (!isSourceIndexed(policy, 'document')) {
+      return { progress: { ...progress, documentsDone: true }, halt: null };
+    }
+
+    const result: DocumentStageResult = await indexRepositoryDocuments({
+      db: this.#db,
+      embedder: state.embedder,
+      store: state.store,
+      stamp: state.stamp,
+      budget: state.budget,
+      now: this.#now,
+    });
+
+    return {
+      progress: {
+        ...progress,
+        documentsDone: true,
+        sourcesSeen: progress.sourcesSeen + result.seen,
+        sourcesIndexed: progress.sourcesIndexed + result.indexed,
+        sourcesSkipped: progress.sourcesSkipped + result.skipped,
+        chunksEmbedded: progress.chunksEmbedded + result.embedded,
+        // `purged` here is documents that left a repository; `pruned` is the end-of-run sweep
+        // over rows whose *source row* has gone. Different rules, but both are "rows this run
+        // removed", and the run row has one counter for that.
+        pruned: progress.pruned + result.purged,
         failures: progress.failures + result.failures,
         lastError: result.lastError ?? progress.lastError,
       },
@@ -756,7 +859,8 @@ export class MemoryIndexService {
       }
       default:
         // `obsidian_note` and `document` are file-backed and reached by `source_ref`, never by
-        // a row id — they are indexed by the note stage, not by a `source` job.
+        // a row id — they are indexed by their own filesystem stages (`notes.ts`,
+        // `documents.ts`), not by a `source` job.
         return null;
     }
   }

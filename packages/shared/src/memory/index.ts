@@ -19,6 +19,7 @@
  * …and ingestion, which is what the foundation was for:
  *   chunk.ts              the byte bound that stops Ollama silently truncating. Start here
  *   projection.ts         what text represents each PRD §6.3 source. Pure, per source type
+ *   policy.ts             the Settings → Memory document: which sources, and for how long
  *   store.ts              `memory_items` reads and writes, and the derived point id
  *   indexer.ts            one source in, two consistent stores out; the content-hash diff
  *   backfill.ts           the bounded, resumable sweep over everything that predates the index
@@ -39,6 +40,7 @@ export * from './http.js';
 export * from './indexer.js';
 export * from './memory-store.js';
 export * from './ollama.js';
+export * from './policy.js';
 export * from './projection.js';
 export * from './provision.js';
 export * from './qdrant.js';

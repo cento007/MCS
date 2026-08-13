@@ -167,7 +167,8 @@ function RunLine({ status, active }: { status: MemoryBackfillStatus; active: boo
     return (
       <p className="mt-2 text-2xs text-text-muted leading-150">
         No backfill has run on this instance. Sessions, commits, ADRs and pull requests are indexed
-        as they happen — a backfill is what reaches everything that already existed.
+        as they happen; vault notes and repository documentation are file-backed and only a backfill
+        reaches them — as it does everything that already existed.
       </p>
     );
   }

@@ -107,6 +107,24 @@ export const QUEUE_NAMES = Object.freeze({
    * so an incremental index queued behind one waits seconds, not minutes.
    */
   MEMORY_INDEX: 'memory.index',
+  /**
+   * The memory retention tick — `settings.memory.retentionDays` (PRD §4.4 item 4, §6.1's
+   * "Session Memory — temporary").
+   *
+   * Self-rescheduling like `github.poll`, `notification.schedule` and `obsidian.schedule`, and
+   * for the same reason: a durable job survives a restart where a `setInterval` does not, and a
+   * deterministic tick id makes re-priming after a restart a no-op rather than a second chain.
+   *
+   * A separate queue from `memory.index` on purpose. `memory.index` is `concurrency: 1` so that
+   * every *write* to the index is serial, and putting a periodic delete on it would make the
+   * tick wait behind a backfill slice — or, worse, make a backfill wait behind a tick that
+   * cannot run because the runtime is down. They contend for nothing: retention deletes rows by
+   * age and never writes a `(source, chunk, model)` row.
+   *
+   * A job name, not an event. The outcome is `memory.item_deleted`, which does carry an F6
+   * envelope and is in the §15.4 catalog.
+   */
+  MEMORY_RETENTION: 'memory.retention',
 } as const);
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

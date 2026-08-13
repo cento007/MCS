@@ -11,6 +11,7 @@ import { PhaseBadge, PhasePlaceholder } from '../../components/PhasePlaceholder.
 import { UnsavedChangesGuard } from './guard.js';
 import { GeneralPanel } from './panels/GeneralPanel.js';
 import { IntegrationsPanel } from './panels/IntegrationsPanel.js';
+import { MemoryPanel } from './panels/MemoryPanel.js';
 import { NotificationsPanel } from './panels/NotificationsPanel.js';
 import { SecurityPanel } from './panels/SecurityPanel.js';
 import { ServicesSettingsPanel } from './panels/ServicesSettingsPanel.js';
@@ -114,13 +115,10 @@ export function CategoryPanel({ category }: { category: SettingsCategory }) {
     case 'services':
       return <ServicesSettingsPanel />;
     case 'memory':
-      return (
-        <PhasePlaceholder
-          phase={3}
-          title="Memory"
-          description="Planned controls: retention policy per memory tier (session / project / agent / global) and indexed sources (Sessions, Commits, ADRs, Obsidian notes, PR descriptions, docs)."
-        />
-      );
+      // Phase 3, and live: the panel renders whatever `GET /settings/memory` actually serves and
+      // says so when that is nothing. The rail keeps its `P3` badge because the badge marks the
+      // phase a category belongs to, exactly as the main nav's Memory entry does.
+      return <MemoryPanel />;
     case 'agents':
       return (
         <PhasePlaceholder

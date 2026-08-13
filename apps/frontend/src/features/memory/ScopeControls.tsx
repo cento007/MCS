@@ -1,8 +1,16 @@
 import { MEMORY_SOURCE_TYPES, PRODUCIBLE_MEMORY_TIERS } from '@mc/shared/types';
+import { Link } from 'react-router';
 import type { Project, Session } from '../../lib/api/index.js';
 import { sessionLabel } from '../../lib/format/index.js';
 import { sourceTypeLabel } from './links.js';
-import { describeScope, type MemoryScope, toggleSourceType, toggleTier } from './scope.js';
+import type { IndexedSourceMap } from './queries.js';
+import {
+  describeScope,
+  disabledScopeSources,
+  type MemoryScope,
+  toggleSourceType,
+  toggleTier,
+} from './scope.js';
 
 /**
  * The scope controls — tier, source type, project, session, floor.
@@ -25,6 +33,11 @@ export interface ScopeControlsProps {
   readonly projectsUnavailable: boolean;
   /** The Session behind a `?session=` scope, when it could be read. */
   readonly session: Session | undefined;
+  /**
+   * `memory.indexedSources`, when it could be read. A missing entry is "cannot tell" and the chip
+   * renders exactly as it always has — never as "off".
+   */
+  readonly indexedSources?: IndexedSourceMap;
 }
 
 export function ScopeControls({
@@ -33,6 +46,7 @@ export function ScopeControls({
   projects,
   projectsUnavailable,
   session,
+  indexedSources = {},
 }: ScopeControlsProps) {
   const projectName =
     scope.projectId === null
@@ -68,14 +82,30 @@ export function ScopeControls({
         <fieldset className="flex flex-wrap items-center gap-1 border-0 p-0">
           <legend className="sr-only">Filter by source type</legend>
           <span className="mr-1 text-2xs text-text-muted">Source</span>
-          {MEMORY_SOURCE_TYPES.map((sourceType) => (
-            <FilterChip
-              key={sourceType}
-              label={sourceTypeLabel(sourceType)}
-              pressed={scope.sourceTypes.includes(sourceType)}
-              onClick={() => onChange(toggleSourceType(scope, sourceType))}
-            />
-          ))}
+          {MEMORY_SOURCE_TYPES.map((sourceType) => {
+            /*
+             * A source switched off in Settings → Memory is excluded by retrieval, not merely by
+             * the indexer — so this chip cannot match anything until it is switched back on. The
+             * chip stays pressable (a scope the operator cannot un-press is a trap, and the URL
+             * can arrive with one already set) and says so instead.
+             */
+            const off = indexedSources[sourceType] === false;
+            return (
+              <FilterChip
+                key={sourceType}
+                label={off ? `${sourceTypeLabel(sourceType)} (off)` : sourceTypeLabel(sourceType)}
+                pressed={scope.sourceTypes.includes(sourceType)}
+                {...(off
+                  ? {
+                      title:
+                        'Indexing is switched off for this source in Settings → Memory, and ' +
+                        'retrieval excludes it, so this filter matches nothing.',
+                    }
+                  : {})}
+                onClick={() => onChange(toggleSourceType(scope, sourceType))}
+              />
+            );
+          })}
         </fieldset>
       </div>
 
@@ -131,6 +161,32 @@ export function ScopeControls({
       <p className="text-2xs text-text-secondary leading-150">
         {describeScope(scope, { project: projectName, session: sessionName })}
       </p>
+
+      {/*
+       * The one thing the scope sentence cannot say for itself: this filter is pinned to a source
+       * the operator has switched off, so the answer will be empty for a reason that has nothing
+       * to do with the query or the corpus. Without this line that emptiness arrives as
+       * `index_empty` — "run a backfill" — which is advice that cannot work.
+       */}
+      {disabledScopeSources(scope, indexedSources).length === 0 ? null : (
+        <p
+          role="status"
+          data-testid="scope-source-disabled"
+          className="rounded-sm px-2 py-1 text-2xs leading-150"
+          style={{ backgroundColor: 'var(--color-warning-subtle)', color: 'var(--color-warning)' }}
+        >
+          <span aria-hidden="true">▲</span>{' '}
+          {disabledScopeSources(scope, indexedSources).map(sourceTypeLabel).join(', ')} is switched
+          off in{' '}
+          <Link
+            to="/settings/memory"
+            className="rounded-xs underline decoration-dotted underline-offset-2"
+          >
+            Settings → Memory
+          </Link>
+          , and retrieval excludes it — this filter returns nothing until it is switched back on.
+        </p>
+      )}
     </div>
   );
 }

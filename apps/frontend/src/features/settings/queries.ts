@@ -10,6 +10,7 @@ import {
 import type {
   GeneralSettings,
   IntegrationsSettings,
+  MemorySettingsDocument,
   NotificationsSettings,
   SecuritySettings,
 } from './types.js';
@@ -70,6 +71,24 @@ export function useNotificationsSettings(): UseQueryResult<NotificationsSettings
     queryKey: queryKeys.settings.category('notifications'),
     queryFn: ({ signal }) =>
       apiGet<NotificationsSettings>(endpoints.settings.category('notifications'), { signal }),
+    retry: false,
+  });
+}
+
+/**
+ * `GET /settings/memory` (§7.3) — read as an **open document**, not as a shape.
+ *
+ * The route is served today and answers `{}`: the key registry has no `memory` entries yet
+ * (§7.6), and PRD §4.4 item 4's retention windows and indexed-source toggles are landing with
+ * Phase 3. Typing this as the eventual contract would make every field read `undefined` on a
+ * Backend that has not shipped it, which the panel could not tell apart from a field the
+ * operator had cleared. `panels/memory-shape.ts` decides what is renderable from what arrived.
+ */
+export function useMemorySettings(): UseQueryResult<MemorySettingsDocument, ApiError> {
+  return useQuery<MemorySettingsDocument, ApiError>({
+    queryKey: queryKeys.settings.category('memory'),
+    queryFn: ({ signal }) =>
+      apiGet<MemorySettingsDocument>(endpoints.settings.category('memory'), { signal }),
     retry: false,
   });
 }

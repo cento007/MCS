@@ -511,6 +511,43 @@ describe('results', () => {
     expect(screen.getByText(/lives in the Obsidian vault/)).toBeInTheDocument();
   });
 
+  it('renders a repository document with its path, its label and a link that lands honestly', async () => {
+    // A `document` has no row id: it is addressed by `<repositoryId>/<repo-relative path>`, so
+    // the card has to answer "which file, and where is it?" from `sourceRef` and `context` alone.
+    respondWithSearch(
+      makeSearchResponse({
+        results: [
+          makeResult({
+            sourceType: 'document',
+            sourceId: null,
+            sourceRef: `${REPOSITORY_ID}/docs/tds/04-api-contracts.md`,
+            title: '04 API contracts',
+            tier: 'project',
+            context: { projectId: PROJECT_ID, repositoryId: REPOSITORY_ID, sessionId: null },
+          }),
+        ],
+      }),
+    );
+
+    renderWithProviders(<MemoryPage />, { initialEntries: ['/memory?q=contracts'] });
+
+    // The repository id is a uniqueness key, not an address a person reads — the path is shown
+    // and the whole reference stays in the tooltip.
+    const path = await screen.findByText('docs/tds/04-api-contracts.md');
+    expect(path).toHaveAttribute('title', `${REPOSITORY_ID}/docs/tds/04-api-contracts.md`);
+    // The card's own source-type line, not the filter chip of the same name.
+    expect(
+      within(screen.getByRole('article')).getByText('Document', { selector: 'span' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '04 API contracts' })).toHaveAttribute(
+      'href',
+      `/projects/${PROJECT_ID}?tab=repositories`,
+    );
+    expect(screen.getByText(/no screen renders a file/)).toBeInTheDocument();
+    // It is not a vault note, and the card no longer says it is.
+    expect(screen.queryByText(/lives in the Obsidian vault/)).toBeNull();
+  });
+
   it('names which chunk of a long document matched', async () => {
     respondWithSearch(
       makeSearchResponse({ results: [makeResult({ chunkOrdinal: 3, chunkCount: 9 })] }),
@@ -587,6 +624,36 @@ describe('scope reaches the request', () => {
     expect(
       screen.getByText(/session-tier chunks only — a session scope overrides the tier filter/),
     ).toBeInTheDocument();
+  });
+
+  it('marks a source the operator has switched off, and says the filter cannot match', async () => {
+    // `memory.indexedSources` gates retrieval as well as indexing, so this chip returns nothing
+    // whatever the index holds — and the Backend would report that as `index_empty`, which reads
+    // as "run a backfill". A fifth meaning of empty, disguised as one of the four.
+    api.on('GET', '/api/v1/settings/memory', {
+      body: { data: { indexedSources: { commit: false, adr: true } } },
+    });
+
+    renderWithProviders(<MemoryPage />, { initialEntries: ['/memory?q=queue&source=commit'] });
+
+    expect(await screen.findByRole('button', { name: 'Commit (off)' })).toBeInTheDocument();
+    expect(screen.getByTestId('scope-source-disabled')).toHaveTextContent(/Commit is switched off/);
+    expect(screen.getByRole('link', { name: 'Settings → Memory' })).toHaveAttribute(
+      'href',
+      '/settings/memory',
+    );
+    // The chip is still pressable: a scope arriving in the URL must always be removable.
+    expect(screen.getByRole('button', { name: 'Commit (off)' })).toBeEnabled();
+  });
+
+  it('leaves every chip alone when the memory settings could not be read', async () => {
+    // The default in this suite: nothing mocks `/settings/memory`, so it 404s. "Cannot tell" must
+    // render as silence — greying out every filter on a Backend that predates the keys would be
+    // the same accusation `configured: null` exists to prevent.
+    renderWithProviders(<MemoryPage />, { initialEntries: ['/memory?q=queue&source=commit'] });
+
+    expect(await screen.findByRole('button', { name: 'Commit' })).toBeInTheDocument();
+    expect(screen.queryByTestId('scope-source-disabled')).toBeNull();
   });
 
   it('issues no request at all until something is asked', async () => {

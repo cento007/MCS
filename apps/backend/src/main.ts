@@ -1,8 +1,13 @@
 import process from 'node:process';
-import { createLoggerFromConfig, createShutdownController, loadConfigOrExit } from '@mc/shared';
+import {
+  createLoggerFromConfig,
+  createShutdownController,
+  loadConfigOrExit,
+  readMemoryPolicy,
+} from '@mc/shared';
 import { buildAppWithServices } from './app.js';
 import { createDatabase } from './db/index.js';
-import { verifyMemoryAtStartup } from './memory/index.js';
+import { describeRetention, verifyMemoryAtStartup } from './memory/index.js';
 import { createBackendQueue } from './queue/index.js';
 // Imported from the adapter module directly, never through `sessions/`'s barrel: this is the
 // one import of `@anthropic-ai/claude-agent-sdk` in the process, and routing it through a
@@ -114,6 +119,19 @@ async function main(): Promise<void> {
   // does no work until a job arrives, which cannot happen before a model is configured.
   await memory.indexing.start();
 
+  // The `memory.retention` chain (PRD §4.4 item 4). `start()` subscribes the tick consumer and
+  // primes a tick **only if some tier actually expires** — every tier defaults to `0` (never),
+  // so a default install schedules nothing at all. Turning retention on from Settings re-primes
+  // the chain through `setting.updated`, exactly as the GitHub poller is re-primed.
+  await memory.retention.start();
+  // Logged because retention is the one part of this subsystem whose absence looks exactly like
+  // its presence: "why has nothing expired" and "why did my session memory disappear" have the
+  // same answer, and it is not visible anywhere else.
+  log.info(
+    { retention: describeRetention(await readMemoryPolicy(database.db)) },
+    'memory retention policy',
+  );
+
   // Hooks run in REVERSE registration order, so the pool is registered first and drained
   // last — nothing can still be querying it once the HTTP server has closed.
   shutdown.onShutdown('database-pool', async () => {
@@ -130,6 +148,7 @@ async function main(): Promise<void> {
   });
   shutdown.onShutdown('memory-indexing', async () => {
     memory.indexing.stop();
+    await memory.retention.stop();
   });
   shutdown.onShutdown('http-server', async () => {
     await app.close();

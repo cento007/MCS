@@ -10,6 +10,7 @@ import {
   type MemoryProbes,
 } from './health.js';
 import { MemoryIndexService } from './indexing.js';
+import { MemoryRetentionScheduler } from './retention.js';
 import { MemorySearchService } from './retrieval.js';
 import { registerMemoryRoutes } from './routes.js';
 import { createMemoryRuntime, type MemoryRuntime } from './runtime.js';
@@ -28,19 +29,27 @@ import { describeMemoryConfig, type MemoryConfig, readMemoryConfig } from './set
  *   runtime.ts    the one verified (embedder, store, stamp, budget) both halves share
  *   indexing.ts   the `memory.index` producer and its single consumer; the backfill run
  *   notes.ts      the Obsidian vault stage — unmanaged notes only
+ *   documents.ts  the repository documentation stage — PRD §6.3's sixth source
+ *   retention.ts  the `memory.retention` tick — per-tier expiry, both stores
  *   retrieval.ts  `POST /memory-items/search`, scope filtering, the relevance floor
  *   routes.ts     the four routes, and the two §13.1 reserved ones deliberately not built
  *   index.ts      wiring
  *
+ * The policy the whole layer obeys — which sources may be indexed, and for how long each tier
+ * is kept — lives in `@mc/shared/memory/policy.ts` and is `settings.memory.*` (PRD §4.4 item 4).
+ *
  * **Nothing here runs until an operator sets `integrations.qdrant.embeddingModel`.** No outbound
  * call is made, no collection is created, no job does any work: `MemoryRuntime.ready()` answers
  * `not_configured` and every path returns early. That is what lets an install that never opens
- * the Memory settings behave exactly as it did in Phase 2.
+ * the Memory settings behave exactly as it did in Phase 2. Retention is doubly inert: it does
+ * not even schedule a tick while every tier reads `0`, which is the default.
  */
 
+export * from './documents.js';
 export * from './health.js';
 export * from './indexing.js';
 export * from './notes.js';
+export * from './retention.js';
 export * from './retrieval.js';
 export * from './runtime.js';
 export * from './settings.js';
@@ -56,6 +65,10 @@ export interface MemoryModuleOptions {
   readonly probeTimeoutMs?: number | undefined;
   /** Sources per backfill slice. Tests shrink it so a sweep takes two slices instead of one. */
   readonly backfillBatchSize?: number | undefined;
+  /** Chunks deleted per retention tick. Tests shrink it to demonstrate the batch bound. */
+  readonly retentionBatchSize?: number | undefined;
+  /** Minutes between retention ticks. Tests shrink it so a scheduled tick is observable. */
+  readonly retentionTickMinutes?: number | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onError?: ((error: unknown, context: string) => void) | undefined;
 }
@@ -64,6 +77,7 @@ export interface MemoryModule {
   readonly probes: MemoryProbes;
   readonly runtime: MemoryRuntime;
   readonly indexing: MemoryIndexService;
+  readonly retention: MemoryRetentionScheduler;
   readonly search: MemorySearchService;
   /**
    * Identify the model, then create-or-verify the stamped collection. Safe to call at startup
@@ -94,6 +108,19 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
     ...(options.onError === undefined ? {} : { onError: options.onError }),
   });
 
+  const retention = new MemoryRetentionScheduler({
+    db: options.db,
+    queue: options.queue,
+    outbox: options.outbox,
+    runtime,
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.retentionBatchSize === undefined ? {} : { batchSize: options.retentionBatchSize }),
+    ...(options.retentionTickMinutes === undefined
+      ? {}
+      : { tickMinutes: options.retentionTickMinutes }),
+    ...(options.onError === undefined ? {} : { onError: options.onError }),
+  });
+
   const search = new MemorySearchService({ db: options.db, runtime });
 
   return {
@@ -104,6 +131,7 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
     }),
     runtime,
     indexing,
+    retention,
     search,
 
     async verify() {
@@ -152,6 +180,29 @@ export function affectsMemoryRuntime(payload: Record<string, unknown>): boolean 
 }
 
 /**
+ * Does this `setting.updated` change the memory **policy** — which sources are indexed, and how
+ * long each tier is kept?
+ *
+ * Separate from `affectsMemoryRuntime` because they protect different things and share nothing:
+ * the runtime cache is about *what we are talking to*, the policy is about *what we are allowed
+ * to do*. The policy is re-read from the database on every job and every query, so the only
+ * thing that has to happen on a change is re-priming the retention chain — which is how turning
+ * retention on from `0` starts a tick without a restart, and the exact mechanism
+ * `github/poller.ts` uses for `syncIntervalMinutes`.
+ *
+ * `PUT /settings/memory` is the only route that can write these keys and it emits
+ * `category: 'memory'`, so the category test is the live path; the key test underneath is the
+ * same defence in depth `affectsMemoryRuntime` keeps, for a caller that writes the rows directly.
+ */
+export function affectsMemoryPolicy(payload: Record<string, unknown>): boolean {
+  if (payload['category'] === 'memory') return true;
+
+  const changedKeys = payload['changedKeys'];
+  if (!Array.isArray(changedKeys)) return false;
+  return changedKeys.some((key) => typeof key === 'string' && key.startsWith('memory.'));
+}
+
+/**
  * Build the module and register its routes.
  *
  * The `memory.index` consumer is **not** subscribed here. Registration happens while the app is
@@ -176,13 +227,20 @@ export function registerMemory(app: FastifyInstance, options: MemoryModuleOption
   registerMemoryRoutes(app, { search: memory.search, indexing: memory.indexing });
 
   const unsubscribe = options.bus.on('setting.updated', (event) => {
-    if (!affectsMemoryRuntime(event.payload)) return;
-    memory.runtime.invalidate();
+    if (affectsMemoryRuntime(event.payload)) memory.runtime.invalidate();
+    if (affectsMemoryPolicy(event.payload)) {
+      // Fire-and-forget: a settings write must not wait on a queue insert, and a failed prime
+      // costs at most one interval — the next tick re-reads everything from settings anyway.
+      void memory.retention.prime().catch((error: unknown) => {
+        options.onError?.(error, 'priming the memory retention chain');
+      });
+    }
   });
 
   app.addHook('onClose', async () => {
     unsubscribe();
     memory.indexing.stop();
+    await memory.retention.stop();
   });
 
   return memory;

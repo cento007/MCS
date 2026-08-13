@@ -181,6 +181,25 @@ export function isScoped(scope: MemoryScope): boolean {
   );
 }
 
+/**
+ * Sources in the current filter that the operator has switched off in Settings → Memory.
+ *
+ * The toggle gates retrieval as well as indexing, so a filter pinned to a disabled source returns
+ * nothing **whatever the index holds** — and the Backend reports that nothing as `index_empty` or
+ * `below_threshold`, which are answers about the corpus and the query rather than about a
+ * setting. Naming the setting is the only way this screen keeps "no results" from acquiring a
+ * fifth meaning it cannot distinguish.
+ *
+ * A source whose flag could not be read is never listed: `undefined` is "cannot tell", exactly as
+ * it is for `configured`, and accusing a working filter of being switched off is the worse error.
+ */
+export function disabledScopeSources(
+  scope: MemoryScope,
+  indexedSources: Readonly<Partial<Record<MemorySourceType, boolean>>>,
+): readonly MemorySourceType[] {
+  return scope.sourceTypes.filter((sourceType) => indexedSources[sourceType] === false);
+}
+
 export function toggleTier(scope: MemoryScope, tier: MemoryTier): MemoryScope {
   return {
     ...scope,
