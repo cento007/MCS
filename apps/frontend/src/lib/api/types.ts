@@ -254,8 +254,106 @@ export interface Repository {
   readonly defaultBranch: string;
   readonly lastSyncedAt: IsoTimestamp | null;
   readonly syncStatus: 'ok' | 'failed' | 'never';
+  /**
+   * Why the last sync failed. Additive to §5.1 and served by the Backend, which justifies the
+   * column with the requirement this client implements: the Repositories view must be able to
+   * explain a `failed` badge **without sending the operator to the audit log** (TDS 03 §3.6,
+   * finding B8). A badge with no explanation is a dead end, so the column and this field exist
+   * specifically so the row can carry the reason.
+   */
+  readonly lastSyncError: string | null;
   readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
+}
+
+/**
+ * Why a working tree could not be read, verbatim from the Backend's `WorkingTreeUnavailableReason`
+ * (`apps/backend/src/repositories/git.ts`).
+ *
+ * These are **answers, not errors**: `GET /repositories/{id}/status` returns `200` with one of
+ * these set rather than failing, because "the path was deleted" is a fact about the repository
+ * and not a fault in the request. The UI's obligation is to render every one of them as
+ * *unverifiable* — never as clean.
+ */
+export const WORKING_TREE_UNAVAILABLE_REASONS = [
+  'path_missing',
+  'not_a_directory',
+  'not_a_git_repository',
+  'git_unavailable',
+  'timed_out',
+  'git_failed',
+] as const;
+
+export type WorkingTreeUnavailableReason = (typeof WORKING_TREE_UNAVAILABLE_REASONS)[number];
+
+/**
+ * `GET /repositories/{id}/status` — a bounded, computed read model (§1.2: `{ data }`, no `meta`).
+ *
+ * Nothing here is persisted; every field is true as of `checkedAt` and stale immediately after.
+ */
+export interface RepositoryStatus {
+  readonly repositoryId: EntityId;
+  readonly localPath: string;
+  readonly isGitWorkingTree: boolean;
+  /** `null` when detached, unnamed, or unreadable. */
+  readonly currentBranch: string | null;
+  readonly detachedHead: boolean;
+  readonly headSha: string | null;
+  /** Tracked modifications + staged + untracked. `null` when the tree could not be read. */
+  readonly uncommittedFiles: number | null;
+  /** Relative to the upstream branch; `null` when there is no upstream. */
+  readonly ahead: number | null;
+  readonly behind: number | null;
+  /** `null` iff the tree was read. */
+  readonly unavailableReason: WorkingTreeUnavailableReason | null;
+  /** git's own first line of complaint, truncated. Never invented by the server. */
+  readonly detail: string | null;
+  readonly checkedAt: IsoTimestamp;
+}
+
+/**
+ * `POST /repositories/discover` — the discovery report.
+ *
+ * The route answers `200` with the report rather than §5.1's `202 { jobId }`, and the Backend
+ * flags that deviation with its reason: **the skip reasons have nowhere else to live.** "This
+ * directory has no remote", "this one points at GitLab", "this one is already registered" are
+ * the entire value of running a scan, and no table stores them — a `202` would discard them and
+ * leave the operator guessing why a repository they expected did not appear. So the client
+ * renders them, which is the only thing that makes the deviation worth having.
+ *
+ * Typed loosely past the fields this client renders: it is a young, flagged contract, and a
+ * strict mirror would turn a server-side field rename into a crashed screen rather than a
+ * missing line.
+ */
+export interface DiscoverySkip {
+  readonly localPath: string;
+  readonly reason: string;
+  readonly detail: string | null;
+  readonly repositoryId: string | null;
+}
+
+export interface DiscoveredRepositoryEntry {
+  readonly repository: Repository;
+  readonly owner: string;
+  readonly repo: string;
+}
+
+export interface DiscoveryReport {
+  readonly scannedAt: IsoTimestamp;
+  /** A cap or the wall-clock deadline stopped the scan early — say so, never imply completeness. */
+  readonly truncated: boolean;
+  readonly registered: readonly DiscoveredRepositoryEntry[];
+  readonly skipped: readonly DiscoverySkip[];
+  readonly counts: {
+    readonly workingTreesFound: number;
+    readonly registered: number;
+    readonly skipped: number;
+  };
+}
+
+/** `POST /repositories/{id}/sync` — `202 { data: { jobId } }` (§5.1). */
+export interface SyncAccepted {
+  readonly jobId: string;
 }
 
 // --------------------------------------------------------------- service health (§7.5)

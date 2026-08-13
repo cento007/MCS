@@ -4,9 +4,9 @@ import { ErrorPanel } from '../../components/ErrorPanel.js';
 import { Skeleton } from '../../components/Skeleton.js';
 import type { ScheduleEntry } from '../../lib/api/index.js';
 import { formatClock, formatDateTime } from '../../lib/format/index.js';
+import { formatCountdown, formatRelativePast } from '../../lib/format/relative.js';
 import { type LiveClock, useLiveClock } from '../../lib/liveness.js';
 import { useSchedule } from './queries.js';
-import { formatCountdown, formatRelativePast } from './relative.js';
 import { Widget } from './Widget.js';
 
 /**

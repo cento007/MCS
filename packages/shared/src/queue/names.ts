@@ -19,6 +19,18 @@ export const QUEUE_NAMES = Object.freeze({
    * stays `running` throughout, so nothing in the F6 catalog describes it.
    */
   SESSION_PROMPT_RETRY: 'session.prompt.retry',
+  /**
+   * One repository's GitHub sync (TDS 04 §5.1's `POST /repositories/{id}/sync`). A job name,
+   * not an event: the *outcome* is `repository.synced` / `repository.sync_failed`, which do
+   * carry F6 envelopes and do appear in the §15.2 catalog.
+   */
+  REPOSITORY_SYNC: 'repository.sync',
+  /**
+   * The GitHub polling tick (`integrations.github.syncIntervalMinutes`, §7.2). Self-rescheduling
+   * rather than driven by an in-process timer, so polling survives a Backend restart — which is
+   * the whole reason it is a durable job and not a `setInterval`.
+   */
+  GITHUB_POLL: 'github.poll',
 } as const);
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

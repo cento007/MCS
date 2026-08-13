@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 import { Skeleton } from '../../components/Skeleton.js';
+import { formatRelativePast } from '../../lib/format/relative.js';
 import { useIsLive, useLastUpdatedLabel, useLiveClock } from '../../lib/liveness.js';
 import { useServiceHealth } from '../../lib/service-health.js';
 import { type AttentionItem, buildAttention, MAX_ATTENTION_ROWS } from './attention.js';
@@ -10,7 +11,6 @@ import {
   useNotifications,
   useSpend,
 } from './queries.js';
-import { formatRelativePast } from './relative.js';
 import { Widget } from './Widget.js';
 
 /**

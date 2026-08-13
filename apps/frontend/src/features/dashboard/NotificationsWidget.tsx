@@ -2,9 +2,9 @@ import { EmptyState } from '../../components/EmptyState.js';
 import { ErrorPanel } from '../../components/ErrorPanel.js';
 import { Skeleton } from '../../components/Skeleton.js';
 import type { Notification } from '../../lib/api/index.js';
+import { formatRelativePast } from '../../lib/format/relative.js';
 import { useLiveClock } from '../../lib/liveness.js';
 import { useNotifications } from './queries.js';
-import { formatRelativePast } from './relative.js';
 import { Widget } from './Widget.js';
 
 /**

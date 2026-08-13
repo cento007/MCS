@@ -116,7 +116,10 @@ export interface Harness extends RenderResult {
  * `useSessionChannel` has a provider to talk to. The socket *store* is set to `open` so the
  * liveness rules (§3.3) do not mute every badge and freeze every duration.
  */
-export function renderWithProviders(ui: ReactElement, options: { live?: boolean } = {}): Harness {
+export function renderWithProviders(
+  ui: ReactElement,
+  options: { live?: boolean; initialEntries?: string[] } = {},
+): Harness {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
@@ -125,7 +128,7 @@ export function renderWithProviders(ui: ReactElement, options: { live?: boolean 
 
   const result = render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={options.initialEntries ?? ['/sessions']}>
         <SocketProvider client={client}>{ui}</SocketProvider>
       </MemoryRouter>
     </QueryClientProvider>,

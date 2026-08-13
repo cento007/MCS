@@ -2,23 +2,13 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { EmptyState } from '../../components/EmptyState.js';
 import { ErrorPanel } from '../../components/ErrorPanel.js';
-import { ConfirmDialog } from '../../components/Modal.js';
 import { Skeleton } from '../../components/Skeleton.js';
-import { StatusBadge } from '../../components/StatusBadge.js';
-import type { Session, SessionListFilters } from '../../lib/api/index.js';
-import {
-  formatCostUsd,
-  formatDuration,
-  sessionIdTail,
-  sessionLabel,
-} from '../../lib/format/index.js';
-import { useIsLive } from '../../lib/liveness.js';
+import type { SessionListFilters } from '../../lib/api/index.js';
 import { PANEL_BREAKPOINTS, useMediaQuery } from '../../lib/media.js';
 import { useUiStore } from '../../stores/ui-store.js';
-import { allSessionActions, type SessionActionDescriptor } from './actions.js';
 import { LaunchSessionModal } from './LaunchSessionModal.js';
-import { useSessionActionMutation } from './mutations.js';
 import { useProjects, useSessionsList } from './queries.js';
+import { SessionsTable } from './SessionsTable.js';
 
 /**
  * `/sessions` — the Sessions list (TDS 06 §5.4).
@@ -36,37 +26,41 @@ type StateFilter = (typeof STATE_FILTERS)[number];
 
 export function SessionsListPage() {
   const navigate = useNavigate();
-  const isLive = useIsLive();
   const mobile = useMediaQuery(PANEL_BREAKPOINTS.mobile);
   const openSession = useUiStore((state) => state.openSession);
 
   const [state, setState] = useState<StateFilter>('all');
   const [sessionType, setSessionType] = useState<'all' | 'managed' | 'observed'>('all');
-  const [projectId, setProjectId] = useState('');
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
 
   /**
-   * `?launch=1` opens the Launch modal.
+   * `?launch=1` opens the Launch modal; `?projectId=` scopes the list and seeds that modal.
    *
-   * The Dashboard's `+ New Session` needs this screen's modal, and the modal belongs to this
-   * feature (TDS 05 §2.1: no cross-feature imports). A search param is the same linkable-state
-   * mechanism §6.7 already uses for the session right panel, so the hand-off costs one
-   * parameter rather than an ownership violation. Closing clears it, so a reload does not
-   * reopen the modal.
+   * Both the Dashboard's and the Project detail's `+ New Session` need this screen's modal, and
+   * the modal belongs to this feature (TDS 05 §2.1: no cross-feature imports). A search param is
+   * the same linkable-state mechanism §6.7 already uses for the session right panel, so the
+   * hand-off costs one parameter rather than an ownership violation — and it makes a
+   * project-scoped Sessions list a URL an operator can keep. Closing clears `launch`, so a
+   * reload does not reopen the modal.
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const launchOpen = searchParams.get('launch') === '1';
-  const setLaunchOpen = (open: boolean): void => {
+  const projectId = searchParams.get('projectId') ?? '';
+
+  const setParam = (key: string, value: string | null): void => {
     setSearchParams(
       (params) => {
-        if (open) params.set('launch', '1');
-        else params.delete('launch');
+        if (value === null) params.delete(key);
+        else params.set(key, value);
         return params;
       },
       { replace: true },
     );
   };
+
+  const setLaunchOpen = (open: boolean): void => setParam('launch', open ? '1' : null);
+  const setProjectId = (id: string): void => setParam('projectId', id === '' ? null : id);
 
   const filters: SessionListFilters = useMemo(
     () => ({
@@ -212,62 +206,15 @@ export function SessionsListPage() {
             }
             hint="Launch a managed session or attach to a running Claude Code session."
           />
-        ) : mobile ? (
-          <ul className="flex flex-col gap-2">
-            {rows.map((session) => (
-              <li key={session.id}>
-                <MobileCard
-                  session={session}
-                  muted={!isLive}
-                  onOpen={() => {
-                    openSession(session.id);
-                    void navigate(`/sessions/${session.id}`);
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
         ) : (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="text-left text-2xs text-text-secondary uppercase">
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  State
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Session
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Type
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Duration
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  ID
-                </th>
-                <th scope="col" className="py-2 pr-3 font-medium">
-                  Cost
-                </th>
-                <th scope="col" className="py-2 font-medium">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  muted={!isLive}
-                  onOpen={() => {
-                    openSession(session.id);
-                    void navigate(`/sessions/${session.id}`);
-                  }}
-                />
-              ))}
-            </tbody>
-          </table>
+          <SessionsTable
+            sessions={rows}
+            mobile={mobile}
+            onOpen={(session) => {
+              openSession(session.id);
+              void navigate(`/sessions/${session.id}`);
+            }}
+          />
         )}
 
         {query.hasNextPage ? (
@@ -285,177 +232,11 @@ export function SessionsListPage() {
         ) : null}
       </div>
 
-      <LaunchSessionModal open={launchOpen} onClose={() => setLaunchOpen(false)} />
-    </section>
-  );
-}
-
-function SessionRow({
-  session,
-  muted,
-  onOpen,
-}: {
-  session: Session;
-  muted: boolean;
-  onOpen: () => void;
-}) {
-  return (
-    <tr className="border-border border-t align-top" style={{ height: 'var(--mc-row-dense)' }}>
-      <td className="py-2 pr-3">
-        <StatusBadge state={session.state} muted={muted} />
-      </td>
-      <td className="py-2 pr-3">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="block max-w-md text-left"
-          style={{ minHeight: 24 }}
-        >
-          <span className="block truncate text-sm text-text" title={session.title}>
-            {sessionLabel({ id: session.id, title: session.title })}
-          </span>
-          <span className="block truncate text-2xs text-text-muted">
-            <span className="font-mono">{session.branch ?? 'no branch'}</span>
-          </span>
-        </button>
-      </td>
-      <td className="py-2 pr-3 text-text-secondary text-xs">{session.sessionType}</td>
-      <td className="py-2 pr-3 font-mono text-text-secondary text-xs">
-        {formatDuration(session.durationSeconds)}
-      </td>
-      <td className="py-2 pr-3">
-        {/* Last six hex characters — the random tail. Title carries the full UUID; clicking
-            copies it, per §5.4. */}
-        <button
-          type="button"
-          title={session.id}
-          onClick={() => void navigator.clipboard?.writeText(session.id)}
-          className="rounded-xs font-mono text-2xs text-text-muted"
-          style={{ minHeight: 24 }}
-        >
-          {sessionIdTail(session.id)}
-        </button>
-      </td>
-      <td className="py-2 pr-3 font-mono text-text-secondary text-xs">
-        {session.sessionType === 'observed' && session.costUsd === null
-          ? '—'
-          : formatCostUsd(session.costUsd)}
-      </td>
-      <td className="py-2">
-        <RowMenu session={session} />
-      </td>
-    </tr>
-  );
-}
-
-function MobileCard({
-  session,
-  muted,
-  onOpen,
-}: {
-  session: Session;
-  muted: boolean;
-  onOpen: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="w-full rounded-md border border-border p-3 text-left"
-      style={{ backgroundColor: 'var(--color-surface)' }}
-    >
-      <span className="flex items-center gap-2">
-        <StatusBadge state={session.state} muted={muted} />
-        <span className="min-w-0 flex-1 truncate text-sm text-text">
-          {sessionLabel({ id: session.id, title: session.title })}
-        </span>
-      </span>
-      <span className="mt-1 block truncate text-2xs text-text-muted">
-        <span className="font-mono">{session.branch ?? 'no branch'}</span> ·{' '}
-        <span className="font-mono">{formatDuration(session.durationSeconds)}</span> ·{' '}
-        <span className="font-mono">{formatCostUsd(session.costUsd)}</span>
-      </span>
-    </button>
-  );
-}
-
-/**
- * The row overflow menu. It offers **only state-legal actions**, derived from the same
- * predicate as the header and the palette (§6.6), so an illegal transition is never presented
- * anywhere — the API would reject it with `INVALID_STATE_TRANSITION` regardless.
- */
-function RowMenu({ session }: { session: Session }) {
-  const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState<SessionActionDescriptor | null>(null);
-  const mutation = useSessionActionMutation(session.id);
-  const navigate = useNavigate();
-
-  // `turnInFlight` is false here on purpose: a list row has no live buffer, so `[Stop]` is
-  // not one of its options — `[Pause]` is the process-level control this surface can offer.
-  const actions = allSessionActions(session, false).filter((action) => action.id !== 'stop');
-
-  const run = (action: SessionActionDescriptor): void => {
-    void mutation.mutateAsync({ action: action.id }).then((outcome) => {
-      if (outcome.session.id !== session.id) void navigate(`/sessions/${outcome.session.id}`);
-    });
-  };
-
-  if (actions.length === 0) return null;
-
-  return (
-    <span className="relative">
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Actions for ${sessionLabel({ id: session.id, title: session.title })}`}
-        onClick={() => setOpen((value) => !value)}
-        className="rounded-xs px-2 text-text-muted"
-        style={{ minWidth: 24, minHeight: 24 }}
-      >
-        ⋯
-      </button>
-      {open ? (
-        <span
-          role="menu"
-          className="absolute right-0 z-20 mt-1 flex min-w-48 flex-col rounded-md border border-border p-1"
-          style={{
-            backgroundColor: 'var(--color-surface-raised)',
-            boxShadow: 'var(--shadow-overlay)',
-          }}
-        >
-          {actions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                if (action.confirm === undefined) run(action);
-                else setConfirming(action);
-              }}
-              className="rounded-xs px-3 py-2 text-left text-sm text-text"
-            >
-              {action.label}
-            </button>
-          ))}
-        </span>
-      ) : null}
-
-      <ConfirmDialog
-        open={confirming !== null}
-        title={confirming?.confirm?.title ?? ''}
-        body={confirming?.confirm?.body ?? ''}
-        confirmLabel={confirming?.confirm?.confirmLabel ?? 'Confirm'}
-        destructive={confirming?.confirm?.destructive ?? false}
-        pending={mutation.isPending}
-        onConfirm={() => {
-          const action = confirming;
-          setConfirming(null);
-          if (action !== null) run(action);
-        }}
-        onCancel={() => setConfirming(null)}
+      <LaunchSessionModal
+        open={launchOpen}
+        initialProjectId={projectId === '' ? null : projectId}
+        onClose={() => setLaunchOpen(false)}
       />
-    </span>
+    </section>
   );
 }

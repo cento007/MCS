@@ -61,6 +61,12 @@ export const queryKeys = {
     root: () => ['repositories'] as const,
     list: (filters: ListFilters = {}) => ['repositories', 'list', filters] as const,
     detail: (id: string) => ['repositories', id] as const,
+    /**
+     * The working-tree read model. Nested under the detail slot so `repository.synced` and the
+     * `repositories` channel reach it — a sync can move HEAD, which is exactly the fact this
+     * key holds.
+     */
+    status: (id: string) => ['repositories', id, 'status'] as const,
   },
   commits: {
     root: () => ['commits'] as const,

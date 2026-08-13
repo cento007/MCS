@@ -305,6 +305,71 @@ export async function hasDotGitEntry(localPath: string): Promise<boolean> {
   }
 }
 
+/** Why a remote could not be read. `null` (see below) means it could. */
+export type RemoteUnavailableReason =
+  /** The directory is a working tree, but has no remote by that name. */
+  'no_remote' | 'not_a_git_repository' | GitFailure;
+
+export interface GitRemoteRead {
+  /** The configured URL, verbatim. **May contain credentials** — see `github/remote.ts`. */
+  readonly url: string | null;
+  /** `null` iff `url` is non-null. */
+  readonly unavailableReason: RemoteUnavailableReason | null;
+  readonly detail: string | null;
+}
+
+/**
+ * Read one remote's URL — **one** `git` invocation that answers two questions at once.
+ *
+ * That is the whole reason this exists rather than a `rev-parse` followed by a `config --get`:
+ * discovery runs it over every candidate directory under every configured root, and on Windows
+ * a process spawn costs 100–300 ms with an on-access scanner in the path. Two spawns per
+ * candidate turns a twenty-repository scan from four seconds into eight, for information the
+ * one call already carries — `git remote get-url` fails with "not a git repository" for a
+ * directory that only *looks* like one, and with "No such remote" for a working tree that has
+ * no origin. Both are answers, not errors.
+ *
+ * The returned URL is **not** sanitized here: `git remote get-url` prints exactly what is in
+ * `.git/config`, which may be `https://user:ghp_…@github.com/o/r.git`. Sanitizing is
+ * `github/remote.ts`'s job and it rebuilds the URL rather than trimming it; callers must not
+ * persist or log this value directly.
+ */
+export async function readRemoteUrl(
+  localPath: string,
+  remoteName: string,
+  options: GitOptions = {},
+): Promise<GitRemoteRead> {
+  const kind = await inspectPath(localPath);
+  if (kind !== 'directory') return remoteUnavailable('not_a_git_repository', null);
+
+  const outcome = await runGit(
+    ['--no-optional-locks', 'remote', 'get-url', remoteName],
+    localPath,
+    options,
+  );
+
+  if (!outcome.ok) {
+    if (outcome.failure === 'git_failed') {
+      return NOT_A_REPOSITORY.test(outcome.stderr)
+        ? remoteUnavailable('not_a_git_repository', firstLine(outcome.stderr))
+        : // Any other non-zero exit from `remote get-url` on a real working tree means the
+          // remote does not exist; git says "No such remote 'origin'" and exits 2.
+          remoteUnavailable('no_remote', firstLine(outcome.stderr));
+    }
+    return remoteUnavailable(outcome.failure ?? 'git_failed', firstLine(outcome.stderr));
+  }
+
+  // A repository can be configured with an empty remote URL; that is "no remote" in practice.
+  const url = outcome.stdout.split('\n')[0]?.trim() ?? '';
+  if (url.length === 0) return remoteUnavailable('no_remote', null);
+
+  return { url, unavailableReason: null, detail: null };
+}
+
+function remoteUnavailable(reason: RemoteUnavailableReason, detail: string | null): GitRemoteRead {
+  return { url: null, unavailableReason: reason, detail };
+}
+
 export type PathKind = 'directory' | 'path_missing' | 'not_a_directory';
 
 export async function inspectPath(localPath: string): Promise<PathKind> {

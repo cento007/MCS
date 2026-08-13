@@ -10,6 +10,7 @@ import { type BuildAppOptions, type BuiltApp, buildAppWithServices } from '../..
 import type { AuthService } from '../../src/auth/index.js';
 import { bootstrapLocalUser } from '../../src/auth/index.js';
 import { createDatabase, type DatabaseHandle } from '../../src/db/index.js';
+import { createDenyingGithubHttp } from '../../src/github/http.js';
 import { createBackendQueue } from '../../src/queue/index.js';
 import type { SessionModule } from '../../src/sessions/index.js';
 
@@ -153,6 +154,16 @@ export function createTestApp(
     ...(options.testConnectionDeps === undefined
       ? {}
       : { testConnectionDeps: options.testConnectionDeps }),
+    // The GitHub integration's one outbound edge (`github/http.ts`).
+    //
+    // **The default is a port that throws, not the real one.** Forwarding an override is not
+    // enough on its own: the defect this guards against is precisely an override that is
+    // accepted at the call site and never reaches the module, in which case the *real* port is
+    // constructed and the suite quietly talks to api.github.com. With a denying default, a test
+    // that forgot to inject fails locally and loudly, and `github.int.test.ts` asserts it.
+    githubHttp: options.githubHttp ?? createDenyingGithubHttp('the integration harness'),
+    ...(options.githubBaseUrl === undefined ? {} : { githubBaseUrl: options.githubBaseUrl }),
+    ...(options.githubLimits === undefined ? {} : { githubLimits: options.githubLimits }),
   });
 
   openApps.push(built.app);

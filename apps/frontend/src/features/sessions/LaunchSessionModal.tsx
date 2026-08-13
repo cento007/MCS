@@ -88,13 +88,25 @@ export interface LaunchSessionModalProps {
    * the disclosure has one shape whether it comes from an endpoint or from nothing at all.
    */
   readonly workingTree?: WorkingTreeStatus | null;
+  /**
+   * Pre-selects the Project, for a launch composed from somewhere that already knows which one
+   * — the Project detail's `+ New Session` (TDS 06 §5.3.2: "pre-scoped to this Project"). It
+   * seeds the field; it does not lock it, because the operator may well have opened the dialog
+   * from the wrong page.
+   */
+  readonly initialProjectId?: string | null;
 }
 
-export function LaunchSessionModal({ open, onClose, workingTree = null }: LaunchSessionModalProps) {
+export function LaunchSessionModal({
+  open,
+  onClose,
+  workingTree = null,
+  initialProjectId = null,
+}: LaunchSessionModalProps) {
   const navigate = useNavigate();
   const openSession = useUiStore((state) => state.openSession);
 
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(initialProjectId ?? '');
   const [repositoryId, setRepositoryId] = useState('');
   const [branch, setBranch] = useState('');
   const [model, setModel] = useState('');
@@ -120,6 +132,13 @@ export function LaunchSessionModal({ open, onClose, workingTree = null }: Launch
     if (open) return;
     setAcknowledged(false);
   }, [open]);
+
+  // Opening the dialog adopts the caller's Project. Applied on open rather than only at mount
+  // because this component stays mounted between openings on the Sessions list.
+  useEffect(() => {
+    if (!open || initialProjectId === null) return;
+    setProjectId(initialProjectId);
+  }, [open, initialProjectId]);
 
   const disclosure = branchDisclosure({
     repositoryName: repository?.name ?? null,

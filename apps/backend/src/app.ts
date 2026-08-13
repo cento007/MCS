@@ -4,6 +4,12 @@ import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { createEventBus, type EventBus, Outbox } from './events/index.js';
 import {
+  type GithubHttpPort,
+  type GithubModule,
+  registerGithub,
+  type SyncLimits,
+} from './github/index.js';
+import {
   buildHealthReport,
   createServiceHealthProbes,
   registerHealthRoutes,
@@ -97,6 +103,21 @@ export interface BuildAppOptions {
    * real, bounded ports.
    */
   readonly testConnectionDeps?: ExecutorDeps | undefined;
+  /**
+   * The GitHub integration's one outbound network edge (`github/http.ts`). Supplying it is how
+   * a test exercises discovery, sync and the poller **without** an outbound request; the
+   * default is the real, bounded port.
+   *
+   * The integration harness installs a port that *throws* rather than one that answers, so a
+   * suite that reaches api.github.com fails locally and loudly. That is the direct remedy for
+   * the earlier defect where a dependency override was accepted but never forwarded and the
+   * harness silently made real calls.
+   */
+  readonly githubHttp?: GithubHttpPort | undefined;
+  /** Point the GitHub client somewhere other than api.github.com (tests only). */
+  readonly githubBaseUrl?: string | undefined;
+  /** Shrink the per-sync page and detail budgets (tests only). */
+  readonly githubLimits?: SyncLimits | undefined;
 }
 
 export interface BuiltApp {
@@ -114,6 +135,8 @@ export interface BuiltApp {
   readonly notifications: NotificationService;
   /** Settings read/write, secrets and Test Connection (TDS 04 §7.1–§7.4). */
   readonly settings: SettingsModule;
+  /** Repository discovery, commit/PR sync and the polling producer (TDS 04 §5, PRD §4.3). */
+  readonly github: GithubModule;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -280,6 +303,24 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
 
   registerAuditLog(app, { db: options.db });
 
+  // GitHub (TDS 02 §2, TDS 04 §5.1). Registered after `settings` because it reads the token
+  // through that module's vault and re-primes its poll chain on `setting.updated`, which is the
+  // event the settings service publishes on this same bus.
+  const github = registerGithub(app, {
+    db: options.db,
+    outbox,
+    queue,
+    bus,
+    vault: settings.vault,
+    ...(options.githubHttp === undefined ? {} : { http: options.githubHttp }),
+    ...(options.githubBaseUrl === undefined ? {} : { baseUrl: options.githubBaseUrl }),
+    ...(options.githubLimits === undefined ? {} : { limits: options.githubLimits }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    onError: (error, context) => {
+      app.log.error({ err: error, context }, 'github integration error');
+    },
+  });
+
   return {
     app,
     auth,
@@ -292,6 +333,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     schedule,
     notifications,
     settings,
+    github,
   };
 }
 

@@ -50,6 +50,35 @@ export const BACKEND_QUEUES = Object.freeze([
     retryBackoff: true,
     expireInSeconds: 600,
   }),
+  /**
+   * `repository.sync` — one repository's GitHub sync (TDS 04 §5.1).
+   *
+   * Two retries, not five: the failures this job actually sees are a rejected token, a deleted
+   * remote and an exhausted rate limit, and none of them gets better by being retried a minute
+   * later. They are recorded on the row (`sync_status`, `last_sync_error`) by the handler
+   * itself rather than thrown, so pg-boss's retry budget covers only the *infrastructure*
+   * failure — a dropped connection mid-transaction — which two attempts is plenty for.
+   */
+  Object.freeze({
+    name: QUEUE_NAMES.REPOSITORY_SYNC,
+    retryLimit: 2,
+    retryDelaySeconds: 30,
+    retryBackoff: true,
+    expireInSeconds: 900,
+  }),
+  /**
+   * `github.poll` — the polling tick.
+   *
+   * `retryLimit: 0` is deliberate. The tick reschedules itself at the end of every run, so a
+   * pg-boss retry would create a *second* chain running alongside the first; a failed tick is
+   * better dropped, because the next one is already scheduled and will pick up every repository
+   * the failed one missed (they are ordered by `last_synced_at NULLS FIRST`).
+   */
+  Object.freeze({
+    name: QUEUE_NAMES.GITHUB_POLL,
+    retryLimit: 0,
+    expireInSeconds: 3600,
+  }),
 ]);
 
 export interface CreateBackendQueueOptions {

@@ -22,6 +22,19 @@ export const endpoints = {
   repositories: {
     list: '/repositories',
     detail: (id: string) => `/repositories/${id}`,
+    /**
+     * The working-tree read model — current branch, uncommitted-file count, ahead/behind, or
+     * an `unavailableReason` when the tree cannot be read (`apps/backend/src/repositories/`).
+     *
+     * ⚠ Not in TDS 04 §5.1; the Backend flags it as additive for the same reason the UI needs
+     * it — §5.1 exposes `defaultBranch` and nothing else, so every surface that must state
+     * what is *actually* checked out would otherwise have to guess or stay silent.
+     */
+    status: (id: string) => `/repositories/${id}/status`,
+    /** §5.1 — scan the discovery roots configured in Settings → Integrations → GitHub. */
+    discover: '/repositories/discover',
+    /** §5.1 — refresh commits and pull requests from git + GitHub. `202 { jobId }`. */
+    sync: (id: string) => `/repositories/${id}/sync`,
   },
   sessions: {
     list: '/sessions',

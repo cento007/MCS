@@ -15,4 +15,13 @@ export type Db = NodePgDatabase<typeof schema>;
  */
 export type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
+/**
+ * Row-shaped types that are part of the *contract* rather than of the table definition, and are
+ * therefore importable without reaching through the `schema` namespace.
+ *
+ * `CommitFile` is one element of `commits.files` (TDS 03 §3.7). Both the GitHub producer that
+ * writes it and the Session Files read model that consumes it (§6.10.2) need the same shape;
+ * a second, hand-copied declaration on either side is a drift waiting to happen.
+ */
+export type { CommitFile } from './schema/git.js';
 export * as schema from './schema/index.js';

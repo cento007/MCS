@@ -296,6 +296,37 @@ Two more found the same way: disabled `<select>`s displayed fabricated configura
 
 Also fixed en route: the shared fetch mock built `new Response('', {status: 204})`, which throws, so every mocked 204 surfaced as a network error.
 
+## 2026-08-13 — GitHub integration and Projects: **Phase 1 complete**
+
+**1355 unit tests** (still DB-free), **438 integration**, 493 files lint-clean.
+
+### GitHub integration
+
+**Discovery makes zero GitHub API calls.** "Is this a GitHub repository" is answered by the working tree's `origin` remote, which is where the answer actually lives — so discovery works before a token exists, cannot fail on a rate limit, and is fast enough to be synchronous. Verified live against the real `D:\Repos`: 15 working trees found, 5 registered, 10 skipped with reasons, correctly identifying `cento007/MCS` and classifying eight Azure DevOps remotes as `remote_not_github`. Re-running registered 0 and emitted 0 events.
+
+**Rate limits never retry.** GitHub uses 403 *and* 429 for both primary and secondary limits, disambiguated by `x-ratelimit-remaining`. Sleeping would hold a pg-boss lease for up to an hour and retrying burns the secondary limit that exists to prevent exactly that — so the failure is recorded with the reset instant in `last_sync_error`, and a process-wide budget means a poll over 20 repositories discovers an exhausted window **once**, not 20 times.
+
+**Token safety is tested adversarially**: all 13 failure kinds × 5 endpoints scanned across `JSON.stringify`, `String()` and deep inspection, including the two hostile cases — GitHub echoing the token back in an error body, and a transport error quoting a credentialed URL. A full-database scan (every text/jsonb column, pg-boss payloads, events, audit rows, API responses) found zero occurrences. A git remote can also carry an embedded credential, so `remote.ts` **rebuilds** the canonical URL from parsed coordinates rather than trimming — there is no "we forgot that form" case.
+
+**Commit→session attribution declines when it cannot be sure**: five conditions including *exactly one* candidate session, no skew tolerance, committer date not author date (a rebase rewrites the latter), and `session_id` written once at insert so a later session cannot retroactively claim a commit. Author identity, working-directory containment and message trailers were all considered and rejected as non-evidence. The stated limit is honest: commits are polled from the default branch, so feature-branch sessions get no attribution rather than a wrong one.
+
+### Projects screens
+
+List and detail with the per-project workflow-mode override as a genuine three-way control (Manual / Assisted / inherit), naming the effective mode — and saying "not readable" rather than guessing when the global setting fails to load. Working-tree status renders **"cannot verify"** in amber for every `unavailableReason`, never as "clean", because it is a condition to weigh before launching rather than a missing optional field.
+
+The agent dropped the wireframe's VISIBILITY / OPEN PRs / LAST COMMIT columns: nothing populates them before a first sync, and "0 open PRs" under a confident header makes a screen that looks synced and is not. It also found the sync/discovery endpoints had landed mid-flight and wired them for real rather than shipping the placeholder note.
+
+### Accessibility bug found and fixed (orchestrator)
+
+The session panel's tablist changed selection on arrow keys **without moving DOM focus**. Since `tabIndex` is derived from selection, the button under the user's focus became `tabIndex={-1}` while focus stayed on it — so the roving tabindex broke, the next `Tab` left the widget entirely, and the newly selected tab was unreachable from the keyboard. That is also how a phase-gated tab becomes unreachable *without ever being marked disabled*, which is precisely the affordance lie WS5's WC9 rule exists to prevent. Fixed, plus `Home`/`End`, with four regression tests asserting focus follows selection and exactly one tab stop survives.
+
+### Contract items raised
+
+- **§5.1's `202 { jobId }` is unresolvable** — the catalog defines no job resource, so a client has nothing to poll. Harmless for `/sync` (the outcome lands on the resource and the WS channel), actively lossy for `/discover`, whose skip reasons have no table to live in. Implemented as a synchronous report and flagged.
+- **No read routes exist for the rows this now writes** — `GET /repositories/{id}/commits`, `/pull-requests` and friends are specified but unbuilt, so the Repository detail screen has no PR or commit source. This is the next backend gap.
+- `repositories.last_polled_sha` structurally scopes commit tracking to the default branch, which is what limits attribution; widening it is a design change, not a code change.
+- GitHub Enterprise is unrepresentable — the settings keys carry no API base URL. Correct for V1, recorded.
+
 ### Remaining before implementation
 
 - Two open WS2 leaf contracts (spend aggregate, session Files) — needed by the Dashboard and session-detail sprints, not by Phase 1 foundation work.

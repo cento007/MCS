@@ -1,5 +1,5 @@
 import { type Db, type DbTransaction, type EntityId, newId, schema } from '@mc/shared';
-import { and, asc, count, desc, eq, gt, lt } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, lt, sql } from 'drizzle-orm';
 
 /**
  * All `repositories` access, in one module (TDS 03 §3.6).
@@ -125,6 +125,67 @@ export async function updateRepository(
     .returning();
 
   return rows[0] ?? null;
+}
+
+/**
+ * The columns a GitHub sync owns (TDS 03 §3.6), written in one statement.
+ *
+ * Split from `UpdateRepositoryInput` on purpose: those fields are the operator's (`name`,
+ * `projectId`), these are the poller's. Keeping them in separate inputs is what stops a sync
+ * from being able to overwrite a name the operator chose, and stops `PATCH /repositories/{id}`
+ * from being able to fake a successful sync.
+ */
+export interface UpdateRepositorySyncInput {
+  readonly remoteUrl?: string | null;
+  readonly visibility?: string;
+  readonly defaultBranch?: string;
+  readonly lastPolledSha?: string | null;
+  /** Only ever set to the time of a **successful** sync (§3.6: "Last *successful* sync"). */
+  readonly lastSyncedAt?: Date;
+  readonly syncStatus?: 'ok' | 'failed' | 'never';
+  readonly lastSyncError?: string | null;
+}
+
+export async function updateRepositorySync(
+  db: DbLike,
+  id: string,
+  update: UpdateRepositorySyncInput,
+): Promise<RepositoryRow | null> {
+  const rows = await db
+    .update(schema.repositories)
+    .set({
+      ...('remoteUrl' in update ? { remoteUrl: update.remoteUrl ?? null } : {}),
+      ...(update.visibility === undefined ? {} : { visibility: update.visibility }),
+      ...(update.defaultBranch === undefined ? {} : { defaultBranch: update.defaultBranch }),
+      ...('lastPolledSha' in update ? { lastPolledSha: update.lastPolledSha ?? null } : {}),
+      ...(update.lastSyncedAt === undefined ? {} : { lastSyncedAt: update.lastSyncedAt }),
+      ...(update.syncStatus === undefined ? {} : { syncStatus: update.syncStatus }),
+      ...('lastSyncError' in update ? { lastSyncError: update.lastSyncError ?? null } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.repositories.id, id))
+    .returning();
+
+  return rows[0] ?? null;
+}
+
+/**
+ * Repositories the polling producer should consider this tick, oldest cursor first.
+ *
+ * `last_synced_at IS NULL FIRST` is the ordering that matters: a freshly discovered repository
+ * has never been synced and would otherwise sit behind every repository that has, forever.
+ * There is no index on `last_synced_at` and none is wanted — TDS 03 §3.6 states this table
+ * holds tens of rows in V1 and the Repositories view already reads all of them.
+ */
+export async function listRepositoriesForPoll(
+  db: DbLike,
+  filters: { readonly limit: number },
+): Promise<RepositoryRow[]> {
+  return db
+    .select()
+    .from(schema.repositories)
+    .orderBy(sql`${schema.repositories.lastSyncedAt} ASC NULLS FIRST`, asc(schema.repositories.id))
+    .limit(filters.limit);
 }
 
 export async function deleteRepository(db: DbLike, id: string): Promise<boolean> {

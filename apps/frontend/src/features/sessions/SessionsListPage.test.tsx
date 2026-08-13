@@ -108,6 +108,36 @@ describe('filters', () => {
   });
 });
 
+describe('project scoping (§5.3.2 hand-off)', () => {
+  it('filters the list and seeds the Launch modal from `?projectId=`', async () => {
+    api.on('GET', '/api/v1/projects', {
+      body: listBody([
+        {
+          id: 'p-1',
+          workspaceId: 'w-1',
+          name: 'mission-control',
+          description: null,
+          workflowMode: null,
+          createdAt: '2026-08-01T00:00:00.000Z',
+          updatedAt: '2026-08-01T00:00:00.000Z',
+          archivedAt: null,
+        },
+      ]),
+    });
+
+    renderWithProviders(<SessionsListPage />, {
+      initialEntries: ['/sessions?launch=1&projectId=p-1'],
+    });
+
+    // The Project detail's `+ New Session` is specified as "pre-scoped to this Project"; the
+    // search param is what carries that across a feature boundary the SPA may not import over.
+    await waitFor(() =>
+      expect(api.calls.some((call) => call.url.includes('projectId=p-1'))).toBe(true),
+    );
+    expect(await screen.findByLabelText('Project')).toHaveValue('p-1');
+  });
+});
+
 describe('cursor pagination (F5.3)', () => {
   it('offers Load more while a cursor remains, and never page numbers', async () => {
     const user = userEvent.setup();

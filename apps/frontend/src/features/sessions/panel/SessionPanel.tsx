@@ -185,6 +185,24 @@ function TabList({
   panelTab: SessionPanelTab;
   setPanelTab: (tab: SessionPanelTab) => void;
 }) {
+  const tabRefs = useRef(new Map<SessionPanelTab, HTMLButtonElement>());
+
+  /**
+   * Arrow keys must move **DOM focus**, not only selection.
+   *
+   * `tabIndex` is derived from `panelTab`, so selecting a different tab makes the button the
+   * user is standing on `tabIndex={-1}` while focus stays on it. The roving tabindex is then
+   * broken in the way that matters: focus sits on an element that is no longer the tablist's
+   * tab stop, so the next `Tab` leaves the widget entirely and the newly selected tab can
+   * never be reached from the keyboard. That is also how a phase-gated tab becomes
+   * unreachable without ever being marked `disabled` — which is exactly the affordance lie
+   * WS5's WC9 rule exists to prevent.
+   */
+  const moveTo = (next: SessionPanelTab) => {
+    setPanelTab(next);
+    tabRefs.current.get(next)?.focus();
+  };
+
   return (
     <div role="tablist" aria-label="Session panel tabs" className="flex gap-1">
       {SESSION_PANEL_TABS.map((tab) => (
@@ -193,6 +211,10 @@ function TabList({
           type="button"
           role="tab"
           id={`session-tab-${tab}`}
+          ref={(node) => {
+            if (node) tabRefs.current.set(tab, node);
+            else tabRefs.current.delete(tab);
+          }}
           aria-selected={panelTab === tab}
           aria-controls={`session-panel-${tab}`}
           // Roving tabindex: one stop for the whole tablist, arrows move within it.
@@ -200,18 +222,25 @@ function TabList({
           onClick={() => setPanelTab(tab)}
           onKeyDown={(event) => {
             const index = SESSION_PANEL_TABS.indexOf(tab);
+            const last = SESSION_PANEL_TABS.length - 1;
             if (event.key === 'ArrowRight') {
               event.preventDefault();
-              setPanelTab(
+              moveTo(
                 SESSION_PANEL_TABS[(index + 1) % SESSION_PANEL_TABS.length] as SessionPanelTab,
               );
             } else if (event.key === 'ArrowLeft') {
               event.preventDefault();
-              setPanelTab(
+              moveTo(
                 SESSION_PANEL_TABS[
                   (index - 1 + SESSION_PANEL_TABS.length) % SESSION_PANEL_TABS.length
                 ] as SessionPanelTab,
               );
+            } else if (event.key === 'Home') {
+              event.preventDefault();
+              moveTo(SESSION_PANEL_TABS[0] as SessionPanelTab);
+            } else if (event.key === 'End') {
+              event.preventDefault();
+              moveTo(SESSION_PANEL_TABS[last] as SessionPanelTab);
             }
           }}
           className="rounded-xs px-2 text-2xs"

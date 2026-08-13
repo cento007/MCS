@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const maxConcurrentSessions = await readMaxConcurrentSessions(database.db);
   const claudeCode = await readClaudeCodeLaunchSettings(database.db);
 
-  const { app, sessions } = buildAppWithServices({
+  const { app, sessions, github } = buildAppWithServices({
     config,
     db: database.db,
     queue,
@@ -88,6 +88,11 @@ async function main(): Promise<void> {
   // The rate-limit retry consumer (TDS 02 §4.3).
   await sessions.managed?.start();
 
+  // The `repository.sync` consumer and the self-rescheduling `github.poll` chain (TDS 02 §2).
+  // After the Session consumers because it is the lower-priority producer, and before `listen`
+  // so a tick left over from the previous run is picked up as soon as the process is healthy.
+  await github.start();
+
   // Hooks run in REVERSE registration order, so the pool is registered first and drained
   // last — nothing can still be querying it once the HTTP server has closed.
   shutdown.onShutdown('database-pool', async () => {
@@ -98,6 +103,9 @@ async function main(): Promise<void> {
   });
   shutdown.onShutdown('session-registry', async () => {
     await sessions.registry.stop();
+  });
+  shutdown.onShutdown('github', async () => {
+    await github.stop();
   });
   shutdown.onShutdown('http-server', async () => {
     await app.close();

@@ -8,7 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Built so far: the pnpm monorepo, the full database schema (23 tables, migrated), authentication (argon2id, DB-backed cookie sessions, hashed scoped API tokens, route guards, audit logging), session tracking with the F7 state machine and transactional outbox, the Claude Code wrapper (managed via the Agent SDK; observed via hook ingest and a version-tolerant transcript tailer), the WebSocket hub, projects/repositories including working-tree status, the health/spend/schedule/notifications read models, the settings backend with its key registry and test-connection executors, and the SPA — login, app shell, sessions list, live session view, Dashboard and Settings.
 
-**Next in Phase 1: GitHub integration** (repository sync, commit and PR tracking) — the last roadmap item before Phase 2.
+GitHub integration is in: local discovery from `origin` remotes (no API calls, so it works before a token exists), repository sync of metadata/commits/PRs, a self-rescheduling poll job, and commit→session attribution that declines when ambiguous.
+
+**Phase 1 is complete.** Known gaps to close before or during Phase 2: the read routes for commits and pull requests are specified but unbuilt (`GET /repositories/{id}/commits`, `/pull-requests`), so the Repository detail screen has no PR or commit source; unknown *query parameters* are silently dropped on list routes (Fastify's `removeAdditional`), so an unrecognised filter reads as no filter; and no `openapi.yaml` is emitted yet, so `apps/frontend/src/lib/api/types.ts` is still hand-written against the prose contract.
 
 Remote: https://github.com/cento007/MCS. Development work happens on the `DEV` branch; `main` is the stable branch.
 
