@@ -497,3 +497,116 @@ describe('GET /api/v1/services/health', () => {
     expect(response.body).not.toContain(apiKey);
   });
 });
+
+// ------------------------------------------------------------- changing the model takes effect
+
+/**
+ * Changing the embedding model in Settings must take effect **without a restart**.
+ *
+ * `runtime.ts` states this as its contract and nothing implemented it: no module subscribed to
+ * `setting.updated`, so the verified runtime — embedder, store, stamp, chunk budget — was cached
+ * for the life of the process. The operator-visible failure is the nastiest kind, because it is
+ * silent: after switching models you keep receiving ten confident results, retrieved from the
+ * collection the *previous* model built. Mismatched vectors do not return fewer matches, they
+ * return wrong ones, and `stamp_mismatch` — the state built precisely to refuse this — could
+ * never be reached until someone restarted the backend.
+ *
+ * Only this tier can prove it: the chain is HTTP → settings service → transactional outbox →
+ * event bus → the memory subscriber, and the three middle links are real infrastructure. A unit
+ * test of the predicate (`invalidation.test.ts`) cannot show that the event ever arrives.
+ */
+describe('a settings change invalidates the verified runtime', () => {
+  /** Log in over HTTP so the write travels the operator's real path, cookie and all. */
+  async function loginTo(app: TestApp): Promise<string> {
+    const user = await seedUser();
+    const login = await app.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: user.username, password: user.password },
+    });
+    expect(login.statusCode).toBe(200);
+    const raw = login.headers['set-cookie'];
+    return Array.isArray(raw) ? raw.join('; ') : (raw ?? '');
+  }
+
+  /** Every model the runtime has built an embedder for, in order. The witness for re-resolution. */
+  function appOverModels(seen: string[]): TestApp {
+    return createTestApp({
+      memoryClients: (config) => {
+        seen.push(config.embeddingModel);
+        return {
+          embedder: createFakeEmbedder({ model: config.embeddingModel, dimension: 768 }),
+          // A fresh store per resolution, so this test isolates invalidation rather than
+          // re-testing the stamp check that `health.ts` already covers.
+          store: createInMemoryVectorStore({ collection: 'mc_memory' }),
+        };
+      },
+    });
+  }
+
+  it('re-resolves with the new embedding model after a real settings write', async () => {
+    await setSetting(
+      'integrations',
+      settingKey('integrations.qdrant.embeddingModel'),
+      'nomic-embed-text',
+    );
+
+    const seen: string[] = [];
+    const app = appOverModels(seen);
+    const cookie = await loginTo(app);
+
+    // Warm it, exactly as a first query would.
+    const before = await app.memory.runtime.ready();
+    expect(before.kind).toBe('ready');
+    if (before.kind === 'ready') expect(before.stamp.model).toBe('nomic-embed-text');
+    expect(app.memory.runtime.cached).toBe(true);
+
+    const saved = await app.app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/qdrant',
+      headers: { cookie },
+      payload: { host: '127.0.0.1', port: 6333, embeddingModel: 'mxbai-embed-large' },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    // The cache is gone by the time the write returns — the outbox publishes to the bus in the
+    // same synchronous step as the commit, so no polling or waiting is involved.
+    expect(app.memory.runtime.cached).toBe(false);
+
+    const after = await app.memory.runtime.ready();
+    expect(after.kind).toBe('ready');
+    if (after.kind === 'ready') expect(after.stamp.model).toBe('mxbai-embed-large');
+    // The property that failed before the fix: a *second* resolution happened, against the
+    // model the operator just chose.
+    expect(seen).toEqual(['nomic-embed-text', 'mxbai-embed-large']);
+  });
+
+  it('keeps the cache when an unrelated integration is written', async () => {
+    // The other half. An invalidator that fired on every `setting.updated` would also pass the
+    // test above, while throwing away a verified runtime — three round trips, one of them a
+    // cold model load — every time an unrelated setting was saved.
+    await setSetting(
+      'integrations',
+      settingKey('integrations.qdrant.embeddingModel'),
+      'nomic-embed-text',
+    );
+
+    const seen: string[] = [];
+    const app = appOverModels(seen);
+    const cookie = await loginTo(app);
+
+    expect((await app.memory.runtime.ready()).kind).toBe('ready');
+    expect(app.memory.runtime.cached).toBe(true);
+
+    const saved = await app.app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/telegram',
+      headers: { cookie },
+      payload: { chatId: '12345', enabled: false },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    expect(app.memory.runtime.cached).toBe(true);
+    expect(seen).toEqual(['nomic-embed-text']);
+  });
+});

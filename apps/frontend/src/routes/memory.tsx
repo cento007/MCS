@@ -1,18 +1,14 @@
-import { PhasePlaceholder } from '../components/PhasePlaceholder.js';
+import { MemoryPage } from '../features/memory/MemoryPage.js';
 
 /**
- * `/memory` — Phase 3 placeholder route (TDS 05 §10, TDS 06 §6.1).
+ * `/memory` — semantic search across the four-tier memory system (PRD §8.4, TDS 05 §2.2,
+ * TDS 06 §6.1).
  *
- * The route module, the nav slot and a reserved `memory:*` channel / query-key namespace
- * are the only frontend commitments made today. The nav entry is reachable and badged, not
- * disabled.
+ * This was a `PhasePlaceholder` while the route, the nav slot and the reserved `memory:*` channel
+ * and query-key namespace were the only commitments made. The Phase 3 backend — retrieval,
+ * ingestion, backfill — now exists, so the placeholder is replaced by the screen it reserved space
+ * for: the same search field and results region the §6.1 wireframe sketched.
  */
 export function Component() {
-  return (
-    <PhasePlaceholder
-      phase={3}
-      title="Memory"
-      description="Semantic search across the four-tier memory system — session, project, agent and global — backed by Qdrant."
-    />
-  );
+  return <MemoryPage />;
 }

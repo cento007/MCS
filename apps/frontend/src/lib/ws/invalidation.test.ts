@@ -88,9 +88,20 @@ describe('queryKeysForEvent', () => {
     expect(keys).toContain(`["sessions","${SESSION_ID}","files"]`);
   });
 
-  it('ignores Phase 3/4 reserved events rather than guessing at their effect', () => {
+  it('ignores Phase 4 reserved events rather than guessing at their effect', () => {
     expect(queryKeysForEvent(event('agent.execution_started', {}))).toEqual([]);
-    expect(queryKeysForEvent(event('memory.item_stored', {}))).toEqual([]);
+  });
+
+  it('refetches the memory INDEX STATE on a memory event, and never a cached search', () => {
+    // Phase 3 graduated `memory.*` from reserved to produced. The narrow target is deliberate:
+    // a search is a POST costing an embedding call plus a vector query, and `memory.item_stored`
+    // fires once per indexed source — so invalidating `["memory-items"]` root would re-run the
+    // operator's query a few hundred times during a backfill, while they read the first answer.
+    for (const type of ['memory.item_stored', 'memory.item_deleted', 'memory.reindexed']) {
+      expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual([
+        '["memory-items","backfill"]',
+      ]);
+    }
   });
 
   it('degrades gracefully when a payload lacks the id it should carry', () => {
@@ -120,8 +131,10 @@ describe('queryKeysForChannel (reconnect gap healing)', () => {
     expect(perChannel.length).toBeGreaterThan(perEvent.length);
   });
 
-  it('returns nothing for the silent Phase 3/4 channels', () => {
-    expect(queryKeysForChannel('memory')).toEqual([]);
+  it('heals the memory gap at the index state, and leaves Phase 4 silent', () => {
+    // Same narrowness as the per-event map, for the same reason: the reconnect is healing an
+    // unknown gap in what is *indexed*, not re-asking a question the operator asked once.
+    expect(keyStrings(queryKeysForChannel('memory'))).toEqual(['["memory-items","backfill"]']);
     expect(queryKeysForChannel('agents')).toEqual([]);
   });
 

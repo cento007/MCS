@@ -118,6 +118,40 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
 }
 
 /**
+ * Does this `setting.updated` change what `MemoryRuntime` resolved?
+ *
+ * The **slug test is the live path**, and today it is the only one: `integrations` is
+ * deliberately excluded from `DOCUMENT_CATEGORIES` (§7.3 — "it has its own pair of endpoints
+ * because it is written one integration at a time"), so every write that can touch this
+ * configuration arrives from `PUT /settings/integrations/{qdrant|ollama}` carrying its slug.
+ *
+ * Ollama counts as well as Qdrant: the runtime caches an embedder built from the Ollama host and
+ * port, and a stamp derived from that model's context window. Moving Ollama to another port
+ * without dropping the cache leaves every subsequent embed call pointed at nothing.
+ *
+ * The `changedKeys` test underneath is **defence in depth, not a second live path** — no route
+ * currently emits `integration: null` alongside an `integrations.*` key. It is kept because
+ * `changedKeys` is the authoritative statement of what actually moved, while the slug is an
+ * artifact of which route was called: if a category-level integrations write is ever added, or a
+ * worker writes these keys directly, the predicate stays correct without anyone remembering it
+ * exists. The prefixes are the registry's own key namespaces, so a key added to either
+ * integration is covered on arrival.
+ */
+export function affectsMemoryRuntime(payload: Record<string, unknown>): boolean {
+  const integration = payload['integration'];
+  if (integration === 'qdrant' || integration === 'ollama') return true;
+
+  const changedKeys = payload['changedKeys'];
+  if (!Array.isArray(changedKeys)) return false;
+
+  return changedKeys.some(
+    (key) =>
+      typeof key === 'string' &&
+      (key.startsWith('integrations.qdrant.') || key.startsWith('integrations.ollama.')),
+  );
+}
+
+/**
  * Build the module and register its routes.
  *
  * The `memory.index` consumer is **not** subscribed here. Registration happens while the app is
@@ -125,12 +159,29 @@ export function createMemoryModule(options: MemoryModuleOptions): MemoryModule {
  * process is ready to serve, and — in the integration tier, where an app is built per test —
  * would attach a consumer to a queue that the test may never start. `start()` is called from
  * `main.ts` after the queue is up, exactly as the GitHub poller is.
+ *
+ * The **cache invalidator** is subscribed here rather than in `start()`, and that difference is
+ * deliberate. It performs no I/O — it drops a cached object — so none of the reasoning above
+ * applies to it, while the routes it protects go live the moment they are registered. Deferring
+ * it to `start()` would leave the integration tier, which builds an app per test and often never
+ * calls `start()`, serving retrieval from a runtime that no settings write could ever refresh.
+ *
+ * Without this, `runtime.ts`'s stated contract does not hold: an operator who changes the
+ * embedding model keeps being served from the collection built by the *previous* model until the
+ * process restarts. That is the one failure mode the stamp exists to refuse, because mismatched
+ * vectors return confident nonsense rather than an error — so the miss is invisible.
  */
 export function registerMemory(app: FastifyInstance, options: MemoryModuleOptions): MemoryModule {
   const memory = createMemoryModule(options);
   registerMemoryRoutes(app, { search: memory.search, indexing: memory.indexing });
 
+  const unsubscribe = options.bus.on('setting.updated', (event) => {
+    if (!affectsMemoryRuntime(event.payload)) return;
+    memory.runtime.invalidate();
+  });
+
   app.addHook('onClose', async () => {
+    unsubscribe();
     memory.indexing.stop();
   });
 

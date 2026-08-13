@@ -31,11 +31,12 @@ import { MAX_TITLE_LENGTH } from './title.js';
  *   GET    /api/v1/sessions/{id}/commits       cursor list, newest first (§6.10.1)
  *   GET    /api/v1/sessions/{id}/files         bounded read model, no meta (§6.10.2)
  *
- * Deliberately absent, and each for the same reason — they promise runtime behaviour this
- * Backend cannot yet deliver, and an endpoint that answers `202` for a stream nobody will send
- * is worse than one that is honestly missing:
- *   `POST /sessions/{id}/prompts` (§6.4), `POST /sessions/{id}/export` and
- *   `/context-package` (§6.7), `POST /hook-events` (§6.8).
+ * `POST /sessions/{id}/export` and `/context-package` (§6.7) are served too, from
+ * `sessions/export/` — they are registered separately because the context package reads the
+ * semantic-memory layer, which is built after this module.
+ *
+ * `POST /sessions/{id}/prompts` (§6.4) and `POST /hook-events` (§6.8) are registered by
+ * `managed/` and `observed/` respectively, each only when its runtime is wired.
  */
 
 const UUID_PATTERN =

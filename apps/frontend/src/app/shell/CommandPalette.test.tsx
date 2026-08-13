@@ -91,6 +91,34 @@ describe('session actions in the palette', () => {
     expect(api.callsTo('/archive')[0]?.url).toContain(FAILED.id);
   });
 
+  it('offers typed text to semantic memory — last, and without fetching anything', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CommandPalette open onClose={() => {}} />);
+    await screen.findAllByRole('option', { name: /Refactor queue port/ });
+
+    await user.type(screen.getByRole('combobox'), 'why pg-boss');
+
+    const options = screen.getAllByRole('option');
+    const memory = options.at(-1);
+    // Last, never first: leading with it would hijack `Enter` away from the palette's primary
+    // job — jumping to the session or page the operator is already naming.
+    expect(memory?.textContent).toContain('Search memory for “why pg-boss”');
+    // The palette stays the zero-fetch surface §9.4 specifies; the Memory screen owns the
+    // embedding call.
+    expect(api.callsTo('/memory-items')).toHaveLength(0);
+  });
+
+  it('says no COMMAND matched, rather than "no matches", once memory can still be asked', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CommandPalette open onClose={() => {}} />);
+    await screen.findAllByRole('option', { name: /Refactor queue port/ });
+
+    await user.type(screen.getByRole('combobox'), 'zzzzznothingmatches');
+
+    expect(screen.getByText('No command matches. Memory can still be asked.')).toBeInTheDocument();
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+  });
+
   it('does not share a cache slot with the Sessions list screen', async () => {
     // Regression: both surfaces read `['sessions']` with the same filters, but the list stores
     // `InfiniteData` and the palette a flat array. Sharing the slot crashed the whole shell on

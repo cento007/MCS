@@ -109,6 +109,26 @@ export const queryKeys = {
   syncRuns: {
     root: () => ['sync-runs'] as const,
   },
+  /**
+   * Phase 3 semantic memory (TDS 04 §13.1).
+   *
+   * `search` is keyed by the whole request object because that IS the identity of the answer:
+   * the same prose under a different scope is a different question, and TanStack Query hashes
+   * the key structurally so the object works as-is.
+   *
+   * **`backfill` deliberately does not sit under a prefix that memory events invalidate wholesale.**
+   * A `memory.item_stored` fires once per indexed source, and invalidating `['memory-items']`
+   * root on each one would re-POST the operator's query — an embedding call and a vector search
+   * per event, up to hundreds during a backfill. `lib/ws/invalidation.ts` therefore targets this
+   * slot specifically and leaves cached searches alone; the screen tells the operator the index
+   * moved and offers to run the search again, rather than doing it behind their back.
+   */
+  memoryItems: {
+    root: () => ['memory-items'] as const,
+    search: (request: object) => ['memory-items', 'search', request] as const,
+    backfill: () => ['memory-items', 'backfill'] as const,
+    detail: (id: string) => ['memory-items', id] as const,
+  },
 } as const;
 
 /** A query key as the invalidation machinery passes it around. */

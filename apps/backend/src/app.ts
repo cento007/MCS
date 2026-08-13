@@ -42,9 +42,10 @@ import { type NotificationsModule, registerNotifications } from './notifications
 import { type ObsidianModule, registerObsidian } from './obsidian/index.js';
 import { registerProjects } from './projects/index.js';
 import { registerPullRequests } from './pull-requests/index.js';
-import { registerRepositories } from './repositories/index.js';
+import { registerRepositories, type WorkingTreeStatus } from './repositories/index.js';
 import { registerSchedule, type ScheduleService } from './schedule/index.js';
 import { registerSearch, type SearchModule } from './search/index.js';
+import { registerSessionExport, type SessionExportModule } from './sessions/export/index.js';
 import {
   type AgentRuntimePort,
   registerSessions,
@@ -182,6 +183,22 @@ export interface BuildAppOptions {
    * sweep provably takes more than one slice — resumability is not demonstrable in one batch.
    */
   readonly memoryBackfillBatchSize?: number | undefined;
+  /**
+   * The context package's two outbound edges (TDS 04 §6.7): the semantic-memory budget and the
+   * `git status` budget. Tests shrink them so the degraded branches — "memory did not answer in
+   * time", "git did not answer in time" — are demonstrable in milliseconds rather than by
+   * waiting out a real 25-second deadline.
+   */
+  readonly sessionExportMemoryBudgetMs?: number | undefined;
+  readonly sessionExportGitBudgetMs?: number | undefined;
+  /**
+   * The working-tree probe behind a context package. Supplying it is how a test exercises the
+   * section **without** running `git` against a real checkout; the default is the real, bounded
+   * `probeWorkingTree`.
+   */
+  readonly sessionExportProbe?:
+    | ((localPath: string, options: { timeoutMs: number }) => Promise<WorkingTreeStatus>)
+    | undefined;
 }
 
 /** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
@@ -228,6 +245,8 @@ export interface BuiltApp {
    * follow-up.
    */
   readonly memory: MemoryModule;
+  /** PRD §4.1's Export Session and Generate Context Package (TDS 04 §6.7). */
+  readonly sessionExport: SessionExportModule;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -386,6 +405,26 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
+  // Session Export and Context Package (TDS 04 §6.7, PRD §4.1). Registered here rather than
+  // inside `registerSessions` because the context package's related-context section is built
+  // from `memory.search`, which exists only now — and passing it `null` is not an option that
+  // keeps the document honest: the section would silently vanish instead of naming the gap.
+  const sessionExport = registerSessionExport(app, {
+    db: options.db,
+    memory: memory.search,
+    ...(options.sessionExportMemoryBudgetMs === undefined
+      ? {}
+      : { memoryBudgetMs: options.sessionExportMemoryBudgetMs }),
+    ...(options.sessionExportGitBudgetMs === undefined
+      ? {}
+      : { gitBudgetMs: options.sessionExportGitBudgetMs }),
+    ...(options.sessionExportProbe === undefined ? {} : { probe: options.sessionExportProbe }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    onError: (error, context) => {
+      app.log.warn({ err: error, context }, 'session export dependency failed');
+    },
+  });
+
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
   // schedule (§7.7), spend (§7.8) and notifications (§8). Health is registered last because it
   // self-reports the hub's connection count and the registry's slot usage (TDS 02 §7.1), and
@@ -512,6 +551,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     obsidian,
     search,
     memory,
+    sessionExport,
   };
 }
 

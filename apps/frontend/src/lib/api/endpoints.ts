@@ -80,6 +80,24 @@ export const endpoints = {
   },
   syncRuns: '/sync-runs',
   search: '/search',
+  /**
+   * Phase 3 semantic memory (TDS 04 §13.1, `apps/backend/src/memory/routes.ts`).
+   *
+   * `search` is a **POST** and that is not a REST slip: the query is natural-language prose up
+   * to 2 000 characters plus a filter object, which is a body rather than a query string, and
+   * the answer is not cacheable because the index moves underneath it.
+   *
+   * Two of §13.1's four reserved routes are deliberately absent from the Backend — `POST
+   * /memory-items` and `DELETE /memory-items/{id}` — because every MemoryItem is a *projection*
+   * of a row this database already holds. They are not listed here, so no screen can be written
+   * against a route that will never exist.
+   */
+  memoryItems: {
+    search: '/memory-items/search',
+    /** `GET` reads the active or most recent run; `POST` triggers one (`202`). */
+    backfill: '/memory-items/backfill',
+    detail: (id: string) => `/memory-items/${id}`,
+  },
 } as const;
 
 /**

@@ -1735,6 +1735,38 @@ paths:
       x-mc-strictness:
         query: strict
         body: strict
+  '/sessions/{id}/context-package':
+    post:
+      operationId: postSessionsByIdContextPackage
+      summary: 'POST /sessions/{id}/context-package'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - 'null'
+              additionalProperties: false
+              properties: {}
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
   '/sessions/{id}/end':
     post:
       operationId: postSessionsByIdEnd
@@ -1746,6 +1778,42 @@ paths:
           schema:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/export':
+    post:
+      operationId: postSessionsByIdExport
+      summary: 'POST /sessions/{id}/export'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - 'null'
+              additionalProperties: false
+              properties:
+                format:
+                  type: string
+                  enum:
+                    - markdown
       responses:
         default:
           $ref: '#/components/responses/ErrorEnvelope'

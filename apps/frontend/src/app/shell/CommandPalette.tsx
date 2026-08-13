@@ -40,7 +40,7 @@ interface Command {
   readonly id: string;
   readonly label: string;
   readonly hint?: string;
-  readonly group: 'Navigate' | 'Sessions' | 'Actions' | 'Settings' | 'Preferences';
+  readonly group: 'Navigate' | 'Sessions' | 'Actions' | 'Settings' | 'Preferences' | 'Memory';
   readonly run: () => void;
 }
 
@@ -204,7 +204,33 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     runSessionAction,
   ]);
 
-  const results = useMemo(() => filterCommands(commands, query), [commands, query]);
+  /**
+   * Typed text becomes an offer to ask semantic memory — appended **last**, never first.
+   *
+   * The palette is still the zero-fetch surface §9.4 specifies: this entry issues no request, it
+   * navigates to `/memory?q=…` and lets that screen own the embedding call. Position matters as
+   * much as presence. Leading with it would hijack `Enter` — the palette's primary job is to jump
+   * to the session or page the operator is already naming, and a semantic search is a slower,
+   * different question. Last means it costs one `ArrowUp` to reach deliberately, and it is the
+   * *only* entry when nothing matched, which is exactly when "ask memory instead" is the answer.
+   */
+  const matched = useMemo(() => filterCommands(commands, query), [commands, query]);
+
+  const results = useMemo(() => {
+    const needle = query.trim();
+    if (needle.length === 0) return matched;
+    return [
+      ...matched,
+      {
+        id: 'memory-search',
+        label: `Search memory for “${needle}”`,
+        hint: 'semantic',
+        group: 'Memory' as const,
+        run: () => void navigate(`/memory?q=${encodeURIComponent(needle)}`),
+      },
+    ];
+  }, [matched, query, navigate]);
+
   const active = results[Math.min(activeIndex, Math.max(0, results.length - 1))] ?? null;
 
   // The confirm dialog outlives the palette: `Archive` from the palette must still be
@@ -305,40 +331,40 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           aria-label="Commands"
           className="max-h-80 overflow-y-auto p-1"
         >
-          {results.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-text-muted">No matches</p>
-          ) : (
-            results.map((command, index) => (
-              // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled by the combobox input, which never loses focus
-              <div
-                key={command.id}
-                role="option"
-                // Options carry `tabIndex={-1}` and never receive real focus: in the
-                // combobox pattern the input keeps focus and `aria-activedescendant` moves
-                // a virtual cursor. Moving real focus here would break typing.
-                tabIndex={-1}
-                id={`${listboxId}-${command.id}`}
-                aria-selected={command === active}
-                className="flex cursor-pointer items-center gap-3 rounded-xs px-3 py-2"
-                style={
-                  command === active ? { backgroundColor: 'var(--color-selected)' } : undefined
-                }
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => {
-                  onClose();
-                  command.run();
-                }}
-              >
-                <span className="w-20 shrink-0 text-2xs text-text-muted">{command.group}</span>
-                <span className="flex-1 truncate text-sm text-text">{command.label}</span>
-                {command.hint === undefined ? null : (
-                  <span className="truncate font-mono text-2xs text-text-muted">
-                    {command.hint}
-                  </span>
-                )}
-              </div>
-            ))
-          )}
+          {/* Not "No matches" any more: with typed text there is always at least the memory
+              offer, so the honest statement is that no *command* matched — and the remaining
+              entry below says what can still be done about it. */}
+          {matched.length === 0 ? (
+            <p className="px-3 py-3 text-center text-sm text-text-muted">
+              No command matches. Memory can still be asked.
+            </p>
+          ) : null}
+          {results.map((command, index) => (
+            // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled by the combobox input, which never loses focus
+            <div
+              key={command.id}
+              role="option"
+              // Options carry `tabIndex={-1}` and never receive real focus: in the
+              // combobox pattern the input keeps focus and `aria-activedescendant` moves
+              // a virtual cursor. Moving real focus here would break typing.
+              tabIndex={-1}
+              id={`${listboxId}-${command.id}`}
+              aria-selected={command === active}
+              className="flex cursor-pointer items-center gap-3 rounded-xs px-3 py-2"
+              style={command === active ? { backgroundColor: 'var(--color-selected)' } : undefined}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => {
+                onClose();
+                command.run();
+              }}
+            >
+              <span className="w-20 shrink-0 text-2xs text-text-muted">{command.group}</span>
+              <span className="flex-1 truncate text-sm text-text">{command.label}</span>
+              {command.hint === undefined ? null : (
+                <span className="truncate font-mono text-2xs text-text-muted">{command.hint}</span>
+              )}
+            </div>
+          ))}
         </div>
 
         <p aria-live="polite" className="sr-only">

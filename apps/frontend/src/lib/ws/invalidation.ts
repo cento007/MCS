@@ -131,6 +131,22 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
     case 'notification.failed':
       return [queryKeys.notifications.root()];
 
+    /**
+     * Phase 3 memory (§15.4, relayed on the `memory` channel).
+     *
+     * **Only the backfill read model.** The obvious move — invalidate `['memory-items']` — would
+     * also invalidate every cached *search*, and a search is a POST that costs an embedding call
+     * plus a vector query. `memory.item_stored` fires once per indexed source, so a backfill over
+     * a few hundred sources would re-run the operator's query a few hundred times while they
+     * read the first answer. The index state is what actually changed and it is what is refetched;
+     * the Memory screen compares the two and offers to re-run the search rather than doing it
+     * silently.
+     */
+    case 'memory.item_stored':
+    case 'memory.item_deleted':
+    case 'memory.reindexed':
+      return [queryKeys.memoryItems.backfill()];
+
     default:
       return [];
   }
@@ -172,7 +188,13 @@ export function queryKeysForChannel(channel: string): readonly QueryKey[] {
       return [queryKeys.syncRuns.root(), queryKeys.schedule()];
     case 'adrs':
       return [queryKeys.adrs.root()];
-    // `memory` and `agents` are subscribable and silent until their phase ships (§14.4).
+    /**
+     * A reconnect healed an unknown gap, so the index state is re-read — but cached searches
+     * are still left alone, for the reason above. The Memory screen surfaces the discrepancy.
+     */
+    case 'memory':
+      return [queryKeys.memoryItems.backfill()];
+    // `agents` is subscribable and silent until Phase 4 ships (§14.4).
     default:
       return [];
   }

@@ -43,9 +43,9 @@ import { SessionStateMachine } from './state-machine.js';
  *   cursors.ts        the two non-`id` ordering keys (message `ordinal`, commit `committedAt`)
  *   runtime-port.ts   `SessionRuntimePort` — the seam the Agent SDK wrapper fills (WS6 §5.1)
  *   managed/          the Agent SDK wrapper that fills it: controller, pump, prompts (§4–§5)
- *
- * Still owed: `observed/` (hook ingest + transcript tailer), `export.ts`, and the endpoints that
- * depend on them (§6.7 export/context-package, §6.8 hook events).
+ *   observed/         hook ingest + the transcript tailer (§6)
+ *   export/           §6.7 Export and Context Package — registered from `app.ts`, not here,
+ *                     because the package reads the semantic-memory layer (see its `index.ts`)
  */
 
 export * from './cursors.js';

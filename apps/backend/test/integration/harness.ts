@@ -219,6 +219,19 @@ export function createTestApp(
     ...(options.obsidianScanBounds === undefined
       ? {}
       : { obsidianScanBounds: options.obsidianScanBounds }),
+    // The context package's two outbound edges (TDS 04 §6.7). Forwarded for the same reason as
+    // every override above: the degraded branches — memory did not answer in time, git did not
+    // answer at all — must be reachable in milliseconds and **without running `git` against a
+    // real checkout**, or they are branches that will never be exercised.
+    ...(options.sessionExportMemoryBudgetMs === undefined
+      ? {}
+      : { sessionExportMemoryBudgetMs: options.sessionExportMemoryBudgetMs }),
+    ...(options.sessionExportGitBudgetMs === undefined
+      ? {}
+      : { sessionExportGitBudgetMs: options.sessionExportGitBudgetMs }),
+    ...(options.sessionExportProbe === undefined
+      ? {}
+      : { sessionExportProbe: options.sessionExportProbe }),
   });
 
   openApps.push(built.app);
