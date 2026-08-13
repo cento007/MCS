@@ -25,6 +25,15 @@ export const ERROR_CODES = Object.freeze({
   PAYLOAD_TOO_LARGE: 413,
   RATE_LIMITED: 429,
   INTERNAL: 500,
+  /**
+   * The database's schema is not the one this build was written against — a `CHECK` refusing a
+   * value the code writes as a constant, most often a pending migration.
+   *
+   * Distinct from `INTERNAL` because `INTERNAL` means "unhandled, disclose nothing" while this
+   * one is fully understood and names the command that fixes it; see `db/violations.ts` for the
+   * full argument, including why it is not a `409` and not a `503`.
+   */
+  DATABASE_SCHEMA_MISMATCH: 500,
   RUNTIME_UNAVAILABLE: 503,
 } as const);
 

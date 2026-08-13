@@ -210,6 +210,20 @@
   --mc-row-dense: 36px; /* table row height */
   --mc-sidebar-w: 220px; /* desktop nav rail */
   --mc-panel-w: 340px; /* live-session right panel */
+  /* Session `⋯` overflow menus (header + list row). A constant rather than `min-w-56`, which
+     is one of the numeric spacing utilities the closed ladder above drops silently: the menu
+     then shrank to its absolutely-positioned containing block (~85px) and every label wrapped
+     onto three lines. Same failure as the `inset-0` incident, one namespace over. Observed in
+     the browser on 2026-08-13; 224px is the widest label ("Generate Context Package") on one
+     line at `--mc-fs-sm`. */
+  --mc-menu-w: 224px;
+  /* Command palette (§9.4). Same silent-drop trap as `--mc-menu-w`: `max-h-80` and `w-20` are
+     outside the curated ladder and emitted nothing, so the results listbox had **no scroll cap
+     at all** — `overflow-y-auto` on an unbounded height never scrolls, and the list simply grew
+     past the viewport once enough sessions matched. Found by checking the built CSS for the
+     emitted rule rather than by reading the class name. */
+  --mc-palette-max-h: 320px; /* what `max-h-80` was meant to be */
+  --mc-palette-group-w: 80px; /* what `w-20` was meant to be */
 
   /* ── Motion (TDS 06 §2.4) ────────────────────────────────────────────────────────
      Minimal and purposeful. The only looping animations permitted anywhere are the

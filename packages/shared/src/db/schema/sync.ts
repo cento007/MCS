@@ -7,6 +7,7 @@
 
 import { sql } from 'drizzle-orm';
 import { check, index, jsonb, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { SYNC_RUN_KINDS } from '../../entities/adr.js';
 import { createdAt, primaryKeyId, timestamptz, updatedAt, valueList } from './columns.js';
 
 /** Polymorphic across `adrs`, `sessions`, `projects` and vault-native note kinds. */
@@ -42,8 +43,13 @@ const SYNC_RUN_ACTIVE_STATES = ['queued', 'running'] as const;
  * whole value is that it is not re-implemented. `kind` exists to discriminate; this is the
  * second kind. Every existing read is already `kind`-filtered, so `GET /sync-runs` continues to
  * mean "Obsidian sync runs" and nothing about §10 changes.
+ *
+ * **Imported rather than re-declared.** This file used to keep its own private copy, and
+ * `entities/adr.ts` kept an exported one that still read `['obsidian']` long after migration
+ * `0005` widened the CHECK — an exported statement about the schema that disagreed with the
+ * schema, harmless only because nothing imported it. The list that *builds* the constraint and
+ * the list callers read are now the same array, so a third kind cannot make them disagree.
  */
-const SYNC_RUN_KINDS = ['obsidian', 'memory_index'] as const;
 
 const SYNC_RUN_TRIGGERS = ['user', 'schedule'] as const;
 

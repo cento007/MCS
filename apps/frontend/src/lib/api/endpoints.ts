@@ -46,6 +46,18 @@ export const endpoints = {
     prompts: (id: string) => `/sessions/${id}/prompts`,
     /** F5.1 lifecycle sub-actions (TDS 04 §6.3) — POST, never PATCH on `state`. */
     action: (id: string, action: SessionAction) => `/sessions/${id}/${action}`,
+    /**
+     * §6.7's two documents. They share the `POST /sessions/{id}/{verb}` grammar and nothing
+     * else: neither performs an F7 transition, and both answer with a *document* inside the
+     * F5.4 envelope rather than the updated Session. They are therefore **not** members of
+     * `SESSION_ACTIONS` — `action()` would type-check a call that parses an export as a
+     * Session, which is precisely the mistake worth making impossible.
+     *
+     * Both are `409 CONFLICT` while the Session is in `created`, with the state named in
+     * `error.details.state`.
+     */
+    export: (id: string) => `/sessions/${id}/export`,
+    contextPackage: (id: string) => `/sessions/${id}/context-package`,
   },
   settings: {
     all: '/settings',

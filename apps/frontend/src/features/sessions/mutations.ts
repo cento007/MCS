@@ -17,7 +17,7 @@ import {
   type SessionAction,
 } from '../../lib/api/index.js';
 import { toast } from '../../stores/toast-store.js';
-import { endpointActionOf, type SessionActionId } from './actions.js';
+import { endpointActionOf, type SessionLifecycleActionId } from './actions.js';
 
 /**
  * Session mutations (TDS 05 §4, §11.3).
@@ -29,7 +29,13 @@ import { endpointActionOf, type SessionActionId } from './actions.js';
  */
 
 export interface SessionActionVariables {
-  readonly action: SessionActionId;
+  /**
+   * Lifecycle only. `export` and `context-package` share the menu but not this path — they
+   * answer with a *document*, not a `Session`, so posting one here would parse the export's
+   * `{ format, filename, content }` as a Session and hand it to `invalidateAfterAction`.
+   * `features/sessions/documents.ts` owns them.
+   */
+  readonly action: SessionLifecycleActionId;
   /** Clone/resume-as-new accept a title (§6.3). */
   readonly title?: string;
 }
@@ -40,7 +46,7 @@ export interface SessionActionOutcome {
   readonly launch: LaunchMeta['launch'] | null;
   /** True when `resume` created a NEW Session record (201) rather than resuming in place. */
   readonly createdNewSession: boolean;
-  readonly action: SessionActionId;
+  readonly action: SessionLifecycleActionId;
 }
 
 /**

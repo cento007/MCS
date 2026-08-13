@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatBytes,
   formatCostUsd,
   formatDuration,
   formatFrozenDuration,
@@ -7,6 +8,20 @@ import {
   sessionIdTail,
   sessionLabel,
 } from './index.js';
+
+describe('formatBytes', () => {
+  it('uses binary units, and one decimal above the kilobyte', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(812)).toBe('812 B');
+    expect(formatBytes(49_360)).toBe('48.2 KB');
+    expect(formatBytes(2_411_724)).toBe('2.3 MB');
+  });
+
+  it('renders an em dash for absent or nonsensical values', () => {
+    expect(formatBytes(null)).toBe('—');
+    expect(formatBytes(Number.NaN)).toBe('—');
+  });
+});
 
 describe('formatDuration', () => {
   it('always renders three fields so a duration column stays scannable', () => {

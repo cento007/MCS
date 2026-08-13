@@ -131,7 +131,41 @@ export interface MemoryBackfillStatus {
   readonly indexedModels: readonly string[];
   /** Rows embedded by a model that is not the current one. They cannot answer a query. */
   readonly rowsFromOtherModels: number;
+  /**
+   * Is memory configured at all — i.e. is an embedding model set. Exactly
+   * `runtime !== 'not_configured'`; it says nothing about reachability, which `runtime` says.
+   *
+   * ⚠ **Optional on purpose, and the optionality is the contract, not laziness.** These three
+   * fields are additive (Backend A18): a Backend that predates them omits them, and the
+   * projection in `queries.ts` maps a missing value to `null` = "cannot tell", which renders as
+   * silence rather than as an accusation that memory is switched off. Declaring them required
+   * would make an older Backend read as `undefined`-and-therefore-falsy, i.e. "not configured",
+   * which is the one wrong answer this whole distinction exists to prevent.
+   *
+   * They are the reason this screen no longer projects `GET /services/health`: `indexedModels`
+   * and `rowsFromOtherModels` are identical on an unconfigured instance and on a configured one
+   * that has never indexed anything, and those two states demand different operator actions.
+   */
+  readonly configured?: boolean;
+  /**
+   * Which of the four runtime arms this read saw — `MemoryRuntimeState['kind']` verbatim, and
+   * the same four words `POST /memory-items/search` answers with in `emptyReason`, so one
+   * client-side mapping covers both documents.
+   */
+  readonly runtime?: MemoryRuntimeKind;
+  /** The runtime's own operator-facing sentence when it is not `ready`; `null` when it is. */
+  readonly runtimeReason?: string | null;
 }
+
+/** `MemoryRuntimeKind` in `apps/backend/src/memory/runtime.ts`, verbatim (F9.5). */
+export const MEMORY_RUNTIME_KINDS = [
+  'ready',
+  'not_configured',
+  'unavailable',
+  'stamp_mismatch',
+] as const;
+
+export type MemoryRuntimeKind = (typeof MEMORY_RUNTIME_KINDS)[number];
 
 /** `POST /memory-items/backfill` -> `202`. */
 export interface MemoryBackfillTrigger {

@@ -29,6 +29,17 @@ export const API_ERROR_CODES = [
   'RATE_LIMITED',
   'INTERNAL',
   'RUNTIME_UNAVAILABLE',
+  /**
+   * A 5xx that is deliberately **not** `INTERNAL`: the request was valid and the *database*
+   * disagrees with this build (a CHECK constraint rejected a value that is a compile-time
+   * constant here), which usually means a pending migration. Listing it keeps this array
+   * verbatim, but it must NOT gain an entry in `FRIENDLY_MESSAGES` below — that lookup wins
+   * over the server's text, and the server's text is the whole value here: it names the
+   * constraint, the rejected value, and `pnpm db:migrate`. This is also why the Backend does
+   * not answer `INTERNAL` for it, which *does* have an entry and would be replaced by
+   * "Mission Control hit an unexpected error."
+   */
+  'DATABASE_SCHEMA_MISMATCH',
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

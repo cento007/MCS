@@ -25,41 +25,14 @@ export interface CreateDatabaseOptions {
   readonly connectionTimeoutMillis?: number;
 }
 
-/** PostgreSQL `unique_violation` (SQLSTATE 23505). */
-const UNIQUE_VIOLATION = '23505';
-
 /**
- * Is this error PostgreSQL rejecting a duplicate against a unique index?
- *
- * Needed because a pre-check plus an insert is not atomic: two concurrent registrations of the
- * same `repositories.local_path` both pass the check and one of them has to become a `CONFLICT`
- * rather than an `INTERNAL`. `constraint` narrows it to the index the caller expects, so an
- * unrelated collision is not silently reported as the one the handler was guarding.
+ * Constraint-violation predicates (`isUniqueViolation`, `isCheckViolation`) and the errors they
+ * translate into live in `violations.ts` and are re-exported here, so every existing
+ * `from '../db/index.js'` import keeps working. They are their own module because all of them
+ * depend on one non-obvious fact about where Drizzle puts the `pg` error, and that fact is worth
+ * learning exactly once.
  */
-export function isUniqueViolation(error: unknown, constraint?: string): boolean {
-  // Drizzle 0.45 wraps every query failure in a `DrizzleQueryError` and puts the `pg` error on
-  // `cause`, so the SQLSTATE is one level down — and, inside a transaction, sometimes two. A
-  // check that only looked at the top-level object silently answered `false` for every
-  // violation, turning a `409 CONFLICT` into a `500 INTERNAL`. Walking the chain (bounded, so a
-  // cyclic `cause` cannot spin) is what makes the guard real rather than aspirational.
-  for (let candidate = error, depth = 0; depth < 5; depth += 1) {
-    if (typeof candidate !== 'object' || candidate === null) return false;
-
-    const pgError = candidate as {
-      readonly code?: unknown;
-      readonly constraint?: unknown;
-      readonly cause?: unknown;
-    };
-
-    if (pgError.code === UNIQUE_VIOLATION) {
-      return constraint === undefined || pgError.constraint === constraint;
-    }
-    if (pgError.cause === undefined) return false;
-    candidate = pgError.cause;
-  }
-
-  return false;
-}
+export * from './violations.js';
 
 export function createDatabase(options: CreateDatabaseOptions): DatabaseHandle {
   const pool = new pg.Pool({

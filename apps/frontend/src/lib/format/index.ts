@@ -88,6 +88,21 @@ export function formatTokenCount(value: number | null | undefined): string {
 }
 
 /**
+ * Byte counts for generated documents: `812 B`, `47.3 KB`, `1.2 MB`.
+ *
+ * Binary units on purpose (`utf8Bytes` on the Backend counts bytes, and the operator is judging
+ * whether a document will fit somewhere), and one decimal above the kilobyte because the whole
+ * point of showing it beside a token estimate is that this number is the *exact* one.
+ */
+export function formatBytes(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  const bytes = Math.max(0, value);
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
  * Session identity (TDS 05 §9.3): **never lead with a UUIDv7 prefix.** The leading hex of a
  * UUIDv7 encodes a millisecond timestamp, so every Session started in the same hour shares
  * a near-identical prefix — precisely the least discriminating substring available. The

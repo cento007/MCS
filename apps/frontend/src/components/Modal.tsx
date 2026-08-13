@@ -17,9 +17,16 @@ export interface ModalProps {
   readonly children: ReactNode;
   readonly footer?: ReactNode;
   readonly labelledBy?: string;
+  /**
+   * `'default'` is the confirm/form width every existing caller wants. `'wide'` exists for the
+   * one thing that is neither: a generated Markdown document, which at `max-w-lg` wraps its
+   * fenced code blocks into unreadable ribbons — and the whole purpose of showing it is that the
+   * operator can read it before pasting it somewhere else.
+   */
+  readonly width?: 'default' | 'wide';
 }
 
-export function Modal({ open, onClose, title, children, footer }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, width = 'default' }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
 
@@ -69,7 +76,9 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
             first.focus();
           }
         }}
-        className="relative w-full max-w-lg rounded-lg border border-border"
+        className={`relative w-full rounded-lg border border-border ${
+          width === 'wide' ? 'max-w-4xl' : 'max-w-lg'
+        }`}
         style={{
           backgroundColor: 'var(--color-surface-raised)',
           boxShadow: 'var(--shadow-overlay)',

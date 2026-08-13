@@ -13,12 +13,18 @@ import {
   readObsidianSettings,
   runObsidianSync,
   type ScanBounds,
+  SYNC_RUN_KIND,
   type SyncPlan,
   syncBlockedReason,
 } from '@mc/shared';
 import { recordAuditEntry } from '../audit/index.js';
 import type { Principal } from '../auth/index.js';
-import { isUniqueViolation } from '../db/index.js';
+import {
+  isCheckViolation,
+  isUniqueViolation,
+  SYNC_RUN_KIND_CONSTRAINT,
+  syncRunKindRejected,
+} from '../db/index.js';
 import type { Outbox } from '../events/index.js';
 import type { RequestContext } from '../http/context.js';
 import { ApiError } from '../http/errors.js';
@@ -173,6 +179,15 @@ export class ObsidianService {
     } catch (error) {
       if (isUniqueViolation(error, 'ux_sync_runs_active')) {
         throw new ApiError('CONFLICT', 'An Obsidian sync is already queued or running');
+      }
+      // The same schema-drift translation the memory backfill does, for the same reason: the
+      // `kind` written here is a constant, so a `23514` on it can only mean the table's CHECK
+      // is not the one this build expects. `obsidian` has been an accepted kind since migration
+      // `0000`, so a *pending* migration is a less likely cause here than an altered
+      // constraint — which is exactly why the message names the usual cause rather than
+      // asserting one.
+      if (isCheckViolation(error, SYNC_RUN_KIND_CONSTRAINT)) {
+        throw syncRunKindRejected(SYNC_RUN_KIND);
       }
       throw error;
     }

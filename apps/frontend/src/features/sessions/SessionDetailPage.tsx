@@ -14,9 +14,12 @@ import { useUiStore } from '../../stores/ui-store.js';
 import {
   composerMode,
   isComposerEnabled,
+  isDocumentAction,
   overflowActions,
   type SessionActionDescriptor,
 } from './actions.js';
+import { ContextPackageDialog } from './ContextPackageDialog.js';
+import { useSessionDocuments } from './documents.js';
 import { LaunchSessionModal } from './LaunchSessionModal.js';
 import { ANNOUNCEMENTS, useAnnouncer } from './live/announcements.js';
 import { Composer } from './live/Composer.js';
@@ -94,6 +97,15 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
   const interruptMutation = useInterruptMutation(sessionId);
   const promptMutation = useSubmitPrompt(sessionId);
   const updateMutation = useUpdateSession(sessionId);
+
+  // §6.7's two documents. Mounted unconditionally with whatever identity is known — the menu
+  // entries that reach it do not exist until `session` has loaded, so the nulls are never read.
+  const documents = useSessionDocuments({
+    id: sessionId,
+    title: session?.title ?? null,
+    startedAt: session?.startedAt ?? null,
+    createdAt: session?.createdAt ?? null,
+  });
 
   // ---------------------------------------------------------------- open set (§6.5 / §3.4)
 
@@ -208,6 +220,14 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
 
   const runAction = useCallback(
     (action: SessionActionDescriptor) => {
+      // §6.7 documents are not lifecycle actions: no F7 transition, no `session.state_changed`,
+      // and an answer that is a document rather than a Session. They leave before
+      // `pendingActionId` is touched, so generating a package never disables the header row.
+      if (isDocumentAction(action.id)) {
+        documents.run(action.id);
+        return;
+      }
+
       setPendingActionId(action.id);
 
       if (action.id === 'stop') {
@@ -246,7 +266,16 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
         })
         .finally(() => setPendingActionId(null));
     },
-    [actionMutation, interruptMutation, navigate, queryClient, sessionId, terminateTurn, announcer],
+    [
+      actionMutation,
+      documents,
+      interruptMutation,
+      navigate,
+      queryClient,
+      sessionId,
+      terminateTurn,
+      announcer,
+    ],
   );
 
   const onAction = useCallback(
@@ -465,6 +494,8 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
         }}
         onCancel={() => setConfirming(null)}
       />
+
+      <ContextPackageDialog documents={documents} />
 
       <LaunchSessionModal open={launchOpen} onClose={() => setLaunchOpen(false)} />
     </div>

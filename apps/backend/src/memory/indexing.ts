@@ -20,6 +20,7 @@ import {
   insertMemoryRun,
   type JobPayload,
   listIndexedModels,
+  MEMORY_RUN_KIND,
   type MemoryRunMode,
   type MemoryRunRow,
   type MemorySourceType,
@@ -40,11 +41,16 @@ import {
   type Unsubscribe,
 } from '@mc/shared';
 import { eq } from 'drizzle-orm';
-import { isUniqueViolation } from '../db/index.js';
+import {
+  isCheckViolation,
+  isUniqueViolation,
+  SYNC_RUN_KIND_CONSTRAINT,
+  syncRunKindRejected,
+} from '../db/index.js';
 import type { EventBus, Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
 import { indexVaultNotes, type NoteStageResult } from './notes.js';
-import type { MemoryRuntime, MemoryRuntimeState } from './runtime.js';
+import type { MemoryRuntime, MemoryRuntimeKind, MemoryRuntimeState } from './runtime.js';
 
 /**
  * Memory ingestion — the Backend's producer *and* its single consumer.
@@ -134,6 +140,44 @@ export interface MemoryIndexServiceOptions {
   readonly onError?: ((error: unknown, context: string) => void) | undefined;
 }
 
+/**
+ * `GET /api/v1/memory-items/backfill`.
+ *
+ * ⚠ **`configured` / `runtime` / `runtimeReason` are additive to TDS 04 §13.1** — which reserved
+ * these routes with "no payload detail", so this is the first concrete shape rather than a
+ * departure from a specified one. Written down in §13.1 as well as here, the way
+ * `MemorySearchResult` was: flagged, not invented quietly.
+ *
+ * ## Why a bare `configured: boolean` was not enough
+ *
+ * Everything else on this document was all-`null` in **two** situations that share nothing: no
+ * embedding model is set at all, and a model is set but nothing has ever been indexed. The
+ * operator's next action is *open Settings* in one and *press Backfill* in the other, and the
+ * document could not tell them apart — so the Memory screen went and fetched
+ * `GET /services/health` to read `meta.configured` off the qdrant/ollama rows, which is a second
+ * round trip and a second source of truth for one fact this method already had in hand.
+ *
+ * `configured` alone would fix that and leave two more situations conflated, because the runtime
+ * this is derived from has **four** arms and three of them are "configured":
+ *
+ * | runtime           | configured | what the operator has to do                          |
+ * |-------------------|------------|------------------------------------------------------|
+ * | `not_configured`  | `false`    | set an embedding model in Settings                    |
+ * | `unavailable`     | `true`     | start Ollama / fix the host — **not** a Settings trip |
+ * | `stamp_mismatch`  | `true`     | rebuild; the stored vectors cannot be trusted         |
+ * | `ready`           | `true`     | nothing                                               |
+ *
+ * Collapsing those three into one `true` would send an operator whose Ollama is down to the
+ * Settings page to re-enter a model that is already correct. It also decides whether offering
+ * the Backfill button is honest: `POST /memory-items/backfill` refuses `unavailable` with
+ * `INTEGRATION_NOT_CONFIGURED` and an incremental run under `stamp_mismatch` with `CONFLICT`, so
+ * a screen without this field can only find out by making the operator press it.
+ *
+ * The vocabulary is `MemoryRuntimeState['kind']` verbatim (F9.5) and the same four words
+ * `POST /memory-items/search` already answers with in `emptyReason`, so one client-side mapping
+ * covers both documents. `configured` stays alongside it — never derived twice, never meaning
+ * anything but "an embedding model is configured".
+ */
 export interface BackfillStatus {
   readonly runId: string | null;
   readonly state: string | null;
@@ -144,6 +188,21 @@ export interface BackfillStatus {
   readonly error: string | null;
   readonly progress: BackfillProgress | null;
   readonly summary: string | null;
+  /**
+   * Is an embedding model configured at all — exactly `runtime !== 'not_configured'`, and
+   * nothing else. It says nothing about whether Ollama is reachable or the index is trustworthy;
+   * `runtime` says that.
+   */
+  readonly configured: boolean;
+  /** Which of the four runtime states this read saw. `MemoryRuntimeState['kind']`, verbatim. */
+  readonly runtime: MemoryRuntimeKind;
+  /**
+   * The runtime's own operator-facing sentence when it is not `ready`, `null` when it is.
+   *
+   * Already scrubbed of the Qdrant API key at source (`runtime.ts`), and already served by
+   * `POST /memory-items/search` as `detail` — this exposes no string that endpoint does not.
+   */
+  readonly runtimeReason: string | null;
   /** Distinct `embedding_model` values present in `memory_items` — the model-change signal. */
   readonly indexedModels: readonly string[];
   readonly rowsFromOtherModels: number;
@@ -424,6 +483,13 @@ export class MemoryIndexService {
       if (isUniqueViolation(error, 'ux_sync_runs_active')) {
         throw new ApiError('CONFLICT', 'A memory index run is already queued or running');
       }
+      // `memory_index` is the second `sync_runs.kind`, added by migration `0005`; a database that
+      // has not applied it rejects this insert with a `23514`. Only *this* constraint is
+      // translated — a violation of `ck_sync_runs_state` or `ck_sync_runs_trigger` would be a
+      // genuine bug in this code and must keep surfacing as one.
+      if (isCheckViolation(error, SYNC_RUN_KIND_CONSTRAINT)) {
+        throw syncRunKindRejected(MEMORY_RUN_KIND);
+      }
       throw error;
     }
   }
@@ -563,6 +629,17 @@ export class MemoryIndexService {
     const rowsFromOtherModels =
       currentModel === null ? 0 : await countRowsForOtherModels(this.#db, currentModel);
 
+    // Free: `ready()` is already awaited above for `currentModel`, and it caches. The whole cost
+    // of this half of the document is reading three fields off a state object that was being
+    // thrown away.
+    const index = {
+      configured: state.kind !== 'not_configured',
+      runtime: state.kind,
+      runtimeReason: state.kind === 'ready' ? null : state.reason,
+      indexedModels: models,
+      rowsFromOtherModels,
+    };
+
     if (row === null) {
       return {
         runId: null,
@@ -574,8 +651,7 @@ export class MemoryIndexService {
         error: null,
         progress: null,
         summary: null,
-        indexedModels: models,
-        rowsFromOtherModels,
+        ...index,
       };
     }
 
@@ -590,8 +666,7 @@ export class MemoryIndexService {
       error: row.error,
       progress,
       summary: describeProgress(progress),
-      indexedModels: models,
-      rowsFromOtherModels,
+      ...index,
     };
   }
 

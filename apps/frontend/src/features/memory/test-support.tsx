@@ -83,6 +83,14 @@ export function makeEmptyResponse(
   });
 }
 
+/**
+ * `GET /memory-items/backfill`.
+ *
+ * The default is **configured and empty** — an instance where an embedding model is set and no
+ * backfill has run yet — because that is the state every empty-outcome test wants underneath it.
+ * `configured` is what makes it distinguishable from an instance with no model at all; the two
+ * are identical in every other field, which is why the field was added.
+ */
 export function makeBackfillStatus(
   overrides: Partial<MemoryBackfillStatus> = {},
 ): MemoryBackfillStatus {
@@ -98,8 +106,29 @@ export function makeBackfillStatus(
     summary: null,
     indexedModels: [],
     rowsFromOtherModels: 0,
+    configured: true,
+    runtime: 'ready',
+    runtimeReason: null,
     ...overrides,
   };
+}
+
+/**
+ * A backfill document from a Backend that predates the A18 additions — the three fields absent.
+ *
+ * Worth a fixture of its own: the frontend and the Backend ship separately, and "the field is not
+ * there yet" must render as *silence*, never as "memory is not configured".
+ */
+export function makeLegacyBackfillStatus(
+  overrides: Partial<MemoryBackfillStatus> = {},
+): Omit<MemoryBackfillStatus, 'configured' | 'runtime' | 'runtimeReason'> {
+  const {
+    configured: _configured,
+    runtime: _runtime,
+    runtimeReason: _runtimeReason,
+    ...rest
+  } = makeBackfillStatus(overrides);
+  return rest;
 }
 
 export function makeProject(overrides: Partial<Project> = {}): Project {
@@ -113,37 +142,6 @@ export function makeProject(overrides: Partial<Project> = {}): Project {
     updatedAt: '2026-08-12T12:00:00.000Z',
     archivedAt: null,
     ...overrides,
-  };
-}
-
-/**
- * `GET /services/health`, projected to the two rows this screen reads.
- *
- * `configured: false` is what a `disabled` Qdrant row carries when no embedding model is set —
- * the only place in the API that distinguishes "not configured" from "configured and empty".
- */
-export function healthBody(configured: boolean): unknown {
-  return {
-    data: {
-      services: [
-        {
-          name: 'qdrant',
-          label: 'Qdrant',
-          status: configured ? 'healthy' : 'disabled',
-          detail: null,
-          checkedAt: '2026-08-13T08:00:00.000Z',
-          meta: { configured },
-        },
-        {
-          name: 'ollama',
-          label: 'Ollama',
-          status: configured ? 'healthy' : 'disabled',
-          detail: null,
-          checkedAt: '2026-08-13T08:00:00.000Z',
-          meta: { configured },
-        },
-      ],
-    },
   };
 }
 

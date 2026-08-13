@@ -20,7 +20,7 @@ import {
   sectionText,
   settingKey,
 } from '@mc/shared';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   cookieValueFrom,
@@ -203,6 +203,48 @@ describe('POST /api/v1/sync-runs', () => {
       code: 'INTEGRATION_NOT_CONFIGURED',
       details: { reason: 'vault_path_missing' },
     });
+  });
+
+  /**
+   * The same schema-drift translation the memory backfill does, from the other insert site.
+   *
+   * `obsidian` has been an accepted `kind` since migration `0000`, so this exact predicate is
+   * not a state any released schema was ever in — which is the point. What is being proven is
+   * that a `23514` from `ck_sync_runs_kind` produces an actionable answer rather than an opaque
+   * `500 INTERNAL`, whatever narrowed it. The constraint is genuinely altered against real
+   * PostgreSQL in this file's private clone and restored afterwards.
+   */
+  it('answers a check violation on sync_runs.kind with the command that fixes it', async () => {
+    const db = testDatabase().db;
+    await db.execute(sql.raw('ALTER TABLE sync_runs DROP CONSTRAINT ck_sync_runs_kind'));
+    await db.execute(
+      sql.raw(
+        `ALTER TABLE sync_runs ADD CONSTRAINT ck_sync_runs_kind CHECK ("sync_runs"."kind" IN ('memory_index'))`,
+      ),
+    );
+
+    try {
+      const response = await app.app.inject({
+        method: 'POST',
+        url: '/api/v1/sync-runs',
+        headers: { cookie },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(500);
+      expect(response.json().error).toMatchObject({
+        code: 'DATABASE_SCHEMA_MISMATCH',
+        details: { constraint: 'ck_sync_runs_kind', table: 'sync_runs', value: 'obsidian' },
+      });
+      expect(response.json().error.message).toContain('pnpm db:migrate');
+    } finally {
+      await db.execute(sql.raw('ALTER TABLE sync_runs DROP CONSTRAINT ck_sync_runs_kind'));
+      await db.execute(
+        sql.raw(
+          `ALTER TABLE sync_runs ADD CONSTRAINT ck_sync_runs_kind CHECK ("sync_runs"."kind" IN ('obsidian', 'memory_index'))`,
+        ),
+      );
+    }
   });
 
   it('refuses while sync is paused, and says which setting is in the way', async () => {

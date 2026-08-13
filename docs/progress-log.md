@@ -493,3 +493,33 @@ Fixed by subscribing in `registerMemory` — at registration rather than in `sta
 - **A check/unique violation on sync-run insert surfaces as an opaque `500 INTERNAL`.** Found because the dev database was one migration behind (`0005_memory_index_runs`, since applied) and `ck_sync_runs_kind` rejected the insert. Same class as the earlier `isUniqueViolation` fix — Drizzle puts the pg error on `cause` (task #30).
 - **Export and Generate Context Package are served but unreachable from the SPA** — `overflowActions()` still omits them with a comment saying the backend does not serve them (task #29).
 - `TDS 04 §6.7`'s `format` enum and its `MC_DATA_DIR/exports` note are both now inaccurate; `openapi.yaml` records the narrowing. No file is written to disk — §6.7 returns the document in the response, no route reads such a file back, and nothing would delete one.
+
+---
+
+## 2026-08-13 — Two backend answers that were being thrown away (tasks #28 and #30)
+
+Backend only. Both items closed here were raised as contract problems by the previous section.
+
+### `GET /memory-items/backfill` can say which of four situations it is in (task #28 ✓)
+
+The document was all-`null` for **two** situations that share nothing — no embedding model configured, and one configured with nothing ever indexed — and the fix for each is a different button. The fact was already in hand and discarded: `status()` was awaiting `runtime.ready()` for `currentModel` and using nothing else from it. It now also reports `configured`, `runtime` and `runtimeReason`, for no extra I/O.
+
+**A bare `configured` boolean was rejected, deliberately.** The runtime has four arms and three of them are "configured": *Ollama is down* (`unavailable`) and *the index cannot be trusted* (`stamp_mismatch`) are two further distinct operator actions, and neither is a trip to Settings. Sending someone whose Ollama is stopped to re-enter a model that is already correct is the failure a boolean would have shipped. `configured` still exists and means exactly one thing — `runtime !== 'not_configured'` — so the screen never has to derive it twice. The four words are `MemoryRuntimeState['kind']` verbatim, which is the same vocabulary `POST /memory-items/search` already answers with in `emptyReason`.
+
+This retires the Memory screen's second round trip to `GET /services/health` for `meta.configured`. Recorded in TDS 04 §13.1, which had reserved these routes with "no payload detail"; `openapi.yaml` is unchanged because it carries request shapes only (every operation is still `x-mc-response-schema: undeclared`).
+
+### A `CHECK` violation on a sync-run insert names the command that fixes it (task #30 ✓)
+
+`23514` from `ck_sync_runs_kind` — the shape of the original report, a database that never applied `0005_memory_index_runs` — was an opaque `500 INTERNAL`. It is now `500 DATABASE_SCHEMA_MISMATCH` naming the constraint, the rejected value and `pnpm db:migrate`.
+
+**Why 500 and not 409.** A 409 promises the caller that changing something and retrying will work, and on both routes that insert a run a 409 already means one specific thing — *a run is already active*, decided by `ux_sync_runs_active`. Overloading it would make two situations with opposite remedies indistinguishable. The request was valid; the database is wrong; that is a server fault.
+
+**Why its own code and not `INTERNAL`.** `INTERNAL` is defined as "unhandled, disclose nothing", and concretely the SPA maps it to the fixed string *"Mission Control hit an unexpected error."* — so under `INTERNAL` the actionable sentence would have been written and then discarded by the only client that reads it. An unrecognised code falls through to the server's own message, so a new registry entry is what makes the message reach the operator. `503` was rejected because it promises that waiting helps.
+
+**The message stops short of asserting a missing migration**, because that cannot be known from the error. What is stated is what is known: the value is a compile-time constant of this build, not anything the request supplied, so the schema and the code disagree — with a pending migration named as the usual cause.
+
+**Scoped, not blanket.** Only `ck_sync_runs_kind` is translated; a violation of `ck_sync_runs_state` or `ck_sync_runs_trigger` still surfaces as `INTERNAL`, and a test proves it by narrowing the trigger CHECK and asserting the generic answer. Translating every `23514` would paper over a genuinely bad value with confident, wrong advice.
+
+The predicates moved to `apps/backend/src/db/violations.ts` so the one non-obvious fact behind them — **Drizzle 0.45 puts the `pg` error on `cause`**, the fact that once made `isUniqueViolation` always return `false` — is learned in a single place. Re-verified against a real database before the code was written: `DrizzleQueryError` → `cause` → `DatabaseError { code: '23514', constraint: 'ck_sync_runs_kind', table: 'sync_runs' }`.
+
+Both fixes are covered by integration tests that alter the constraint on real PostgreSQL rather than mocking an error, and each was **verified to fail against the old code** before being accepted.

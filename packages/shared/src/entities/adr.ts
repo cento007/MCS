@@ -33,7 +33,17 @@ export const ACTIVE_SYNC_RUN_STATES = [
 export const SYNC_RUN_TRIGGERS = ['user', 'schedule'] as const;
 export type SyncRunTrigger = (typeof SYNC_RUN_TRIGGERS)[number];
 
-export const SYNC_RUN_KINDS = ['obsidian'] as const;
+/**
+ * Every `sync_runs.kind` the CHECK admits.
+ *
+ * `memory_index` was added by migration `0005` and this list was not, so it spent that time as
+ * an exported statement about the schema that disagreed with the schema — harmless only
+ * because nothing imported it. It is now **the** list: `db/schema/sync.ts` imports it to build
+ * `ck_sync_runs_kind`, so the words callers read and the words the database enforces cannot
+ * drift apart. Kept here rather than in the schema module because it is plain data, and
+ * consumers that must not import Drizzle still need it.
+ */
+export const SYNC_RUN_KINDS = ['obsidian', 'memory_index'] as const;
 export type SyncRunKind = (typeof SYNC_RUN_KINDS)[number];
 
 /** `sync_runs.stats` (TDS 04 §10) — display-only, whole-read. */

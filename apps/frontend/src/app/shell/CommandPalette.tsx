@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router';
 import { ConfirmDialog } from '../../components/Modal.js';
 import {
   allSessionActions,
-  type SessionActionDescriptor,
+  isLifecycleAction,
+  type SessionLifecycleActionDescriptor,
 } from '../../features/sessions/actions.js';
 import { invalidateAfterAction, performSessionAction } from '../../features/sessions/mutations.js';
 import { apiList } from '../../lib/api/client.js';
@@ -46,7 +47,7 @@ interface Command {
 
 interface PendingConfirm {
   readonly sessionId: string;
-  readonly action: SessionActionDescriptor;
+  readonly action: SessionLifecycleActionDescriptor;
 }
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -102,7 +103,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
    * forgets the F7 refetch and shows a state the Backend rejected.
    */
   const runSessionAction = useCallback(
-    (sessionId: string, action: SessionActionDescriptor) => {
+    (sessionId: string, action: SessionLifecycleActionDescriptor) => {
       setRunning(true);
       void performSessionAction(sessionId, { action: action.id })
         .then((outcome) => {
@@ -134,11 +135,19 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       },
     }));
 
-    // §9.4: state-legal lifecycle actions on cached Sessions. `[Stop]` is excluded because the
-    // palette cannot know whether a turn is in flight for a Session it is not displaying —
-    // and offering an interrupt that answers `NO_TURN_IN_FLIGHT` is worse than not offering it.
+    // §9.4: state-legal **lifecycle** actions on cached Sessions. Two exclusions, for the same
+    // reason in two shapes:
+    //
+    //  - `[Stop]`, because the palette cannot know whether a turn is in flight for a Session it
+    //    is not displaying, and offering an interrupt that answers `NO_TURN_IN_FLIGHT` is worse
+    //    than not offering it.
+    //  - `Export` / `Generate Context Package` (§6.7), because they are not lifecycle actions at
+    //    all — §9.4 scopes this list to F7 candidates — and because the package is a document to
+    //    *read*, which the zero-fetch keyboard surface is the wrong place to produce. Both remain
+    //    one keystroke away: the palette jumps to the Session, whose `⋯` menu carries them.
     const actionCommands: Command[] = cachedSessions.flatMap((session) =>
       allSessionActions(session, false)
+        .filter(isLifecycleAction)
         .filter((action) => action.id !== 'stop')
         .map<Command>((action) => ({
           id: `action-${session.id}-${action.id}`,
@@ -329,7 +338,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           role="listbox"
           id={listboxId}
           aria-label="Commands"
-          className="max-h-80 overflow-y-auto p-1"
+          className="overflow-y-auto p-1"
+          // Not `max-h-80`: that utility is outside the curated spacing ladder and emitted
+          // nothing, leaving `overflow-y-auto` with no height to overflow. See `--mc-palette-max-h`.
+          style={{ maxHeight: 'var(--mc-palette-max-h)' }}
         >
           {/* Not "No matches" any more: with typed text there is always at least the memory
               offer, so the honest statement is that no *command* matched — and the remaining
@@ -358,7 +370,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 command.run();
               }}
             >
-              <span className="w-20 shrink-0 text-2xs text-text-muted">{command.group}</span>
+              <span
+                className="shrink-0 text-2xs text-text-muted"
+                style={{ width: 'var(--mc-palette-group-w)' }}
+              >
+                {command.group}
+              </span>
               <span className="flex-1 truncate text-sm text-text">{command.label}</span>
               {command.hint === undefined ? null : (
                 <span className="truncate font-mono text-2xs text-text-muted">{command.hint}</span>

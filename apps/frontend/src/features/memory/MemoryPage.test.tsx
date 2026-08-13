@@ -6,10 +6,10 @@ import {
   ADR_ID,
   type ApiMock,
   COMMIT_ID,
-  healthBody,
   listBody,
   makeBackfillStatus,
   makeEmptyResponse,
+  makeLegacyBackfillStatus,
   makeProject,
   makeResult,
   makeSearchResponse,
@@ -34,7 +34,6 @@ import {
 let api: ApiMock;
 
 function seedDefaults(mock: ApiMock): void {
-  mock.on('GET', '/api/v1/services/health', { body: healthBody(true) });
   mock.on('GET', '/api/v1/memory-items/backfill', {
     body: { data: makeBackfillStatus({ indexedModels: ['nomic-embed-text'] }) },
   });
@@ -59,9 +58,11 @@ afterEach(() => {
 // ---------------------------------------------------------------------------- the four empties
 
 describe('1. not configured — nothing will ever work until Settings is filled in', () => {
-  it('says so before a query is typed, from the health read', async () => {
+  it('says so before a query is typed, from `configured` on the index status', async () => {
     // An operator should not have to compose a question to be told no embedding model is set.
-    api.on('GET', '/api/v1/services/health', { body: healthBody(false) });
+    api.on('GET', '/api/v1/memory-items/backfill', {
+      body: { data: makeBackfillStatus({ configured: false }) },
+    });
 
     renderWithProviders(<MemoryPage />);
 
@@ -69,10 +70,20 @@ describe('1. not configured — nothing will ever work until Settings is filled 
     expect(screen.getByText(/No embedding model is set/)).toBeInTheDocument();
   });
 
-  it('does not claim "not configured" when the health read merely failed', async () => {
+  it('asks the index status and nothing else — the health round trip is gone', async () => {
+    renderWithProviders(<MemoryPage />);
+
+    await screen.findByText(/Ask a question in prose/);
+    expect(api.callsTo('/api/v1/services/health')).toHaveLength(0);
+    // One subscription per consumer, one request: `useMemoryConfiguration` reads the same
+    // TanStack Query slot the index panel does rather than adding a second fetch.
+    expect(api.callsTo('/api/v1/memory-items/backfill')).toHaveLength(1);
+  });
+
+  it('does not claim "not configured" when the status read merely failed', async () => {
     // `configured: null` is "cannot tell". Rendering it as "not configured" would send someone to
     // Settings to fix something that is not broken.
-    api.on('GET', '/api/v1/services/health', {
+    api.on('GET', '/api/v1/memory-items/backfill', {
       status: 500,
       body: { error: { code: 'INTERNAL' } },
     });
@@ -80,6 +91,46 @@ describe('1. not configured — nothing will ever work until Settings is filled 
     renderWithProviders(<MemoryPage />);
 
     expect(await screen.findByText(/Ask a question in prose/)).toBeInTheDocument();
+    expect(screen.queryByText(/Memory is not configured/)).toBeNull();
+  });
+
+  it('distinguishes "configured but not answering" from "not configured"', async () => {
+    // The case `configured: boolean` alone flattens: the embedding model is set correctly and
+    // Ollama is down. Sending this operator to Settings → Integrations to re-enter a model that
+    // is already right is the specific wrong turn the `runtime` field exists to prevent.
+    api.on('GET', '/api/v1/memory-items/backfill', {
+      body: {
+        data: makeBackfillStatus({
+          configured: true,
+          runtime: 'unavailable',
+          runtimeReason: 'Ollama did not answer at http://127.0.0.1:11434',
+        }),
+      },
+    });
+
+    renderWithProviders(<MemoryPage />);
+
+    expect(
+      await screen.findByText(/Memory is configured, but the index is not answering/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Ollama did not answer/)).toBeInTheDocument();
+    expect(screen.getByText(/this is the service, not the setting/)).toBeInTheDocument();
+    expect(screen.queryByText(/Memory is not configured/)).toBeNull();
+  });
+
+  it('does not claim "not configured" against a Backend that has no `configured` field yet', async () => {
+    // The two apps ship separately. An absent field is "cannot tell", never "switched off" —
+    // otherwise a frontend deploy that lands first accuses a perfectly configured instance.
+    api.on('GET', '/api/v1/memory-items/backfill', {
+      body: { data: makeLegacyBackfillStatus({ indexedModels: ['nomic-embed-text'] }) },
+    });
+
+    renderWithProviders(<MemoryPage />);
+
+    // The rest of the document still renders from the fields that *are* there…
+    expect(await screen.findByText('Indexed with nomic-embed-text')).toBeInTheDocument();
+    // …and the configuration question answers "cannot tell", which reads as silence.
+    expect(screen.getByText(/Ask a question in prose/)).toBeInTheDocument();
     expect(screen.queryByText(/Memory is not configured/)).toBeNull();
   });
 

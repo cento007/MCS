@@ -19,7 +19,7 @@ import type { Session } from '../../lib/api/index.js';
  *    operator's terminal.
  */
 
-export type SessionActionId =
+export type SessionLifecycleActionId =
   | 'start'
   | 'pause'
   | 'stop'
@@ -29,6 +29,18 @@ export type SessionActionId =
   | 'archive'
   | 'clone'
   | 'stop-observing';
+
+/**
+ * The two §6.7 documents. **Not lifecycle actions**, and the distinction is not cosmetic:
+ * they perform no F7 transition, emit no `session.state_changed`, and do not go through
+ * `POST /sessions/{id}/{action}`'s response shape at all — each answers with a document in the
+ * F5.4 envelope. `mutations.ts` would happily post them to the lifecycle endpoint and parse a
+ * `Session` out of the answer, so the type split is what stops that from compiling.
+ */
+export const DOCUMENT_ACTION_IDS = ['export', 'context-package'] as const;
+export type SessionDocumentActionId = (typeof DOCUMENT_ACTION_IDS)[number];
+
+export type SessionActionId = SessionLifecycleActionId | SessionDocumentActionId;
 
 export interface ConfirmCopy {
   readonly title: string;
@@ -47,9 +59,29 @@ export interface SessionActionDescriptor {
   readonly confirm?: ConfirmCopy;
 }
 
+/** A descriptor already narrowed to the lifecycle half — see `isLifecycleAction`. */
+export interface SessionLifecycleActionDescriptor extends SessionActionDescriptor {
+  readonly id: SessionLifecycleActionId;
+}
+
+export function isDocumentAction(id: SessionActionId): id is SessionDocumentActionId {
+  return (DOCUMENT_ACTION_IDS as readonly string[]).includes(id);
+}
+
+/**
+ * A type guard on the *descriptor*, so `actions.filter(isLifecycleAction)` narrows the array —
+ * which is what lets a surface that only knows how to run lifecycle actions (the palette, the
+ * list-row menu) drop the documents without an id blocklist the compiler cannot check.
+ */
+export function isLifecycleAction(
+  action: SessionActionDescriptor,
+): action is SessionLifecycleActionDescriptor {
+  return !isDocumentAction(action.id);
+}
+
 /** The wire sub-action for a descriptor — several UI actions share one endpoint. */
 export function endpointActionOf(
-  id: SessionActionId,
+  id: SessionLifecycleActionId,
 ): 'start' | 'pause' | 'resume' | 'end' | 'archive' | 'clone' | 'interrupt' {
   switch (id) {
     case 'stop':
@@ -161,9 +193,12 @@ export function headerActions(
 /**
  * The `⋯` overflow menu, and the palette's candidate list.
  *
- * `Export` and `Generate Context Package` are named by §5.5 and are **deliberately absent**:
- * `POST /sessions/{id}/export` and `/context-package` are not served by this Backend yet, and
- * a menu entry that 404s is worse than one that is honestly missing.
+ * `Export` and `Generate Context Package` (§5.5, §6.7) are **gated on state, not hidden**. Both
+ * endpoints answer `409 CONFLICT` for a Session in `created` — it has no messages, no files and
+ * no commits, so the document would be a header above nine "nothing recorded" sections — and the
+ * whole point of deriving this menu from a predicate is that the operator never discovers a rule
+ * by tripping over it. Every other state has something to export, including `running`: a session
+ * halfway through its work is exactly when a context package is worth handing to another one.
  */
 export function overflowActions(
   session: Pick<Session, 'state' | 'sessionType' | 'runtime'>,
@@ -192,6 +227,23 @@ export function overflowActions(
       label: 'Archive',
       emphasis: 'secondary',
       confirm: ARCHIVE_CONFIRM,
+    });
+  }
+
+  // §6.7: `CONFLICT` on `created`, and only on `created`. The gate is a copy of the Backend's own
+  // rule rather than a guess at it, so the two can be checked against each other.
+  if (session.state !== 'created') {
+    actions.push({
+      id: 'export',
+      label: 'Export',
+      hint: 'Download the transcript, files and commits as one Markdown document',
+      emphasis: 'secondary',
+    });
+    actions.push({
+      id: 'context-package',
+      label: 'Generate Context Package',
+      hint: 'A hand-off document for another session · prompts, decisions, working tree, related memory',
+      emphasis: 'secondary',
     });
   }
 

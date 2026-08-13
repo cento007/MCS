@@ -122,8 +122,12 @@ export function SessionHeader({
               {menuOpen ? (
                 <span
                   role="menu"
-                  className="absolute right-0 z-20 mt-1 flex min-w-56 flex-col rounded-md border border-border p-1"
+                  className="absolute right-0 z-20 mt-1 flex flex-col rounded-md border border-border p-1"
                   style={{
+                    // Not `min-w-56`: the theme closes Tailwind's arbitrary spacing ladder, so
+                    // that utility is dropped silently and the menu shrinks to its positioned
+                    // container — every label wrapping onto three lines. See `--mc-menu-w`.
+                    minWidth: 'var(--mc-menu-w)',
                     backgroundColor: 'var(--color-surface-raised)',
                     boxShadow: 'var(--shadow-overlay)',
                   }}

@@ -65,6 +65,12 @@ export type MemoryRuntimeState =
       readonly detail: StampMismatchDetail;
     };
 
+/**
+ * The four arms, as a value type. Named so that a document reporting which one it saw carries
+ * *this* vocabulary rather than a parallel set of words for the same four states (F9.5).
+ */
+export type MemoryRuntimeKind = MemoryRuntimeState['kind'];
+
 export interface MemoryRuntimeOptions {
   readConfig(): Promise<MemoryConfigResult>;
   readonly build?: ((config: MemoryConfig) => MemoryClients) | undefined;

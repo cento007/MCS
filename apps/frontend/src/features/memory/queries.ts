@@ -19,10 +19,11 @@ import type {
   MemoryBackfillStatus,
   MemoryBackfillTrigger,
   MemoryRunMode,
+  MemoryRuntimeKind,
   MemorySearchRequest,
   MemorySearchResponse,
 } from './types.js';
-import { isRunActive } from './types.js';
+import { isRunActive, MEMORY_RUNTIME_KINDS } from './types.js';
 
 /**
  * The Memory read/write surface (TDS 04 §13.1).
@@ -143,59 +144,62 @@ export function useScopeProjects(): UseQueryResult<readonly Project[], ApiError>
 /**
  * Is memory configured at all — asked *before* a query is typed.
  *
- * ⚠ **`GET /memory-items/backfill` cannot answer this**, which is a contract gap worth naming.
- * It reports `indexedModels` (from the `memory_items` table) and `rowsFromOtherModels`, so an
- * unconfigured instance and a configured-but-never-indexed one are byte-identical in that
- * document: both report no models and no run. The operator's next action is completely different.
+ * This used to be a narrow projection of `GET /services/health`, because
+ * `GET /memory-items/backfill` genuinely could not answer it: an unconfigured instance and a
+ * configured-but-never-indexed one were byte-identical in that document (no models, no run) and
+ * the operator's next action is completely different for the two. The backfill document now
+ * carries **`configured`** for exactly that reason, so the health round trip is gone — one fact,
+ * one source, and one fewer request on a screen that already issues three.
  *
- * `GET /services/health` *can*: its `qdrant` and `ollama` rows come from the same
- * `readMemoryConfig` decision the search route uses, and carry `meta.configured` alongside a
- * `disabled` status when no embedding model is set. So this is read as a **narrow projection** of
- * the health read model, sharing the Dashboard's and the Services panel's cache slot rather than
- * adding a query — see `projects/queries.ts` for the same pattern against Settings.
+ * Two properties are kept deliberately:
  *
- * It returns `null` for "cannot tell", and every caller treats that as *not* an assertion: a
- * failed health read must never render as "memory is not configured", which would send an
- * operator to Settings to fix something that is not broken.
+ *  - **`null` means "cannot tell", and is not an assertion.** A failed read, or a Backend that
+ *    predates the field, must never render as "memory is not configured" — that sends an operator
+ *    to Settings to fix something that is not broken. Reading the field defensively rather than
+ *    trusting the declared type is what makes the rollout order between the two apps a non-event.
+ *  - **The projection is a pure function of the document.** When the Backend lands a richer shape
+ *    — say `configured: 'ready' | 'degraded' | 'off'`, or a reason for "configured but Ollama is
+ *    down" — `projectMemoryConfiguration` is the only thing that changes, and it can be tested
+ *    against the new shape without rendering anything.
  */
 export interface MemoryConfigurationRead {
-  /** `true` / `false` when the health rows say so; `null` when they could not be read. */
+  /** `true` / `false` when the backfill document says so; `null` when it could not be read. */
   readonly configured: boolean | null;
+  /**
+   * Which runtime arm the Backend saw, when it said. `null` is again "cannot tell".
+   *
+   * This is the richer half of the same answer, and the reason `configured` alone is not enough:
+   * three of the four arms are "configured", and they need three different operator actions —
+   * `unavailable` is *not* a Settings trip, `stamp_mismatch` is a rebuild.
+   */
+  readonly runtime: MemoryRuntimeKind | null;
+  /** The Backend's own sentence for a non-`ready` runtime. Rendered verbatim; never paraphrased. */
+  readonly reason: string | null;
   readonly isPending: boolean;
 }
 
-interface HealthProjection {
-  readonly services: readonly {
-    readonly name: string;
-    readonly status: string;
-    readonly meta: Record<string, unknown> | null;
-  }[];
+export function projectMemoryConfiguration(
+  status: MemoryBackfillStatus | undefined,
+  isPending: boolean,
+): MemoryConfigurationRead {
+  const flag = status?.configured;
+  const runtime = status?.runtime;
+  return {
+    configured: typeof flag === 'boolean' ? flag : null,
+    runtime:
+      typeof runtime === 'string' && (MEMORY_RUNTIME_KINDS as readonly string[]).includes(runtime)
+        ? runtime
+        : null,
+    reason: typeof status?.runtimeReason === 'string' ? status.runtimeReason : null,
+    isPending,
+  };
 }
 
 export function useMemoryConfiguration(): MemoryConfigurationRead {
-  const query = useQuery<HealthProjection, ApiError>({
-    queryKey: queryKeys.services.health(),
-    retry: false,
-    staleTime: 30_000,
-    queryFn: ({ signal }) => apiGet<HealthProjection>(endpoints.services.health, { signal }),
-  });
-
-  const rows = query.data?.services ?? [];
-  const qdrant = rows.find((row) => row.name === 'qdrant');
-  const ollama = rows.find((row) => row.name === 'ollama');
-  const configuredFlag = (row: (typeof rows)[number] | undefined): boolean | null =>
-    row === undefined || typeof row.meta?.['configured'] !== 'boolean'
-      ? null
-      : (row.meta['configured'] as boolean);
-
-  const flags = [configuredFlag(qdrant), configuredFlag(ollama)];
-
-  return {
-    // Either probe saying `configured: false` is the missing embedding model — the two rows are
-    // driven by one config read, so they cannot honestly disagree.
-    configured: flags.includes(false) ? false : flags.includes(true) ? true : null,
-    isPending: query.isPending,
-  };
+  // The same `useQuery` the index panel mounts, on the same key: TanStack Query dedupes it, so
+  // this is a second *subscription*, not a second request.
+  const query = useMemoryIndexStatus();
+  return projectMemoryConfiguration(query.data, query.isPending);
 }
 
 /**

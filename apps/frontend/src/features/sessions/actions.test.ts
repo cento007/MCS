@@ -6,6 +6,8 @@ import {
   endpointActionOf,
   headerActions,
   isComposerEnabled,
+  isDocumentAction,
+  isLifecycleAction,
   overflowActions,
 } from './actions.js';
 import { makeSession } from './test-support.js';
@@ -97,6 +99,8 @@ describe('headerActions — [Stop] replaces [Pause] only in flight (§6.8)', () 
       'resume-new',
       'clone',
       'archive',
+      'export',
+      'context-package',
     ]);
   });
 
@@ -111,6 +115,58 @@ describe('headerActions — [Stop] replaces [Pause] only in flight (§6.8)', () 
     expect(overflowActions(makeSession({ state: 'failed' })).map((a) => a.id)).toContain(
       'resume-new',
     );
+  });
+});
+
+describe('the §6.7 documents — gated on `created`, not discovered by failing', () => {
+  it('offers neither from `created`, because both answer 409 there', () => {
+    // The Backend refuses: a Session that never started has no messages, files or commits, so
+    // the document would be a header above nine "nothing recorded" sections. A menu entry that
+    // is guaranteed to fail is worse than one that is honestly absent.
+    const ids = allSessionActions(
+      makeSession({
+        state: 'created',
+        runtime: { ...makeSession().runtime, runtimeSessionId: null },
+      }),
+    ).map((action) => action.id);
+    expect(ids).not.toContain('export');
+    expect(ids).not.toContain('context-package');
+    expect(ids).toEqual(['start']);
+  });
+
+  it.each(['running', 'paused', 'completed', 'failed', 'archived'] as const)(
+    'offers both from `%s`',
+    (state) => {
+      const ids = overflowActions(makeSession({ state })).map((action) => action.id);
+      expect(ids).toContain('export');
+      expect(ids).toContain('context-package');
+    },
+  );
+
+  it('offers both on observed sessions too — the transcript is recorded either way', () => {
+    const ids = allSessionActions(makeSession({ sessionType: 'observed', state: 'running' })).map(
+      (action) => action.id,
+    );
+    expect(ids).toContain('export');
+    expect(ids).toContain('context-package');
+  });
+
+  it('classifies them as documents, so no surface can post them to the lifecycle endpoint', () => {
+    expect(isDocumentAction('export')).toBe(true);
+    expect(isDocumentAction('context-package')).toBe(true);
+    expect(isDocumentAction('archive')).toBe(false);
+
+    const lifecycle = overflowActions(makeSession({ state: 'completed' }))
+      .filter(isLifecycleAction)
+      .map((action) => action.id);
+    expect(lifecycle).toEqual(['resume-new', 'clone', 'archive']);
+  });
+
+  it('carries no confirm step — neither mutates anything', () => {
+    for (const action of overflowActions(makeSession({ state: 'completed' }))) {
+      if (!isDocumentAction(action.id)) continue;
+      expect(action.confirm).toBeUndefined();
+    }
   });
 });
 

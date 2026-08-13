@@ -60,6 +60,7 @@ All conventions below restate or elaborate F4/F5 — none amend them.
 | `PAYLOAD_TOO_LARGE` | 413 | Body exceeds route limit (prompts: 256 KiB; default: 1 MiB) |
 | `RATE_LIMITED` | 429 | Throttled (login: 10/min/IP; other routes per WS1 policy) |
 | `INTERNAL` | 500 | Unhandled error; `requestId` is the support handle |
+| `DATABASE_SCHEMA_MISMATCH` | 500 | **Added 2026-08-13.** The database's schema is not the one this build expects — a `CHECK` refusing a value the code writes as a constant, most often a pending migration. `message` names the constraint, the rejected value and `pnpm db:migrate`; `details` carries `{ constraint, table, column, value }` |
 | `RUNTIME_UNAVAILABLE` | 503 | Claude Code CLI/SDK not reachable (bad path, spawn failure) |
 
 ### 1.4 Authentication (F5.5)
@@ -1192,6 +1193,18 @@ Reserved routes (PRD §12: Search / Store / Delete), no payload detail:
 - `POST /api/v1/memory-items` — store a MemoryItem.
 - `GET /api/v1/memory-items/{id}` / `DELETE /api/v1/memory-items/{id}` — fetch / delete.
 - Reserved event names: `memory.item_stored`, `memory.item_deleted`, `memory.reindexed` (§15.4). Reserved WS channel: `memory`.
+
+**Phase 3 landed 2026-08-13, and the payload detail this section deferred now exists.** Recorded here rather than left to the code, because "no payload detail" means the first concrete shape is additive by definition and additive-and-unwritten is how two documents start disagreeing. What was built: `POST .../search` (its result shape is `MemorySearchResult` in `apps/backend/src/memory/retrieval.ts`, flagged there), `GET .../{id}`, and **two routes this section did not reserve** — `POST /api/v1/memory-items/backfill` (202) and `GET /api/v1/memory-items/backfill`. The reserved `POST /api/v1/memory-items` and `DELETE /api/v1/memory-items/{id}` are deliberately **not** implemented: every row is a projection keyed by `(source, chunk, model)`, so a hand-written item would be re-created by nothing and re-embedded by nothing when the model changed (`memory/routes.ts` argues it in full).
+
+**`GET /api/v1/memory-items/backfill` carries `configured`, `runtime` and `runtimeReason` (added 2026-08-13).** The rest of the document is the active run or the most recent one, and every field of it is `null` in *two* situations that share nothing — no embedding model is configured, and one is configured but nothing has ever been indexed. The operator's next action is "open Settings" in one and "press Backfill" in the other. Without these fields the Memory screen had to fetch `GET /services/health` and read `meta.configured` off the qdrant/ollama rows: a second round trip and a second source of truth for one fact the backfill handler already had in hand.
+
+| field | type | meaning |
+|---|---|---|
+| `configured` | `boolean` | An embedding model is set (`integrations.qdrant.embeddingModel`). Exactly `runtime !== 'not_configured'`, and nothing more — it says nothing about reachability |
+| `runtime` | `'ready' \| 'not_configured' \| 'unavailable' \| 'stamp_mismatch'` | Which state the verified memory runtime was in for this read. Same four words `POST .../search` answers with in `emptyReason`, so one client mapping serves both |
+| `runtimeReason` | `string \| null` | The runtime's operator-facing sentence when it is not `ready`; `null` when it is. Already scrubbed of the Qdrant API key at source |
+
+A bare `configured` boolean was rejected: three of the four runtime states are "configured", and *configured but Ollama is down* (`unavailable`) and *configured but the index cannot be trusted* (`stamp_mismatch`) are two more distinct operator actions — neither of them a trip to Settings. The field also decides whether offering the Backfill button is honest, since `POST .../backfill` refuses `unavailable` with `INTEGRATION_NOT_CONFIGURED` and an incremental run under `stamp_mismatch` with `CONFLICT`.
 
 ### 13.2 Agent APIs
 

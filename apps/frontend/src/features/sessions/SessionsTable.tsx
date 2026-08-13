@@ -10,7 +10,9 @@ import {
   sessionLabel,
 } from '../../lib/format/index.js';
 import { useIsLive } from '../../lib/liveness.js';
-import { allSessionActions, type SessionActionDescriptor } from './actions.js';
+import { allSessionActions, isDocumentAction, type SessionActionDescriptor } from './actions.js';
+import { ContextPackageDialog } from './ContextPackageDialog.js';
+import { useSessionDocuments } from './documents.js';
 import { useSessionActionMutation } from './mutations.js';
 
 /**
@@ -185,13 +187,21 @@ function RowMenu({ session }: { session: Session }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<SessionActionDescriptor | null>(null);
   const mutation = useSessionActionMutation(session.id);
+  const documents = useSessionDocuments(session);
   const navigate = useNavigate();
 
   // `turnInFlight` is false here on purpose: a list row has no live buffer, so `[Stop]` is
   // not one of its options — `[Pause]` is the process-level control this surface can offer.
   const actions = allSessionActions(session, false).filter((action) => action.id !== 'stop');
 
+  // §5.4's row menu carries `Export` and `Generate Context Package` alongside the lifecycle
+  // actions, so a document does not require opening the Session first. Both dispatch through
+  // `documents`, never through the lifecycle mutation — they answer with a document.
   const run = (action: SessionActionDescriptor): void => {
+    if (isDocumentAction(action.id)) {
+      documents.run(action.id);
+      return;
+    }
     void mutation.mutateAsync({ action: action.id }).then((outcome) => {
       if (outcome.session.id !== session.id) void navigate(`/sessions/${outcome.session.id}`);
     });
@@ -215,8 +225,11 @@ function RowMenu({ session }: { session: Session }) {
       {open ? (
         <span
           role="menu"
-          className="absolute right-0 z-20 mt-1 flex min-w-48 flex-col rounded-md border border-border p-1"
+          className="absolute right-0 z-20 mt-1 flex flex-col rounded-md border border-border p-1"
           style={{
+            // `min-w-48` was dropped silently by the closed spacing ladder — same defect as the
+            // header's menu, and the row menu now carries the longest label in the product.
+            minWidth: 'var(--mc-menu-w)',
             backgroundColor: 'var(--color-surface-raised)',
             boxShadow: 'var(--shadow-overlay)',
           }}
@@ -253,6 +266,8 @@ function RowMenu({ session }: { session: Session }) {
         }}
         onCancel={() => setConfirming(null)}
       />
+
+      <ContextPackageDialog documents={documents} />
     </span>
   );
 }

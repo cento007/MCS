@@ -11,6 +11,7 @@ import { MemoryOutcome } from './MemoryOutcome.js';
 import { MemoryResults } from './MemoryResults.js';
 import {
   DEFAULT_MEMORY_SEARCH_LIMIT,
+  type MemoryConfigurationRead,
   useMemoryConfiguration,
   useMemoryIndexStatus,
   useMemorySearch,
@@ -39,9 +40,10 @@ import { applyScope, isScoped, type MemoryScope, readScope, toSearchRequest } fr
  * quietly changes meaning.
  *
  * **2. Configuration is checked before a query is typed.** An operator should not have to compose
- * a question to be told that no embedding model is set. The check is a projection of
- * `GET /services/health`, which is the only route that can distinguish "not configured" from
- * "configured and empty" — see `queries.ts`.
+ * a question to be told that no embedding model is set. It is read off `configured` on the index
+ * status this screen already fetches — no second request, and "not configured" stays
+ * distinguishable from "configured and empty", which is the distinction the whole results region
+ * is built around. See `projectMemoryConfiguration` in `queries.ts`.
  *
  * **3. An index that moves under a result is disclosed, not acted on.** The `memory` channel
  * invalidates the index state, never the cached search: re-running the query on every
@@ -182,10 +184,7 @@ export function MemoryPage() {
 
       <div className="min-h-0">
         {request === null ? (
-          <IdleRegion
-            configured={configuration.configured}
-            configurationPending={configuration.isPending}
-          />
+          <IdleRegion configuration={configuration} />
         ) : search.isPending ? (
           <div className="space-y-2" role="status" aria-busy="true">
             <span className="sr-only">Searching memory</span>
@@ -312,26 +311,51 @@ function ResultsHeader({
 /**
  * Before anything has been asked.
  *
- * It is not blank, and it is not a fake "no results": the operator gets the one fact that decides
- * whether asking is worth their time. `configured === null` means the health read failed, and
- * that renders as silence rather than as an accusation — claiming "not configured" on a failed
- * probe would send someone to Settings to fix something that is not broken.
+ * It is not blank, and it is not a fake "no results": the operator gets the facts that decide
+ * whether asking is worth their time, and *which* fix to reach for. `configured === null` means
+ * the index-status read could not answer the question — it failed, or this Backend predates the
+ * field — and that renders as silence rather than as an accusation, because claiming "not
+ * configured" on an unanswered probe would send someone to Settings to fix something that is not
+ * broken. The same rule governs `runtime === null`.
  */
-function IdleRegion({
-  configured,
-  configurationPending,
-}: {
-  configured: boolean | null;
-  configurationPending: boolean;
-}) {
+function IdleRegion({ configuration }: { configuration: MemoryConfigurationRead }) {
+  const { configured, runtime, reason, isPending } = configuration;
+  const settled = !isPending;
+
   return (
     <div className="rounded-md border border-border p-6">
-      {configured === false && !configurationPending ? (
+      {configured === false && settled ? (
         <div role="status">
           <p className="font-medium text-sm text-text">◌ Memory is not configured.</p>
           <p className="mt-2 max-w-2xl text-sm text-text-secondary leading-150">
             No embedding model is set, so nothing is being indexed and no query can be answered. Set
             one on Settings → Integrations → Qdrant.
+          </p>
+        </div>
+      ) : configured === true &&
+        settled &&
+        (runtime === 'unavailable' || runtime === 'stamp_mismatch') ? (
+        /*
+         * Configured, and still unable to answer — the case `configured: boolean` alone cannot
+         * express, and the reason the Backend serves `runtime` beside it. Sending this operator
+         * to Settings → Integrations to re-enter a model that is already correct is the specific
+         * wrong turn worth spending a branch to avoid: `unavailable` is a stopped Ollama, and
+         * `stamp_mismatch` is a rebuild. Both are stated before a query is composed, because
+         * composing one would only produce the same answer more slowly.
+         */
+        <div role="status">
+          <p className="font-medium text-sm text-text">
+            {runtime === 'unavailable'
+              ? '◌ Memory is configured, but the index is not answering.'
+              : '◌ Memory is configured, but the index cannot be trusted.'}
+          </p>
+          {reason === null ? null : (
+            <p className="mt-2 max-w-2xl text-sm text-text-secondary leading-150">{reason}</p>
+          )}
+          <p className="mt-2 max-w-2xl text-text-muted text-xs leading-150">
+            {runtime === 'unavailable'
+              ? 'The embedding model is set correctly — this is the service, not the setting. Check Settings → Services.'
+              : 'The stored vectors were produced by a different embedding model, so they are not comparable to a query. Rebuild the index above.'}
           </p>
         </div>
       ) : (

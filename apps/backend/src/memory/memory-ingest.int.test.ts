@@ -1,4 +1,5 @@
 import {
+  createFailingEmbedder,
   createFakeEmbedder,
   createInMemoryVectorStore,
   type FakeEmbeddingPort,
@@ -8,10 +9,11 @@ import {
   schema,
   settingKey,
 } from '@mc/shared';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   createTestApp,
+  type SeededUser,
   seedAdr,
   seedMessage,
   seedProject,
@@ -23,6 +25,7 @@ import {
   testDatabase,
   truncateAll,
 } from '../../test/integration/harness.js';
+import type { BackfillStatus } from './indexing.js';
 
 /**
  * Ingestion and retrieval against real PostgreSQL.
@@ -106,6 +109,52 @@ async function memoryRows() {
     .db.select()
     .from(schema.memoryItems)
     .orderBy(schema.memoryItems.chunkOrdinal);
+}
+
+/**
+ * Log one app in as an already-seeded account.
+ *
+ * The account is a parameter rather than seeded here because there is exactly one local user
+ * (F4.1): `bootstrapLocalUser` never overwrites an existing account, so a second `seedUser()` in
+ * the same test returns the first user with the first password and every later login is a 401.
+ */
+async function loginTo(app: TestApp, user: SeededUser): Promise<string> {
+  const response = await app.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    payload: { username: user.username, password: user.password },
+  });
+  expect(response.statusCode).toBe(200);
+  const raw = response.headers['set-cookie'];
+  return Array.isArray(raw) ? raw.join('; ') : (raw ?? '');
+}
+
+async function readBackfill(app: TestApp, cookie: string): Promise<BackfillStatus> {
+  const response = await app.app.inject({
+    method: 'GET',
+    url: '/api/v1/memory-items/backfill',
+    headers: { cookie },
+  });
+  expect(response.statusCode).toBe(200);
+  return (JSON.parse(response.body) as { data: BackfillStatus }).data;
+}
+
+/** Raw DDL against this file's private clone — the only way to make a schema genuinely wrong. */
+async function execute(statement: string): Promise<void> {
+  await testDatabase().db.execute(sql.raw(statement));
+}
+
+/**
+ * Rewrite `ck_sync_runs_kind`'s predicate.
+ *
+ * `"'obsidian'"` is the pre-`0005` schema exactly — a database that never applied
+ * `0005_memory_index_runs`. Dropping and re-adding is what the migration itself does.
+ */
+async function setSyncRunKindCheck(values: string): Promise<void> {
+  await execute('ALTER TABLE sync_runs DROP CONSTRAINT ck_sync_runs_kind');
+  await execute(
+    `ALTER TABLE sync_runs ADD CONSTRAINT ck_sync_runs_kind CHECK ("sync_runs"."kind" IN (${values}))`,
+  );
 }
 
 // ------------------------------------------------------------------------------- idempotence
@@ -869,6 +918,134 @@ describe('the backfill routes', () => {
       error: { code: 'INTEGRATION_NOT_CONFIGURED' },
     });
   });
+
+  /**
+   * The three situations that used to be one document.
+   *
+   * Every field except these three is identical across all of them — an all-null run and an
+   * empty `indexedModels` — and the operator's next action is different in each. This is the
+   * whole reason `configured` alone was not enough: two of the three have `configured: true`.
+   */
+  it('tells "not configured" from "nothing indexed" from "Ollama is down"', async () => {
+    const user = await seedUser();
+
+    // 1. Nothing configured at all.
+    const cookie = await loginTo(built, user);
+    const unconfigured = await readBackfill(built, cookie);
+    expect(unconfigured).toMatchObject({
+      runId: null,
+      configured: false,
+      runtime: 'not_configured',
+      indexedModels: [],
+    });
+    // The reason is the operator-facing sentence, not a code word.
+    expect(unconfigured.runtimeReason).toContain('embedding model');
+
+    // 2. Configured, reachable, and nothing has ever been indexed. Same all-null run.
+    const ready = await configuredApp();
+    const readyCookie = await loginTo(ready, user);
+    expect(await readBackfill(ready, readyCookie)).toMatchObject({
+      runId: null,
+      configured: true,
+      runtime: 'ready',
+      runtimeReason: null,
+      indexedModels: [],
+    });
+
+    // 3. Configured, but the embedding runtime cannot be reached — a third answer, and the one
+    //    a bare boolean would have merged into (2). "Open Settings" would be the wrong advice.
+    const down = createTestApp({
+      memoryClients: () => ({
+        embedder: createFailingEmbedder(
+          { kind: 'unreachable', reason: 'Ollama is not running (scripted)' },
+          MODEL,
+        ),
+        store: createInMemoryVectorStore({ collection: 'mc_memory_test' }),
+      }),
+    });
+    const downCookie = await loginTo(down, user);
+    const unavailable = await readBackfill(down, downCookie);
+    expect(unavailable).toMatchObject({
+      runId: null,
+      configured: true,
+      runtime: 'unavailable',
+      indexedModels: [],
+    });
+    expect(unavailable.runtimeReason).toContain('Ollama is not running (scripted)');
+  });
+
+  /**
+   * The reported failure, reproduced: a database that has not applied `0005_memory_index_runs`
+   * still carries `ck_sync_runs_kind CHECK (kind IN ('obsidian'))`, so the insert of a
+   * `memory_index` run is refused with a `23514` — which used to arrive as `500 INTERNAL` and
+   * told the operator nothing.
+   *
+   * The constraint is genuinely reverted against real PostgreSQL, in this file's private
+   * template clone, and put back afterwards. Nothing here fakes the error.
+   */
+  it('answers a check violation on sync_runs.kind with the command that fixes it', async () => {
+    const app = await configuredApp();
+    const cookie = await loginTo(app, await seedUser());
+
+    await setSyncRunKindCheck("'obsidian'");
+    try {
+      const response = await app.app.inject({
+        method: 'POST',
+        url: '/api/v1/memory-items/backfill',
+        headers: { cookie },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(500);
+      const body = JSON.parse(response.body) as {
+        error: { code: string; message: string; details: Record<string, unknown> };
+      };
+      expect(body.error.code).toBe('DATABASE_SCHEMA_MISMATCH');
+      // Actionable, and specific about what was rejected.
+      expect(body.error.message).toContain('ck_sync_runs_kind');
+      expect(body.error.message).toContain('memory_index');
+      expect(body.error.message).toContain('pnpm db:migrate');
+      expect(body.error.details).toMatchObject({
+        constraint: 'ck_sync_runs_kind',
+        table: 'sync_runs',
+        column: 'kind',
+        value: 'memory_index',
+      });
+    } finally {
+      await setSyncRunKindCheck("'obsidian', 'memory_index'");
+    }
+  });
+
+  /**
+   * The other half of the same rule: a `23514` from a constraint this code does *not* claim to
+   * understand must keep surfacing as `INTERNAL`. Translating every check violation into "run
+   * your migrations" would paper over a genuinely bad value with confident, wrong advice.
+   */
+  it('does not claim schema drift for a check violation it cannot explain', async () => {
+    const app = await configuredApp();
+    const cookie = await loginTo(app, await seedUser());
+
+    await execute(`ALTER TABLE sync_runs DROP CONSTRAINT ck_sync_runs_trigger`);
+    await execute(
+      `ALTER TABLE sync_runs ADD CONSTRAINT ck_sync_runs_trigger CHECK ("sync_runs"."trigger" IN ('schedule'))`,
+    );
+    try {
+      const response = await app.app.inject({
+        method: 'POST',
+        url: '/api/v1/memory-items/backfill',
+        headers: { cookie },
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body)).toMatchObject({ error: { code: 'INTERNAL' } });
+    } finally {
+      await execute(`ALTER TABLE sync_runs DROP CONSTRAINT ck_sync_runs_trigger`);
+      await execute(
+        `ALTER TABLE sync_runs ADD CONSTRAINT ck_sync_runs_trigger CHECK ("sync_runs"."trigger" IN ('user', 'schedule'))`,
+      );
+    }
+  });
 });
 
 // --------------------------------------------------------------------------- the API key scan
@@ -904,6 +1081,50 @@ describe('secrets', () => {
       // someone adds a field later.
       expect(response.body).not.toContain(apiKey);
     }
+  });
+
+  /**
+   * The scan above only ever sees a `ready` runtime, so `runtimeReason` is `null` in it and the
+   * new field is covered in name only. This one makes the dependency *fail with the key in its
+   * own words* — the shape a real transport error takes — and proves the sentence that reaches
+   * the operator has been scrubbed. `runtime.ts` redacts at source; this is the end-to-end
+   * evidence for the one field that carries dependency text into a response.
+   */
+  it('scrubs the Qdrant API key out of the backfill document’s runtime reason', async () => {
+    const apiKey = 'qdrant_runtime_reason_key_0987654321';
+
+    const app = createTestApp({
+      memoryClients: () => ({
+        embedder: createFailingEmbedder(
+          { kind: 'unreachable', reason: `refused while presenting api-key ${apiKey}` },
+          MODEL,
+        ),
+        store: createInMemoryVectorStore({ collection: 'mc_memory_test' }),
+      }),
+    });
+    // Written through this app's own settings route: each test app holds a freshly generated
+    // MC_ENCRYPTION_KEY, so a secret sealed by one cannot be opened by another.
+    const cookie = await loginTo(app, await seedUser());
+    const saved = await app.app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/integrations/qdrant',
+      headers: { cookie },
+      payload: { host: '127.0.0.1', port: 6333, apiKey, embeddingModel: MODEL },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const response = await app.app.inject({
+      method: 'GET',
+      url: '/api/v1/memory-items/backfill',
+      headers: { cookie },
+    });
+    const status = (JSON.parse(response.body) as { data: BackfillStatus }).data;
+
+    // The failure did reach the field — otherwise this would pass vacuously.
+    expect(status.runtime).toBe('unavailable');
+    expect(status.runtimeReason).toContain('refused while presenting api-key');
+    expect(status.runtimeReason).not.toContain(apiKey);
+    expect(response.body).not.toContain(apiKey);
   });
 });
 
