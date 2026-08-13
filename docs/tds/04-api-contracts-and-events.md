@@ -794,7 +794,35 @@ interface SecuritySettings {                            // PUT /api/v1/settings/
 > **Phase 3 — interface only.** This section is a placeholder/extension point.
 > Detailed design is out of TDS scope per the project-plan scope guard.
 
-- `PUT /api/v1/settings/memory` — retention per memory tier, indexed sources (reserved shape).
+- `PUT /api/v1/settings/memory` — **landed 2026-08-13; the reserved shape is now real.** Two
+  registry keys, both of which something reads (see below):
+
+  ```ts
+  {
+    // Six toggles, field names derived from MEMORY_SOURCE_TYPES via `memorySourceField`
+    // (`pull_request` -> `pullRequest`) so the two lists cannot drift. Default: all true.
+    indexedSources: { session, commit, adr, obsidianNote, pullRequest, document }; // booleans
+    // Per tier, in days. 0 = never expire (the default, and the same convention as
+    // `security.auditLogRetentionDays`). Validated integer 0..3650.
+    retentionDays: { session: number; project: number; global: number };
+  }
+  ```
+
+  **`indexedSources` gates both ends.** A disabled source is not indexed *and* is intersected
+  out of the search filter before the query runs — but its existing rows are **kept**. A
+  settings save must not be a destructive action, and re-enabling then costs nothing; the
+  irreversible path stays explicit and typed (`POST /memory-items/backfill {"mode":"rebuild"}`).
+
+  **`retentionDays` is enforced** by a self-rescheduling `memory.retention` job, which deletes
+  rows and their Qdrant points together and only inside a `ready` runtime — a row deleted
+  without its vector strands an index that answers from a chunk that no longer exists. The
+  cutoff is `memory_items.created_at`: `indexed_at` would mean a weekly-edited document never
+  expires under a 30-day policy, and the source's own timestamp would make a first backfill
+  delete most of what it had just embedded.
+
+  No `agent`-tier window is defined, because nothing produces `agent`-tier rows
+  (`PRODUCIBLE_MEMORY_TIERS`) and a policy that can never apply is the same dishonesty as a
+  filter that can never match. It arrives with its producer.
 - `PUT /api/v1/settings/integrations/qdrant` — `{ host, port, apiKey: SecretField, embeddingModel }` (form exists; integration inert until Phase 3).
 
 > **Phase 4 — interface only.** This section is a placeholder/extension point.

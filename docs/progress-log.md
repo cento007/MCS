@@ -523,3 +523,53 @@ This retires the Memory screen's second round trip to `GET /services/health` for
 The predicates moved to `apps/backend/src/db/violations.ts` so the one non-obvious fact behind them — **Drizzle 0.45 puts the `pg` error on `cause`**, the fact that once made `isUniqueViolation` always return `false` — is learned in a single place. Re-verified against a real database before the code was written: `DrizzleQueryError` → `cause` → `DatabaseError { code: '23514', constraint: 'ck_sync_runs_kind', table: 'sync_runs' }`.
 
 Both fixes are covered by integration tests that alter the constraint on real PostgreSQL rather than mocking an error, and each was **verified to fail against the old code** before being accepted.
+
+---
+
+## 2026-08-13 — Phase 3 closes: repository documentation, and a Memory settings category that is obeyed
+
+**2287 unit tests, 808 integration** (including the two live-service tests against real Qdrant and Ollama), lint and typecheck clean, `openapi.yaml` regenerated, no migration needed. Commit `7e38ede`.
+
+### A source that existed only as a type
+
+`document` — PRD §6.3's "Documentation" — was declared in `MEMORY_SOURCE_TYPES`, classed as path-addressed in `REFERENCE_MEMORY_SOURCE_TYPES`, given a label and a link case in the Memory screen, and offered as a filter chip. `grep` found it in **exactly two type declarations**. Nothing produced it, so the screen shipped a filter that could only ever return nothing — the precise dishonesty `PRODUCIBLE_MEMORY_TIERS` exists to prevent for the `agent` tier. There was already circumstantial evidence of the need: an earlier agent, wanting a corpus to measure against, pointed the *Obsidian vault path* at `D:\Repos\MCS\docs`.
+
+**What counts as documentation** is deliberately a floor rather than a ceiling: root-level Markdown, plus anything beneath a root-level `docs/`, `doc/` or `documentation/`. The walk never descends into any other root-level directory, so a 40 000-file `node_modules` costs one `readdir` of the root — and the same `NEVER_DESCEND` denylist applies at every depth, because `docs/node_modules` is a real thing. Source-adjacent Markdown is the natural widening and belongs behind an explicit setting, not behind a default that triples the corpus.
+
+**Where the vault and a repository overlap, the vault wins.** The vault path is something the operator *declared*; the documentation set is *derived* from repository rows, and a derived rule should yield to a declared one. Reversing it would also make the note stage depend on the `repositories` table, so "index my vault" would come to depend on GitHub discovery having run.
+
+**Tier is `project`**, which `ck_memory_items_tier_scope` describes exactly — and the corollary is enforced upstream: a repository with no Project is not indexed at all, because its scope is *undecided*, not global. One repository's deployment guide answering every other project's questions is the failure that rule prevents.
+
+**"The scan did not see it" is not "it is gone."** A repository whose local path is absent from this machine is skipped and its documents are **not** purged. What *is* purged is a deleted repository row and one that lost its Project — both facts this database holds, rather than guesses about a filesystem.
+
+*Correction accepted from the implementer:* the brief framed the file-size and extension bounds as the guard against Ollama's silent truncation. They are not — that guard is `ChunkBudget` in `chunk.ts`, which every source already passes through. The new bounds are run-cost and index-quality bounds and are documented as such. A comment claiming a guarantee that lives in another module is how the next person stops looking for the real one.
+
+### A settings category that is actually read
+
+`memory` routed `GET`/`PUT /settings/memory` and defined **zero registry keys**. PRD §4.4 item 4 wants retention per tier and indexed-source toggles; PRD §6.1 calls session memory "temporary", which nothing made true — session-tier chunks accumulated forever.
+
+The rule applied throughout: **a setting nothing reads is a lie**, and this codebase keeps paying for it (`integrations.ollama.enabled` is still read by nothing; the Telegram chat-id double-parse silently skipped every notification).
+
+- **`indexedSources` gates both ends.** A disabled source stops being indexed *and* is intersected out of the search filter before the query runs. Its rows are **kept**: a settings save must not be a destructive action, re-enabling then costs nothing, and the irreversible path stays explicit and typed (`backfill {"mode":"rebuild"}`). Leaving rows queryable while the toggle read "off" would have been the lie; this closes it from the other side.
+- **`retentionDays` is enforced** by a self-rescheduling `memory.retention` job modelled on `github.poll`, deleting rows and Qdrant points together and **only inside a `ready` runtime** — if Ollama or Qdrant is unreachable it deletes nothing, because a row removed without its vector strands an index answering from a chunk that no longer exists. Cutoff is `created_at`: `indexed_at` would mean a weekly-edited document never expires under a 30-day policy, and the source's own timestamp would make a first backfill delete most of what it had just embedded. Default `0` = never, so loss is opt-in.
+
+Deliberately not added, each stated as a decision rather than an omission: no `agent`-tier window (nothing produces those rows), no `minScore`/chunk-size knobs (one is a per-request field with a measured default, the other is derived from the model's context window), no retention tick-interval setting (nobody can set it correctly), and no "purge on disable" — two ways to destroy data is one too many.
+
+### A rebuild that reported success and answered nothing
+
+`MemoryIndexService.#rebuild()` reset the collection, then deleted only *other* models' rows. Under an **unchanged** model that deleted nothing, so the sweep that followed found every row hash-matching with `indexed_at` set and skipped all of them: the run reported success with a full `memory_items` table beside an empty collection. It was correct only when a rebuild happened to follow a model change — and `{"mode":"rebuild"}` is reachable without one. Verified failing against the old code before the fix was accepted.
+
+### Found by reading the built CSS rather than the class names
+
+`max-h-80` and `w-20` in the command palette emitted nothing, because `theme.css` deliberately closes Tailwind's arbitrary spacing ladder. The results listbox therefore had `overflow-y-auto` with **no height to overflow** — no scroll cap at all, so the list ran off-screen once enough sessions matched. Same failure as the `.inset-0` incident and as the `min-w-56` overflow menus found in the same sweep. The curated set is `0, 05, 1, 2, 3, 4, 6, 8, 16`; anything else needs a `--mc-*` constant, and the check that matters is `grep` over `dist/assets/*.css`, not over the source.
+
+### Contract corrected mid-flight
+
+The shape handed to the frontend agent was wrong in a way that mattered: `retention` with `null` meaning "never expire". What landed is `retentionDays` as `integer, minimum: 0` where **`0` means never** — so under the briefed contract a `null` would have been a 400 and a `0` would have meant *expire everything now*, on a field that destroys data irreversibly. The panel reads both dialects and writes back the one it received.
+
+### Outstanding
+
+- **`SpendChip` can evict the whole app.** It reads `data.budget.alertsEnabled` guarding only `data === undefined`, and the only error boundary sits on the `RequireAuth` *parent* of `AppShell` — so one malformed `/spend` body replaces the entire authenticated area, navigation included. Only reachable with a bad payload today, but `lib/api/types.ts` is hand-written against prose because `openapi.yaml` declares no response schemas, so a field rename would do it.
+- `GET /schedule` has no `memory_retention` row, so the retention chain is invisible in Settings → Services.
+- The nav and Settings rails still badge Memory `P3`, which now has both a screen and a panel.
+- **Graphify** (PRD §6.2.1) remains untouched and explicitly optional: its adoption path begins "trial as a per-repository Claude Code skill first; if proven, integrate". That is a judgement to form by hand, not an assumption to implement.
