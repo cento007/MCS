@@ -9,6 +9,7 @@ import { CommandPalette } from './CommandPalette.js';
 import { MobileNav, NavRail } from './NavRail.js';
 import { NAV_ITEMS } from './navigation.js';
 import { OpenSessionsStrip } from './OpenSessionsStrip.js';
+import { ShellBoundary } from './ShellBoundary.js';
 import { ShortcutSheet } from './ShortcutSheet.js';
 import { TopBar } from './TopBar.js';
 
@@ -153,7 +154,9 @@ export function AppShell() {
           {/* The strip is present on every authenticated route. On mobile it is the
               horizontal chip scroller of TDS 06 §3.2/§3.4. */}
           <div className="border-border border-b md:hidden">
-            <OpenSessionsStrip orientation="horizontal" />
+            <ShellBoundary label="Open sessions">
+              <OpenSessionsStrip orientation="horizontal" />
+            </ShellBoundary>
           </div>
 
           <main id="main" className="min-h-0 flex-1 overflow-y-auto">

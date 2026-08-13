@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router';
 import { useCurrentUser, useLogout } from '../../features/auth/queries.js';
 import { ConnectionChip } from './ConnectionChip.js';
+import { ShellBoundary } from './ShellBoundary.js';
 import { SpendChip } from './SpendChip.js';
 
 /**
@@ -41,8 +42,15 @@ export function TopBar({ onOpenPalette }: { onOpenPalette: () => void }) {
       </button>
 
       <div className="ml-auto flex items-center gap-3">
-        <SpendChip />
-        <ConnectionChip />
+        {/* One boundary each, not one around the pair. The ConnectionChip is the widget an
+            operator needs most while something is broken — it is how they tell "the server is
+            down" from "this screen is wrong" — so a failing SpendChip must not take it out. */}
+        <ShellBoundary label="Spend indicator">
+          <SpendChip />
+        </ShellBoundary>
+        <ShellBoundary label="Connection indicator">
+          <ConnectionChip />
+        </ShellBoundary>
 
         <span className="hidden text-text-secondary text-xs sm:inline">
           {data?.user.username ?? '—'}

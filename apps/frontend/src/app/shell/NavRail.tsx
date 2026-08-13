@@ -5,6 +5,7 @@ import { useRunningSessions } from '../../features/sessions/queries.js';
 import { useIsLive, useLastUpdatedLabel } from '../../lib/liveness.js';
 import { NAV_ITEMS } from './navigation.js';
 import { OpenSessionsStrip } from './OpenSessionsStrip.js';
+import { ShellBoundary } from './ShellBoundary.js';
 
 /**
  * Desktop nav rail (TDS 06 §3.1), `--mc-sidebar-w` wide.
@@ -50,9 +51,19 @@ export function NavRail() {
         ))}
       </ul>
 
+      {/*
+       * Boundaries go *inside* the rail, around its two data-driven parts, rather than around
+       * the rail as a whole. The links above are the operator's escape hatch and are built from
+       * a static table, so they cannot throw — wrapping the whole `<nav>` would let a failure in
+       * the running count take away navigation, which is the one thing that must survive.
+       */}
       <div className="mt-auto border-border border-t">
-        <RunningCount />
-        <OpenSessionsStrip />
+        <ShellBoundary label="Running session count">
+          <RunningCount />
+        </ShellBoundary>
+        <ShellBoundary label="Open sessions">
+          <OpenSessionsStrip />
+        </ShellBoundary>
       </div>
     </nav>
   );

@@ -57,17 +57,75 @@ const CHIP_GLYPH: Readonly<Record<SpendDayStatus, string | null>> = {
   over: '▲',
 };
 
+/** The four fields this chip actually renders, once they are known to be renderable. */
+export interface SpendChipModel {
+  readonly dayStatus: SpendDayStatus;
+  readonly totalCostUsd: number;
+  readonly dailyUsd: number | null;
+  /** Title text only, so an absent threshold degrades the tooltip rather than the chip. */
+  readonly alertThresholdPercent: number | null;
+}
+
+/**
+ * Read `GET /spend` defensively, and return `null` for anything this chip cannot render.
+ *
+ * **Not paranoia about a Backend that is currently correct.** `lib/api/types.ts` is hand-written
+ * against the prose contract, because `openapi.yaml` declares no response schemas — so nothing
+ * checks that the shape arriving at runtime is the shape this file was compiled against. Before
+ * this guard, `data.budget.alertsEnabled` on a body without `budget` threw during render, and
+ * the nearest boundary was on `RequireAuth` — the *parent* of `AppShell` — so a single bad field
+ * replaced the entire authenticated area, navigation included.
+ *
+ * `null` (hide) rather than an error marker, because that is this chip's own documented rule for
+ * a body it cannot use: "**Not loaded / failed to load → hidden.** A chip is a glance affordance
+ * with no room for an error state, and the Dashboard widget already reports a failed
+ * `GET /spend` properly." A shape it cannot read is a failure to load. `ShellBoundary`'s ⚠ is
+ * reserved for the throws nobody anticipated; this one is anticipated, so it takes the
+ * documented path instead of inventing a fourth reason for the chip to look different.
+ */
+export function readSpendChip(data: unknown): SpendChipModel | null {
+  if (typeof data !== 'object' || data === null) return null;
+
+  const { budget, day, dayStatus } = data as Record<string, unknown>;
+  if (typeof budget !== 'object' || budget === null) return null;
+  if (typeof day !== 'object' || day === null) return null;
+  if (!isSpendDayStatus(dayStatus)) return null;
+
+  const { alertsEnabled, dailyUsd, alertThresholdPercent } = budget as Record<string, unknown>;
+  // §3.1: "hidden entirely when cost-budget alerts are disabled in Settings". `!== true` also
+  // covers the field being absent — an install whose alert state cannot be read is not one to
+  // start announcing cost at.
+  if (alertsEnabled !== true) return null;
+
+  const { totalCostUsd } = day as Record<string, unknown>;
+  if (!Number.isFinite(totalCostUsd)) return null;
+  // `null` is the meaningful "no budget set" case (`no_budget`); any other non-number is drift.
+  if (dailyUsd !== null && !Number.isFinite(dailyUsd)) return null;
+
+  return {
+    dayStatus,
+    totalCostUsd: totalCostUsd as number,
+    dailyUsd: dailyUsd as number | null,
+    alertThresholdPercent: Number.isFinite(alertThresholdPercent)
+      ? (alertThresholdPercent as number)
+      : null,
+  };
+}
+
+function isSpendDayStatus(value: unknown): value is SpendDayStatus {
+  return typeof value === 'string' && Object.hasOwn(CHIP_COLOR, value);
+}
+
 export function SpendChip() {
   const { data } = useSpend();
   const isLive = useIsLive();
 
-  if (data === undefined) return null;
-  // §3.1: "hidden entirely when cost-budget alerts are disabled in Settings".
-  if (!data.budget.alertsEnabled) return null;
+  const model = readSpendChip(data);
+  if (model === null) return null;
 
-  const amount = formatMoneyUsd(data.day.totalCostUsd);
-  const budget = data.budget.dailyUsd;
-  const glyph = CHIP_GLYPH[data.dayStatus];
+  const amount = formatMoneyUsd(model.totalCostUsd);
+  const budget = model.dailyUsd;
+  const glyph = CHIP_GLYPH[model.dayStatus];
 
   /*
    * `no_budget` — the case §3.1 does not answer, decided here.
@@ -93,18 +151,25 @@ export function SpendChip() {
     <Link
       to="/"
       data-testid="spend-chip"
-      data-day-status={data.dayStatus}
+      data-day-status={model.dayStatus}
       // §3.2: not in the mobile header at all. `md:` matches the search entry beside it.
       className="hidden items-center gap-1 rounded-xs px-2 font-mono text-2xs md:inline-flex"
       style={{
         // §3.3: muted while the socket is not live — the amount is last-known, not current.
-        color: isLive ? `var(${CHIP_COLOR[data.dayStatus]})` : 'var(--color-text-muted)',
+        color: isLive ? `var(${CHIP_COLOR[model.dayStatus]})` : 'var(--color-text-muted)',
         minHeight: 24,
       }}
       title={
         budget === null
           ? `Spend today ${amount} · no daily budget set`
-          : `Spend today ${amount} of ${formatMoneyUsd(budget)} · alert at ${data.budget.alertThresholdPercent}%`
+          : // The threshold clause is dropped rather than rendered as `alert at undefined%`
+            // when the field cannot be read — a missing tooltip detail is not worth hiding a
+            // chip whose amount and budget are both perfectly good.
+            `Spend today ${amount} of ${formatMoneyUsd(budget)}${
+              model.alertThresholdPercent === null
+                ? ''
+                : ` · alert at ${model.alertThresholdPercent}%`
+            }`
       }
     >
       {glyph === null ? null : <span aria-hidden="true">{glyph}</span>}
@@ -112,7 +177,7 @@ export function SpendChip() {
       <span className="sr-only">
         {budget === null
           ? `Spend today ${amount}, no daily budget set.`
-          : `Spend today ${amount} of ${formatMoneyUsd(budget)} daily budget, ${data.dayStatus === 'over' ? 'over budget' : data.dayStatus === 'alert' ? 'past the alert threshold' : 'within budget'}.`}
+          : `Spend today ${amount} of ${formatMoneyUsd(budget)} daily budget, ${model.dayStatus === 'over' ? 'over budget' : model.dayStatus === 'alert' ? 'past the alert threshold' : 'within budget'}.`}
       </span>
     </Link>
   );
