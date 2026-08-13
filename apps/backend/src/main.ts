@@ -2,6 +2,7 @@ import process from 'node:process';
 import { createLoggerFromConfig, createShutdownController, loadConfigOrExit } from '@mc/shared';
 import { buildAppWithServices } from './app.js';
 import { createDatabase } from './db/index.js';
+import { verifyMemoryAtStartup } from './memory/index.js';
 import { createBackendQueue } from './queue/index.js';
 // Imported from the adapter module directly, never through `sessions/`'s barrel: this is the
 // one import of `@anthropic-ai/claude-agent-sdk` in the process, and routing it through a
@@ -49,7 +50,7 @@ async function main(): Promise<void> {
   const maxConcurrentSessions = await readMaxConcurrentSessions(database.db);
   const claudeCode = await readClaudeCodeLaunchSettings(database.db);
 
-  const { app, sessions, github } = buildAppWithServices({
+  const { app, sessions, github, memory } = buildAppWithServices({
     config,
     db: database.db,
     queue,
@@ -92,6 +93,20 @@ async function main(): Promise<void> {
   // After the Session consumers because it is the lower-priority producer, and before `listen`
   // so a tick left over from the previous run is picked up as soon as the process is healthy.
   await github.start();
+
+  // Phase 3 memory (PRD §6): identify the embedding model, then create or verify the stamped
+  // Qdrant collection.
+  //
+  // **Deliberately not awaited into the startup critical path, and deliberately never fatal.**
+  // Two reasons, and both are about what an operator loses when it fails. Awaiting it would put
+  // an optional local service — one that may be stopped, or configured against a model that is
+  // not pulled — between a restart and the moment sessions can be launched again; and treating
+  // a failure as fatal would take out session management to protect a search box that does not
+  // exist yet. It logs, the Services panel reports the same facts, and the Backend serves.
+  void verifyMemoryAtStartup(memory, log).catch((error: unknown) => {
+    // `verifyMemoryAtStartup` does not throw. This is the arm that holds if that ever changes.
+    log.error({ err: error }, 'memory startup verification failed unexpectedly');
+  });
 
   // Hooks run in REVERSE registration order, so the pool is registered first and drained
   // last — nothing can still be querying it once the HTTP server has closed.

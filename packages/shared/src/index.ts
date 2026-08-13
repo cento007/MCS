@@ -19,6 +19,10 @@
  *                  syncs and the Backend serves the dry-run preview from the same planner
  *   relay    the worker -> Backend `LISTEN/NOTIFY` event relay (TDS 04 §15.1): the `NOTIFY`
  *                  wire codec and the producer that publishes on the caller's transaction
+ *   memory   the Phase 3 memory foundation (PRD §6): `EmbeddingPort` and `VectorStorePort`,
+ *                  their Ollama/Qdrant adapters and their install-free fakes, and the embedding
+ *                  stamp that keeps stored vectors comparable. Shared because indexing is Sync
+ *                  Worker work and retrieval is Backend work
  *
  * Still owed by later workstreams: full `entities` DTOs.
  */
@@ -28,6 +32,7 @@ export * from './config/index.js';
 export * from './crypto/index.js';
 export * from './db/index.js';
 export * from './logger/index.js';
+export * from './memory/index.js';
 export * from './notifications/index.js';
 export * from './obsidian/index.js';
 export * from './queue/index.js';

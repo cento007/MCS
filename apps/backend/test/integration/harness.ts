@@ -3,7 +3,17 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AppConfig, insertAdr, loadConfig, newId, type PgBossQueue, schema } from '@mc/shared';
+import {
+  type AppConfig,
+  createDenyingMemoryHttp,
+  createOllamaEmbedder,
+  createQdrantVectorStore,
+  insertAdr,
+  loadConfig,
+  newId,
+  type PgBossQueue,
+  schema,
+} from '@mc/shared';
 import { sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { type BuildAppOptions, type BuiltApp, buildAppWithServices } from '../../src/app.js';
@@ -159,6 +169,30 @@ export function createTestApp(
     ...(options.testConnectionDeps === undefined
       ? {}
       : { testConnectionDeps: options.testConnectionDeps }),
+    // The Phase 3 memory layer's two outbound edges (Ollama on 11434, Qdrant on 6333).
+    //
+    // **The default builds clients over a transport that throws, not the real one** — the same
+    // reasoning as `githubHttp` below, and it bites harder here: a developer's machine may well
+    // have a local Qdrant and a local Ollama running, so a suite that reached them would pass
+    // here and fail on CI, which is the worst possible direction for a flake. In practice
+    // nothing is even constructed unless an embedding model is configured, and no integration
+    // test writes that setting; the deny is what makes that a guarantee rather than a habit.
+    memoryClients:
+      options.memoryClients ??
+      ((config) => ({
+        embedder: createOllamaEmbedder({
+          host: config.ollama.host,
+          port: config.ollama.port,
+          model: config.embeddingModel,
+          http: createDenyingMemoryHttp('the integration harness'),
+        }),
+        store: createQdrantVectorStore({
+          host: config.qdrant.host,
+          port: config.qdrant.port,
+          apiKey: config.qdrant.apiKey,
+          http: createDenyingMemoryHttp('the integration harness'),
+        }),
+      })),
     // The GitHub integration's one outbound edge (`github/http.ts`).
     //
     // **The default is a port that throws, not the real one.** Forwarding an override is not
@@ -221,6 +255,9 @@ export async function truncateAll(): Promise<void> {
     'transcript_tail_states',
     'commits',
     'pull_requests',
+    // Before `sessions` and `projects`: `memory_items` holds FKs into both. The cascade would
+    // handle it, but naming it keeps the list an honest inventory of the app's tables.
+    'memory_items',
     'sessions',
     'repositories',
     'projects',

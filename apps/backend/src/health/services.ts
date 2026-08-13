@@ -30,7 +30,8 @@ import { dataEnvelope } from '../http/errors.js';
  *   | Queue (PostgreSQL) | pg-boss depth/active/failed         | reachable, no retained failures |
  *   | Telegram Worker    | `service_heartbeats` row age        | < 90 s (F2.2 workers, Phase 2)  |
  *   | Sync Worker        | `service_heartbeats` row age        | < 90 s                          |
- *   | Qdrant / Ollama    | none                                | Phase 3+ placeholder            |
+ *   | Qdrant             | collection + embedding stamp check  | reachable, stamp agrees         |
+ *   | Ollama             | model capability + dimension probe  | reachable, model is an embedder |
  *
  * **Vocabulary reconciliation.** TDS 02 §7.2's heartbeat bands are `healthy` / `stale` /
  * `down`; §7.5's response enum has no `stale`. WS5 §5.7.12 already arbitrated the mapping —
@@ -162,9 +163,29 @@ export interface HeartbeatProbeRow {
 }
 
 /**
- * The four checks, injected. Splitting them out is what lets the failure behaviour be unit
+ * A pre-classified row for a dependency whose *status* derivation belongs with the code that
+ * knows the dependency, not with this file.
+ *
+ * Qdrant and Ollama are the only two like that, and the reason is specific: telling "the model
+ * is not pulled" apart from "the model is a chat model" apart from "the collection's embedding
+ * stamp disagrees with settings" needs the memory layer's vocabulary, and re-deriving it here
+ * would put that vocabulary in two places. This file still owns what it always owned — the
+ * bound, and turning a throw or a stall into a row.
+ */
+export interface ClassifiedProbeRow {
+  readonly status: ServiceStatus;
+  readonly detail: string;
+  readonly meta: Record<string, unknown> | null;
+}
+
+/**
+ * The checks, injected. Splitting them out is what lets the failure behaviour be unit
  * tested with no database: a probe that throws, and a probe that never settles, are both
  * two lines in a test.
+ *
+ * `qdrant` and `ollama` are **optional**. An app built without the memory layer wired — a test,
+ * or a deployment that has not reached Phase 3 — simply omits them, and both rows fall back to
+ * the `disabled` placeholder they have carried since Phase 1.
  */
 export interface ServiceHealthProbes {
   backend(): BackendSelfReport;
@@ -172,6 +193,9 @@ export interface ServiceHealthProbes {
   /** `null` means the configured driver reports no depth (the no-op queue). */
   queue(): Promise<QueueProbeResult | null>;
   heartbeats(): Promise<readonly HeartbeatProbeRow[]>;
+  /** Phase 3 memory (`memory/health.ts`). Absent = not wired; the row reads `disabled`. */
+  qdrant?(): Promise<ClassifiedProbeRow>;
+  ollama?(): Promise<ClassifiedProbeRow>;
 }
 
 export interface CollectServiceHealthOptions {
@@ -192,11 +216,13 @@ export async function collectServiceHealth(
   const now = options.now ?? (() => new Date());
   const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
 
-  const [backend, database, queue, heartbeats] = await Promise.all([
+  const [backend, database, queue, heartbeats, qdrant, ollama] = await Promise.all([
     settle(async () => probes.backend(), timeoutMs),
     settle(() => probes.database(), timeoutMs),
     settle(() => probes.queue(), timeoutMs),
     settle(() => probes.heartbeats(), timeoutMs),
+    settleOptional(probes.qdrant?.bind(probes), timeoutMs),
+    settleOptional(probes.ollama?.bind(probes), timeoutMs),
   ]);
 
   const checkedAt = now().toISOString();
@@ -207,11 +233,43 @@ export async function collectServiceHealth(
     ...HEARTBEAT_SERVICES.map((service) =>
       workerRow(service.name, service.row, heartbeats, checkedAt, now()),
     ),
-    placeholderRow('qdrant', checkedAt, 'Not configured — vector store arrives in Phase 3'),
-    placeholderRow('ollama', checkedAt, 'Not configured — optional local runtime, Phase 3+'),
+    memoryRow(
+      'qdrant',
+      qdrant,
+      checkedAt,
+      'Not configured — no embedding model is set, so nothing is indexed',
+    ),
+    memoryRow(
+      'ollama',
+      ollama,
+      checkedAt,
+      'Not configured — no embedding model is set (optional local runtime)',
+    ),
   ];
 
   return { services };
+}
+
+/**
+ * Render a memory row from its pre-classified probe, or the "not wired" placeholder.
+ *
+ * The `!result.ok` arm matters more than it looks: `memory/health.ts` promises never to throw,
+ * and this is what holds if it ever does. A memory probe that blows up must not be able to take
+ * out the page that reports every *other* dependency — which is the same reasoning that put
+ * `settle` around the database probe.
+ */
+function memoryRow(
+  name: ServiceName,
+  result: Settled<ClassifiedProbeRow> | null,
+  checkedAt: string,
+  placeholder: string,
+): ServiceHealthRow {
+  if (result === null) return row(name, 'disabled', checkedAt, placeholder, null);
+  if (!result.ok) {
+    return row(name, 'unknown', checkedAt, `Check failed: ${describe(result.error)}`, null);
+  }
+  const { status, detail, meta } = result.value;
+  return row(name, status, checkedAt, detail, meta);
 }
 
 function backendRow(result: Settled<BackendSelfReport>, checkedAt: string): ServiceHealthRow {
@@ -353,11 +411,6 @@ const HEARTBEAT_BAND_STATUS: Readonly<Record<'healthy' | 'stale' | 'down', Servi
   down: 'down',
 };
 
-function placeholderRow(name: ServiceName, checkedAt: string, detail: string): ServiceHealthRow {
-  // §7.5: "qdrant/ollama report `disabled` until Phase 3+".
-  return row(name, 'disabled', checkedAt, detail, null);
-}
-
 function row(
   name: ServiceName,
   status: ServiceStatus,
@@ -406,6 +459,15 @@ async function settle<T>(run: () => Promise<T>, timeoutMs: number): Promise<Sett
   }
 }
 
+/** `settle`, but for a probe that may not be wired at all. `null` means "no probe". */
+async function settleOptional<T>(
+  run: (() => Promise<T>) | undefined,
+  timeoutMs: number,
+): Promise<Settled<T> | null> {
+  if (run === undefined) return null;
+  return settle(run, timeoutMs);
+}
+
 function describe(error: unknown): string {
   if (error instanceof Error && error.message.length > 0) return error.message.slice(0, 500);
   return 'Check failed';
@@ -433,10 +495,23 @@ export function asQueueDepthProbe(queue: unknown): QueueDepthProbe | null {
   return typeof candidate.depth === 'function' ? (candidate as QueueDepthProbe) : null;
 }
 
+/**
+ * The Phase 3 memory probes, structurally typed rather than imported.
+ *
+ * `health/` keeps depending on shapes instead of on `memory/` — the same reasoning that made
+ * `EventRelayReport` a structural type above. `MemoryProbes` satisfies it.
+ */
+export interface MemoryHealthProbes {
+  qdrant(): Promise<ClassifiedProbeRow>;
+  ollama(): Promise<ClassifiedProbeRow>;
+}
+
 export interface CreateServiceHealthProbesOptions {
   readonly db: Db;
   readonly queue?: unknown;
   readonly backend: () => BackendSelfReport;
+  /** Omitted = memory is not wired; both rows read `disabled`. */
+  readonly memory?: MemoryHealthProbes | undefined;
 }
 
 export function createServiceHealthProbes(
@@ -444,9 +519,17 @@ export function createServiceHealthProbes(
 ): ServiceHealthProbes {
   const { db } = options;
   const queueProbe = asQueueDepthProbe(options.queue);
+  const memory = options.memory;
 
   return {
     backend: options.backend,
+
+    ...(memory === undefined
+      ? {}
+      : {
+          qdrant: () => memory.qdrant(),
+          ollama: () => memory.ollama(),
+        }),
 
     async database(): Promise<DatabaseProbeResult> {
       const startedAt = Date.now();

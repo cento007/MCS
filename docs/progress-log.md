@@ -390,3 +390,40 @@ Defaults are **applied at read time, never seeded**: a fresh install has zero ro
 - **An unknown *query parameter* is silently dropped** on every list route (Fastify's `removeAdditional: true`), so `?actor=` reads as no filter and returns more rows than asked for. Known-filter *values* are validated strictly (`?from=lastTuesday` is a 400, never "everything"), and the fix for unknown keys belongs in one place for all routes rather than in the audit route.
 - **The Telegram card's note says Test Connection "sends a test message to the chat"; it does not.** Frontend copy change needed (`TelegramCard.tsx`), or a decision to send one.
 - `apps/frontend/src/features/settings/types.ts` was written as a provisional copy "deleted when the registry lands". It has landed and the shapes match; the panels can import from `@mc/shared/types` now.
+
+---
+
+## 2026-08-13 — Phase 3 memory foundation: the two ports, their fakes, and the embedding stamp
+
+**1906 unit tests** (still DB-free, and now also network-free — no Qdrant, no Ollama) and **720 integration tests**, lint, typecheck and `pnpm build` clean. Foundation only: the ports, adapters, schema and provisioning that ingestion and retrieval will sit on. No ingestion pipeline, no search API, no Memory UI.
+
+**The whole design turns on one failure mode.** Vectors are only comparable within one embedding model. Change the configured model, or its dimension, and every stored vector becomes noise relative to every new one — and the failure is *silent*, because cosine distance is a total order over whatever numbers it is given, so a query against mismatched vectors does not error. It returns a ranked list of confident nonsense, and an operator cannot tell that answer from a good one. That is worse than a crash: a crash is found in seconds by whoever caused it.
+
+So the stamp — model + dimension — is carried in three deliberately redundant places, each catching a different mistake: **Qdrant collection metadata** (`config.metadata`, the authoritative model name), **`config.params.vectors.size`** (which Qdrant enforces itself on every request and which survives even on a server too old to store metadata), and **per `memory_items` row** (so a partial re-index has a work list and a straggler is identifiable). A disagreement **throws** — `EmbeddingStampMismatchError`, naming both values and the two ways out — everywhere except the health probe, which catches it and renders the reddest row on the page. That is the one deliberate inversion of this codebase's "a broken dependency is data" rule, and the reason is exactly why the rule exists elsewhere: Qdrant being down is something an operator can see, and a mismatched index is not.
+
+**`EmbeddingPort` is batch-shaped** (`embed(texts) -> vectors`) because measurement, not taste, says so: against the real Ollama, 32 chunks cost 1009 ms one request each and 210 ms batched — 31.5 vs 6.6 ms/chunk. A per-text signature would make the slow shape the default and the fast one something to remember, so the port does not offer it.
+
+**`VectorStorePort`'s filter is a closed shape**, not Qdrant's DSL passed through. The reason is the fake: a fake that accepts arbitrary Qdrant JSON and honours a subset of it is worse than none, because every test it passes is evidence about the subset. `MemoryFilter` is small, total and implemented identically by both stores, so a retrieval test written against the in-memory fake means something in production — confirmed live, where Qdrant's own cosine matched the fake's arithmetic to four decimal places.
+
+**Both fakes are what the unit tier runs on.** The embedder is deterministic (signed trigram feature-hashing, unit length, no clock, no randomness); the store computes real exhaustive cosine and applies the same shared filter predicate the Qdrant adapter's translation is checked against. `pnpm test` stays green on a clean checkout with nothing installed, and the integration harness installs a *denying* transport for both services by default — a developer machine with a local Qdrant would otherwise pass here and fail on CI.
+
+### Measured against the real services, not assumed
+
+Ollama 0.32.9 + `nomic-embed-text`, Qdrant 1.19.0 (native Windows binary — no Docker):
+
+- **A chat model handed to `/api/embed` fails *slowly*: `501` after 28.6 seconds**, having loaded the full 8B model first, with an error blaming a server flag that has nothing to do with the operator's actual problem. So the adapter gates on `POST /api/show`, which reports `capabilities` from the manifest without loading weights: `nomic-embed-text -> ["embedding"]`, `deepseek-r1:8b -> ["tools","thinking","completion"]`. Live, the same rejection now takes **16 ms** and says `ollama pull nomic-embed-text`.
+- **`model_info.<family>.embedding_length` is not a capability signal** — `deepseek-r1:8b` reports `qwen3.embedding_length: 4096`, which is its hidden size. Only `capabilities` distinguishes them, which is why the dimension the collection is stamped with is **measured** from a real probe vector rather than read off a manifest.
+- **The two Ollama embedding endpoints return differently-scaled vectors**: `/api/embed` L2-normalized (norm 1.000000), the legacy `/api/embeddings` raw (norm ≈ 4.9 for the same text and model). Cosine ranking would survive the difference; "the same text embeds to the same numbers" should not depend on which endpoint answered, so the adapter normalizes on the way out.
+- **Qdrant silently ignores unknown fields in a create body**, so a server too old to store collection metadata answers `200 {"result":true}` and stores nothing. The adapter therefore reads the stamp back rather than trusting the write, and reports `stampPersisted: false` when it did not stick.
+- **`POST /api/embed` vs an unknown route are both 404s** — the former JSON (`model "x" not found`), the latter plain text (`404 page not found`). Only the plain-text form justifies falling back to the legacy endpoint, or one clear "pull the model" would become N slow retries.
+
+### `memory_items` graduated from skeleton to table (migration `0004`)
+
+Tier and scope, provenance (row id *or* vault-relative ref, never both), the chunk text or a pointer to it, its `sha256`, the model and dimension that produced it, and the Qdrant point id. `ck_memory_items_tier_scope` makes a project-tier row with no project unrepresentable — that row is storable without it, invisible to every project-scoped query, and reported missing by nothing. Two partial unique indexes key on `(source, chunk, embedding_model)`, so a re-index is idempotent *and* a second model's rows coexist with the first's, which is what lets the old vectors keep answering while the new set is built. `agent` stays in the tier CHECK with no producer until Phase 4.
+
+### Contract problems raised
+
+- **`memory_items.qdrant_point_id` names a driver in a schema whose store is behind a port.** Kept verbatim because TDS 03 §6 names it and inventing a parallel name is what F9.5 forbids, but it is a vocabulary debt to settle if a second driver ever appears.
+- **Ollama silently truncates over-long input.** A 108 000-character string returned a 200 and a normal 768-dimensional vector against a 2048-token context — no warning, no error, and a vector representing only the first fraction of the text. Chunking must bound input by tokens; the ingestion follow-up cannot rely on the runtime complaining.
+- **Test Connection still answers `INTEGRATION_NOT_CONFIGURED` for Qdrant and Ollama**, and `VectorCards.tsx` still tells the operator that "semantic memory arrives in Phase 3" and that nothing is indexed. Both are now understatements: the clients exist and the health rows are real. Deliberately left — Test Connection was not in this task's scope — but the copy and the two executors should land together.
+- **`TDS 04 §7.5`'s Services table lists Qdrant/Ollama as "Phase 3+ placeholder".** That row is now real; the TDS text is stale.

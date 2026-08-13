@@ -103,11 +103,71 @@ describe('service list and shape (§7.5)', () => {
     }
   });
 
-  it('reports Qdrant and Ollama as disabled until Phase 3+', async () => {
+  it('reports Qdrant and Ollama as disabled when the memory probes are not wired', async () => {
     const model = await collect();
 
     expect(rowOf(model, 'qdrant').status).toBe('disabled');
     expect(rowOf(model, 'ollama').status).toBe('disabled');
+  });
+});
+
+/**
+ * The Phase 3 memory rows.
+ *
+ * `memory/health.ts` owns the *classification* (down vs degraded vs disabled — it needs the
+ * memory layer's vocabulary to tell "the model is a chat model" from "the collection's stamp
+ * disagrees"). What this file still owns, and what these tests cover, is the same thing it owns
+ * for every other dependency: the bound, and the guarantee that a probe which throws or stalls
+ * becomes a row rather than taking out the page.
+ */
+describe('the memory rows (Phase 3)', () => {
+  it('renders whatever the memory probes classified', async () => {
+    const model = await collect({
+      qdrant: async () => ({
+        status: 'healthy',
+        detail: '42 points, stamped nomic-embed-text (768d)',
+        meta: { collection: 'mc_memory', pointCount: 42 },
+      }),
+      ollama: async () => ({
+        status: 'down',
+        detail: 'Ollama has no model named "nomic-embed-text"',
+        meta: { reason: 'model_missing' },
+      }),
+    });
+
+    expect(rowOf(model, 'qdrant')).toMatchObject({
+      status: 'healthy',
+      label: 'Qdrant',
+      detail: '42 points, stamped nomic-embed-text (768d)',
+      meta: { pointCount: 42 },
+    });
+    expect(rowOf(model, 'ollama')).toMatchObject({
+      status: 'down',
+      meta: { reason: 'model_missing' },
+    });
+  });
+
+  it('turns a memory probe that throws into a row, not a failed request', async () => {
+    const model = await collect({
+      qdrant: () => Promise.reject(new Error('the probe itself is broken')),
+    });
+
+    // `unknown`, not `down`: what failed is the *check*, and blaming Qdrant for a bug in this
+    // process would send the operator to the wrong machine.
+    expect(rowOf(model, 'qdrant')).toMatchObject({ status: 'unknown' });
+    expect(rowOf(model, 'qdrant').detail).toContain('the probe itself is broken');
+    // And the rest of the page is unaffected.
+    expect(rowOf(model, 'postgresql').status).toBe('healthy');
+  });
+
+  it('bounds a memory probe that never settles', async () => {
+    const model = await collect({
+      qdrant: () => new Promise(() => undefined),
+    });
+
+    expect(rowOf(model, 'qdrant')).toMatchObject({ status: 'unknown' });
+    expect(rowOf(model, 'qdrant').detail).toContain('timed out');
+    expect(rowOf(model, 'backend').status).toBe('healthy');
   });
 
   it('self-reports the Backend with uptime, WS clients and session slots (TDS 02 §7.1)', async () => {

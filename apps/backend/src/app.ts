@@ -32,6 +32,12 @@ import {
   type ServiceHealthService,
 } from './health/index.js';
 import { generateRequestId, registerHttpConventions } from './http/index.js';
+import {
+  createMemoryModule,
+  type MemoryClients,
+  type MemoryConfig,
+  type MemoryModule,
+} from './memory/index.js';
 import { type NotificationsModule, registerNotifications } from './notifications/index.js';
 import { type ObsidianModule, registerObsidian } from './obsidian/index.js';
 import { registerProjects } from './projects/index.js';
@@ -47,7 +53,7 @@ import {
 } from './sessions/index.js';
 import { type ObservedIngestModule, registerObservedIngest } from './sessions/observed/index.js';
 import { DEFAULT_MAX_CONCURRENT_SESSIONS } from './settings/claude-code.js';
-import { registerSettings, type SettingsModule } from './settings/index.js';
+import { registerSettings, SecretVault, type SettingsModule } from './settings/index.js';
 import type { ExecutorDeps } from './settings/test-connection/executors.js';
 import { registerSpend } from './spend/index.js';
 import {
@@ -159,6 +165,18 @@ export interface BuildAppOptions {
    * to prove the scan stops rather than waiting for a real 15-second deadline.
    */
   readonly obsidianScanBounds?: ScanBounds | undefined;
+  /**
+   * The Phase 3 memory layer's two outbound edges (Ollama and Qdrant), as one factory.
+   *
+   * Supplying it is how a test exercises the Services health rows and the startup verification
+   * with `createFakeEmbedder` / `createInMemoryVectorStore` instead of two locally-installed
+   * services. The default builds the real, bounded adapters — and they are only ever *used*
+   * once an embedding model is configured, so an install that has never opened the Memory
+   * settings makes no outbound call at all.
+   */
+  readonly memoryClients?: ((config: MemoryConfig) => MemoryClients) | undefined;
+  /** Shrink the memory health probes' bound (tests only). */
+  readonly memoryProbeTimeoutMs?: number | undefined;
 }
 
 /** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
@@ -199,6 +217,12 @@ export interface BuiltApp {
   readonly adrs: AdrModule;
   /** Obsidian sync runs, the dry-run preview, and nothing that writes a vault (TDS 04 §10). */
   readonly obsidian: ObsidianModule;
+  /**
+   * Phase 3 memory foundation (PRD §6): the Services health probes for Qdrant and Ollama, and
+   * the startup collection verification. **No routes** — ingestion, search and the Memory UI
+   * are follow-ups.
+   */
+  readonly memory: MemoryModule;
 }
 
 /** Build the app and return it together with the services tests need to reach into. */
@@ -327,6 +351,23 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
   // relayed `sync.completed` is indistinguishable from an in-process one everywhere downstream.
   const eventRelay = buildEventRelay(app, options, bus, hub);
 
+  // The one vault in this process. Built here rather than inside `registerSettings` because the
+  // memory layer below needs to read `integrations.qdrant.apiKey`, and it is wired into the
+  // health probes *before* settings registration happens — see `registerSettings`'s `vault`.
+  const vault = new SecretVault({ encryptionKey: options.config?.encryptionKey ?? null });
+
+  // Phase 3 memory (PRD §6). Registers no routes: it exists here so the Services panel can stop
+  // claiming Qdrant and Ollama are Phase 3 placeholders once an operator has configured them,
+  // and so `main.ts` can verify the collection stamp at startup.
+  const memory = createMemoryModule({
+    db: options.db,
+    vault,
+    ...(options.memoryClients === undefined ? {} : { build: options.memoryClients }),
+    ...(options.memoryProbeTimeoutMs === undefined
+      ? {}
+      : { probeTimeoutMs: options.memoryProbeTimeoutMs }),
+  });
+
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
   // schedule (§7.7), spend (§7.8) and notifications (§8). Health is registered last because it
   // self-reports the hub's connection count and the registry's slot usage (TDS 02 §7.1), and
@@ -335,6 +376,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     probes: createServiceHealthProbes({
       db: options.db,
       queue,
+      memory: memory.probes,
       backend: () => {
         const report = buildHealthReport();
         return {
@@ -385,6 +427,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     db: options.db,
     outbox,
     config: options.config,
+    vault,
     testConnectionDeps: options.testConnectionDeps,
   });
 
@@ -450,6 +493,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     adrs,
     obsidian,
     search,
+    memory,
   };
 }
 

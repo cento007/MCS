@@ -43,6 +43,16 @@ export interface RegisterSettingsOptions {
    * stated reason rather than silently storing nothing.
    */
   readonly config?: AppConfig | undefined;
+  /**
+   * The vault, when the caller already built one.
+   *
+   * Phase 3's memory layer needs to read `integrations.qdrant.apiKey` at a point in `app.ts`
+   * that is *earlier* than settings registration (the Services health probes are registered
+   * before it), and two vaults over one key would be two places to change a key-rotation
+   * policy. `app.ts` therefore builds it once and hands it here; omitting it keeps the
+   * self-constructing behaviour every existing caller relies on.
+   */
+  readonly vault?: SecretVault | undefined;
   /** Injected by unit tests to stub the network, filesystem and child-process edges. */
   readonly testConnectionDeps?: ExecutorDeps | undefined;
   readonly onSecretUnreadable?: ((error: SecretUnreadableError) => void) | undefined;
@@ -58,7 +68,8 @@ export function registerSettings(
   app: FastifyInstance,
   options: RegisterSettingsOptions,
 ): SettingsModule {
-  const vault = new SecretVault({ encryptionKey: options.config?.encryptionKey ?? null });
+  const vault =
+    options.vault ?? new SecretVault({ encryptionKey: options.config?.encryptionKey ?? null });
 
   const settings = new SettingsService({ db: options.db, outbox: options.outbox, vault });
 

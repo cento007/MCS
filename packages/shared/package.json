@@ -20,7 +20,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "//test:int": "Live Ollama/Qdrant checks (memory/live.int.test.ts). Needs no database; skips any service that is not listening.",
+    "test:int": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
