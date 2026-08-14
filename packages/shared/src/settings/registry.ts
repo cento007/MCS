@@ -631,6 +631,29 @@ export const QDRANT_KEYS = {
   }),
 } as const;
 
+/**
+ * Ollama has **two** keys, and the two it lost are the point.
+ *
+ * `host` and `port` are read: `memory/settings.ts` points the embedder at them, so every semantic
+ * memory vector in this install came through them. They are live configuration.
+ *
+ * `enabled` and `defaultModel` were **not** read — by anything, ever. They described Ollama as an
+ * *agent runtime* (PRD §5.4), and this build has no such thing: `AGENT_RUNTIMES` has one member,
+ * `ManagedRuntime` always drives the Claude Agent SDK, and Phase 4 slice 1 declined
+ * `agents.defaultRuntime` for exactly that reason. `integrations.ollama.enabled` became the
+ * standing example of a setting nothing reads — cited in `memory/policy.ts`,
+ * `memory/retrieval.ts`, `entities/agent.ts`, `entities/agent-team.ts`, `workflows/handoff.ts` and
+ * the Agents settings panel — and an example is not a consumer.
+ *
+ * They were withdrawn rather than wired because there is nothing to wire them to. The honest
+ * alternative would have been to redefine `enabled` as "is Ollama in use at all", and that is
+ * already answered, by `integrations.qdrant.embeddingModel`: a second switch for one fact is the
+ * defect this key was the example of, in a fresh costume.
+ *
+ * A multi-runtime slice needs both back, and re-adding them is two lines — plus a widening of
+ * `AGENT_RUNTIMES` and of `ck_sessions_runtime`, which is the work that makes them mean something.
+ * The rows an operator had already written are removed by migration `0011`; see its comment.
+ */
 export const OLLAMA_KEYS = {
   host: defineString('integrations.ollama.host', {
     default: '127.0.0.1',
@@ -638,13 +661,6 @@ export const OLLAMA_KEYS = {
     phase: 3,
   }),
   port: defineInteger('integrations.ollama.port', { default: 11434, min: 1, max: 65535, phase: 3 }),
-  defaultModel: defineString('integrations.ollama.defaultModel', {
-    default: '',
-    maxLength: MAX_MODEL_NAME_LENGTH,
-    phase: 3,
-    allowEmpty: true,
-  }),
-  enabled: defineBoolean('integrations.ollama.enabled', { default: false, phase: 3 }),
 } as const;
 
 // ------------------------------------------------------------------------------ notifications

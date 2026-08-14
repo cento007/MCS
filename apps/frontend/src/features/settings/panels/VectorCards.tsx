@@ -1,7 +1,7 @@
 import { PhaseBadge } from '../../../components/PhasePlaceholder.js';
 import { endpoints } from '../../../lib/api/index.js';
 import type { Draft } from '../../../lib/forms/dirty.js';
-import { NumberControl, SettingsField, TextControl, ToggleControl } from '../components/Field.js';
+import { NumberControl, SettingsField, TextControl } from '../components/Field.js';
 import { PanelStatus, SettingsPanel } from '../components/Panel.js';
 import { SecretField } from '../components/SecretField.js';
 import { TestConnection } from '../components/TestConnection.js';
@@ -32,9 +32,14 @@ import { numberOr, useIntegrationForm } from './integration-form.js';
  *
  * The `P3` badge **stays** on both cards, for a narrower reason than before: the connection is
  * live, but the product surface these settings serve — retrieval, the Memory screen, memory in
- * a session — is Phase 3 work still landing. On the Ollama card it also covers the `enabled`
- * toggle, which offers Ollama as an *agent runtime* and is consumed by nothing in this build.
- * The badge now means "the feature is still arriving", not "this form does nothing".
+ * a session — is Phase 3 work still landing. The badge means "the feature is still arriving", not
+ * "this form does nothing".
+ *
+ * The Ollama card used to carry two more fields, `enabled` and `defaultModel`, both describing
+ * Ollama as an *agent runtime* that nothing in this build can select. They were withdrawn from the
+ * key registry rather than kept behind a caveat — the toggle's own description had to say that
+ * nothing read it, which is a strange thing for a switch to admit and a good reason for it not to
+ * exist. What is left is host and port, and both are read on every embedding call.
  */
 
 function integrationNote(text: string) {
@@ -178,19 +183,15 @@ export function QdrantCard() {
 
 function ollamaDraft(document: OllamaSettings): Draft {
   return {
-    enabled: document.enabled,
     host: document.host,
     port: document.port,
-    defaultModel: document.defaultModel,
   };
 }
 
 function ollamaBody({ draft }: { draft: Draft }): unknown {
   return {
-    enabled: draft['enabled'] === true,
     host: String(draft['host'] ?? ''),
     port: numberOr(draft['port'], 11434),
-    defaultModel: String(draft['defaultModel'] ?? ''),
   };
 }
 
@@ -212,17 +213,17 @@ export function OllamaCard() {
       status={
         <span className="flex items-center gap-2">
           {/*
-            Deliberately narrow wording. The toggle governs Ollama as an *agent runtime* and
-            nothing else; embeddings go through this host whenever an embedding model is
-            configured, whatever the toggle says. A chip reading "Disabled" beside a service
-            Mission Control is actively embedding through would be the same class of untruth
-            this card is being corrected for.
+            No status chip, because this card has no switch left to report.
+
+            It used to draw "Agent runtime on/off" from `integrations.ollama.enabled` — a toggle
+            whose own field description had to admit that nothing read it. Both it and
+            `defaultModel` described Ollama as an *agent* runtime, which no part of this build can
+            select, and both were withdrawn from the key registry rather than kept as furniture.
+            What remains is host and port, and those are not a mode: embeddings go through them
+            whenever an embedding model is configured on the Qdrant card. Whether Ollama is
+            actually answering is a live fact, and Test Connection and Settings → Services are
+            where a live fact belongs.
           */}
-          {form.value('enabled') === true ? (
-            <PanelStatus glyph="●" label="Agent runtime on" colorVar="--color-success" />
-          ) : (
-            <PanelStatus glyph="○" label="Agent runtime off" />
-          )}
           <PhaseBadge phase={3} />
         </span>
       }
@@ -235,22 +236,6 @@ export function OllamaCard() {
           'it fails, so the capability is read from the model manifest instead. On success the ' +
           'result reports the dimension — the number that has to match the collection.',
       )}
-
-      <SettingsField
-        label="Enabled"
-        changed={form.isChanged('enabled')}
-        description="Agent runtimes are a later phase, and nothing reads this flag yet. Embeddings do not depend on it: they use the host and port below whenever an embedding model is configured."
-      >
-        {({ id }) => (
-          <ToggleControl
-            id={id}
-            label="Offer Ollama as an agent runtime"
-            checked={form.value('enabled') === true}
-            disabled={form.disabled}
-            onChange={(next) => form.set('enabled', next)}
-          />
-        )}
-      </SettingsField>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <SettingsField label="Host" changed={form.isChanged('host')}>
@@ -279,23 +264,6 @@ export function OllamaCard() {
           )}
         </SettingsField>
       </div>
-
-      <SettingsField
-        label="Default model"
-        changed={form.isChanged('defaultModel')}
-        description="The model offered to agents that run on Ollama — not the embedding model, which is set on the Qdrant card and is what Test Connection checks."
-      >
-        {({ id }) => (
-          <TextControl
-            id={id}
-            mono
-            value={String(form.value('defaultModel') ?? '')}
-            disabled={form.disabled}
-            placeholder="llama3.1"
-            onChange={(next) => form.set('defaultModel', next)}
-          />
-        )}
-      </SettingsField>
     </SettingsPanel>
   );
 }

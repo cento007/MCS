@@ -68,8 +68,9 @@ import type { MemoryRuntime } from './runtime.js';
  * only that, an operator who turned `commit` off would keep getting commit chunks back for as
  * long as the old rows existed — a switch that reads "off" while its results keep arriving,
  * which is the failure mode this codebase has been bitten by before
- * (`integrations.ollama.enabled`). So the same predicate gates retrieval: a disabled source is
- * intersected out of the filter before the query runs.
+ * (`integrations.ollama.enabled`, since withdrawn for gating nothing at all). So the same
+ * predicate gates retrieval: a disabled source is intersected out of the filter before the query
+ * runs.
  *
  * Rows are **not** deleted when a toggle goes off (see `indexing.ts` for why), so re-enabling
  * one restores its results immediately and costs no embedding.

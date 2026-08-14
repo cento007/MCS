@@ -3,6 +3,12 @@ import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  listEnvelopeSchema,
+  noContentSchema,
+} from '../http/response-schema.js';
+import { repositorySchema, repositoryStatusSchema } from './response-schemas.js';
 import type { RepositoryService } from './service.js';
 import { MAX_BRANCH_LENGTH, MAX_REPOSITORY_NAME_LENGTH } from './validation.js';
 
@@ -87,6 +93,9 @@ interface UpdateBody {
   defaultBranch?: string;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const repositoryResponse = dataEnvelopeSchema(repositorySchema);
+
 export interface RepositoryRoutesOptions {
   readonly repositories: RepositoryService;
 }
@@ -99,7 +108,12 @@ export function registerRepositoryRoutes(
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/repositories',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(repositorySchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       // F5.3's default ordering key is the UUIDv7 `id`, ascending; §5.1 states no exception.
@@ -118,7 +132,7 @@ export function registerRepositoryRoutes(
 
   app.post<{ Body: RegisterBody }>(
     '/api/v1/repositories',
-    { schema: { body: registerBodySchema } },
+    { schema: { body: registerBodySchema, response: { 201: repositoryResponse } } },
     async (request, reply) => {
       const created = await repositories.register(
         requirePrincipal(request),
@@ -140,13 +154,19 @@ export function registerRepositoryRoutes(
 
   app.get<{ Params: RepositoryIdParams }>(
     '/api/v1/repositories/:id',
-    { schema: { params: repositoryIdParamsSchema } },
+    { schema: { params: repositoryIdParamsSchema, response: { 200: repositoryResponse } } },
     async (request) => dataEnvelope(await repositories.get(request.params.id)),
   );
 
   app.patch<{ Params: RepositoryIdParams; Body: UpdateBody }>(
     '/api/v1/repositories/:id',
-    { schema: { params: repositoryIdParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: repositoryIdParamsSchema,
+        body: updateBodySchema,
+        response: { 200: repositoryResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await repositories.update(
@@ -166,7 +186,7 @@ export function registerRepositoryRoutes(
 
   app.delete<{ Params: RepositoryIdParams }>(
     '/api/v1/repositories/:id',
-    { schema: { params: repositoryIdParamsSchema } },
+    { schema: { params: repositoryIdParamsSchema, response: { 204: noContentSchema } } },
     async (request, reply) => {
       await repositories.remove(
         requirePrincipal(request),
@@ -180,7 +200,12 @@ export function registerRepositoryRoutes(
 
   app.get<{ Params: RepositoryIdParams }>(
     '/api/v1/repositories/:id/status',
-    { schema: { params: repositoryIdParamsSchema } },
+    {
+      schema: {
+        params: repositoryIdParamsSchema,
+        response: { 200: dataEnvelopeSchema(repositoryStatusSchema) },
+      },
+    },
     // §1.2: a bounded read model returns `{ data: … }` with no `meta`.
     async (request) => dataEnvelope(await repositories.status(request.params.id)),
   );

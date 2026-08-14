@@ -101,7 +101,7 @@ export function useStartWorkflowRun(): UseMutationResult<unknown, ApiError, Star
 }
 
 /** What stopping did to the Session that was in flight — the Backend's word, not this client's. */
-export type StoppedSessionOutcome = 'ended' | 'left_unstarted' | 'already_terminal';
+export type StoppedSessionOutcome = 'ended' | 'cancelled' | 'already_terminal';
 
 export interface StopRunResult {
   readonly run: unknown;
@@ -120,8 +120,8 @@ export interface StopRunResult {
  * **It reads `meta`, not just `data`.** The route answers
  * `{ data: run, meta: { stoppedSession: { sessionId, outcome } } }`, and `outcome` is the answer to
  * the only question the operator actually asked: *did the Claude Code session stop?* `ended` means
- * the runtime was disposed; `left_unstarted` means the launch was still queued, so there was no
- * process to end and there never will be; `already_terminal` means it had finished on its own
+ * the runtime was disposed; `cancelled` means the launch was still queued and has been revoked, so
+ * no process ever started and none now will; `already_terminal` means it had finished on its own
  * first. This is reported verbatim in the toast — `apiSend` would have thrown the `meta` away.
  *
  * **It invalidates the Sessions group.** Whatever stopping did to those Sessions, the next render
@@ -186,8 +186,8 @@ export function stopDetail(result: StopRunResult): string {
   switch (result.stoppedSession.outcome) {
     case 'ended':
       return 'The step’s session was ended and its runtime disposed.';
-    case 'left_unstarted':
-      return 'The step’s session had not started yet — its launch was still queued, so there was no process to end and it will never be prompted.';
+    case 'cancelled':
+      return 'The step’s session had not started yet — its queued launch was cancelled, so no Claude Code process was ever started and none will be.';
     case 'already_terminal':
       return 'The step’s session had already finished on its own.';
     default:

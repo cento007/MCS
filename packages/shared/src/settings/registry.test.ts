@@ -466,8 +466,6 @@ const INTEGRATION_MANIFEST = {
   ollama: {
     host: true,
     port: true,
-    defaultModel: true,
-    enabled: true,
   } satisfies Record<keyof OllamaSettings, true>,
 } as const satisfies Record<IntegrationSlug, Record<string, true>>;
 

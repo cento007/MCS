@@ -624,6 +624,8 @@ export interface SeedSessionInput {
   readonly lineageKind?: 'resumed' | 'cloned';
   readonly startedAt?: Date;
   readonly agentId?: string;
+  /** TDS 03 §3.9's vocabulary — `spawn_error`, `backend_restart`, `cancelled`, … */
+  readonly failureReason?: string;
 }
 
 /**
@@ -654,6 +656,7 @@ export async function seedSession(input: SeedSessionInput): Promise<string> {
       ...(input.lineageKind === undefined ? {} : { lineageKind: input.lineageKind }),
       ...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
       ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+      ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
     });
   return id;
 }

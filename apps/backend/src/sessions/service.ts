@@ -70,6 +70,19 @@ export interface RequestContext {
  */
 export type SessionActor = Pick<Principal, 'userId'>;
 
+/**
+ * `sessions.failure_reason` for a Session the operator abandoned before it launched
+ * (`SessionService.cancel`).
+ *
+ * Part of the TDS 03 §3.9 failure-reason vocabulary, alongside `spawn_error`, `process_crash`,
+ * `backend_restart`, `resume_target_lost` and `ingest_failure`. It sits beside
+ * `BACKEND_RESTART_REASON` (`managed/recovery.ts`) for the same reason that one exists: `failed`
+ * is F7's only exit
+ * from a Session that never completed its work, and the reason is what distinguishes an outcome
+ * the operator asked for from one they need to be told about.
+ */
+export const CANCELLED_REASON = 'cancelled';
+
 export interface CreateSessionInput {
   readonly projectId: string;
   readonly workingDirectory: string;
@@ -328,6 +341,68 @@ export class SessionService {
 
     await this.#audit(principal, id, 'session.started', { launch }, ctx);
     return { session: await this.#serialize(await this.#require(id)), launch };
+  }
+
+  /**
+   * **Cancel a Session that has not launched** — `created -> failed`, reason
+   * {@link CANCELLED_REASON}, trigger `user`.
+   *
+   * This is the missing exit from `created`, and it exists because there was **no way to cancel a
+   * queued launch**. `POST /sessions/{id}/start` at capacity enqueues a durable `session.launch`
+   * job and leaves the Session in `created` (§6.2.1); until this method existed, nothing could
+   * revoke that job. A caller that had decided the Session must not run — a stopped workflow run
+   * (PRD §5.6) is the first — could only wait for a slot to free, watch a Claude Code process
+   * spawn, and end it by hand. "Stop" that leaves a process starting is not a stop, and it has a
+   * bill attached.
+   *
+   * ## The guarantee, and why it is structural
+   *
+   * `sessions.state` has exactly one writer (`state-machine.ts`), it takes `FOR UPDATE` on the
+   * row, and it validates against F7's table. F7 has **no edge out of `failed` into `running`**.
+   * So once this commits, no path can launch the Session — not the queued job, not a redelivery of
+   * it, not a concurrent `POST /start`. The launch consumer's own state check
+   * (`manager.ts#consumeLaunchJob`) is what stops it *cheaply*, before a slot is taken; it is not
+   * what makes it *true*. That distinction is the point: pg-boss is at-least-once and a job may
+   * already be in flight, so a guarantee that depended on the check would be best-effort.
+   *
+   * ## Why `failed` and not a seventh state
+   *
+   * F7 is the Foundation Contract (F7, `entities/session-state.ts`) and `created` has exactly two
+   * exits: `running` and `failed`. Adding `cancelled` would amend the contract, migrate two CHECK
+   * constraints and touch every consumer of `SessionState` — for a distinction `failure_reason`
+   * already carries. It carries it for `backend_restart` too, which is likewise not a failure of
+   * the work: both mean "this Session is over and never did the job", and the reason column is
+   * what says which. The notification producer reads that reason and stays silent for this one
+   * (`notifications/produce.ts`) — an operator who cancelled a Session does not need to be told it
+   * failed.
+   *
+   * Legal from `created` only. `paused` needs nothing like it: `end` already moves a paused
+   * Session to `completed`, which invalidates a queued in-place resume by the same mechanism.
+   */
+  async cancel(principal: SessionActor, id: string, ctx: RequestContext): Promise<SessionResource> {
+    const session = await this.#require(id);
+    assertApplicable(session, 'cancel');
+
+    if (session.state !== 'created') {
+      throw new ApiError(
+        'INVALID_STATE_TRANSITION',
+        `Only a session that has not launched can be cancelled; this one is '${session.state}'`,
+        { from: session.state, to: 'failed', action: 'cancel' },
+      );
+    }
+
+    const result = await this.#stateMachine.transition({
+      sessionId: id,
+      to: 'failed',
+      // The *user* asked. `backend_restart` is the `system` case, and conflating the two would
+      // make the timeline unable to answer "who stopped this".
+      trigger: 'user',
+      action: 'cancel',
+      reason: CANCELLED_REASON,
+    });
+
+    await this.#audit(principal, id, 'session.cancelled', { from: result.from }, ctx);
+    return this.#serialize(result.session);
   }
 
   /** `POST /api/v1/sessions/{id}/pause` — cold pause: the runtime is disposed and the slot freed. */

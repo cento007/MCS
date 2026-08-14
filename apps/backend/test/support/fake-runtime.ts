@@ -30,6 +30,14 @@ export interface FakeRuntime extends SessionRuntimePort {
   failNextLaunch(): void;
   /** Make every launch fail until cleared. */
   failAllLaunches(fail: boolean): void;
+  /**
+   * Run something *inside* `launch`, after the request is recorded and before it resolves.
+   *
+   * The seam for races that are otherwise unobservable: the window between a launch consumer's
+   * last read of `sessions.state` and the F7 transition that follows the spawn. A test that wants
+   * to cancel a Session "while the process is starting" has nowhere else to stand.
+   */
+  duringLaunch(handler: ((request: LaunchRequest) => Promise<void> | void) | null): void;
   /** Pretend an assistant turn is streaming for this Session (§6.3.1). */
   setTurnInFlight(sessionId: string, inFlight: boolean): void;
   /** The Message id `interrupt` will report as the retained partial turn. */
@@ -44,6 +52,7 @@ export function createFakeRuntime(options: FakeRuntimeOptions = {}): FakeRuntime
   let failOnce = options.failLaunch === true;
   let failAlways = false;
   let interruptMessageId: string | null = null;
+  let during: ((request: LaunchRequest) => Promise<void> | void) | null = null;
 
   return {
     launches,
@@ -54,6 +63,9 @@ export function createFakeRuntime(options: FakeRuntimeOptions = {}): FakeRuntime
     },
     failAllLaunches(fail) {
       failAlways = fail;
+    },
+    duringLaunch(handler) {
+      during = handler;
     },
     setTurnInFlight(sessionId, inFlight) {
       if (inFlight) turns.add(sessionId);
@@ -72,6 +84,10 @@ export function createFakeRuntime(options: FakeRuntimeOptions = {}): FakeRuntime
           sessionId: request.sessionId,
         });
       }
+
+      // A real spawn takes time, and things happen during it. Fires once per launch, and after
+      // `launches` is recorded so the handler can see that the spawn did happen.
+      if (during !== null) await during(request);
 
       return {
         // The runtime issues its own native id; ours is the UUIDv7 primary key (F1.5/F4.2).

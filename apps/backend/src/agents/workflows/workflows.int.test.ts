@@ -6,6 +6,7 @@ import {
   createTestApp,
   seedAgent,
   seedProject,
+  seedSession,
   seedUser,
   type TestApp,
   testDatabase,
@@ -31,8 +32,9 @@ import type { WorkflowPromptPort } from './ports.js';
  *     this; it waits for rows the runner wrote.
  *  3. **A failure halts and a halt is recoverable.** A crashed step stops the chain with a
  *     reason, and Resume re-runs that position in a *new* Session as a second attempt.
- *  4. **Stop stops the spend.** The run goes terminal *and* the in-flight Session is ended, and
- *     the `session.completed` that ending produces advances nothing.
+ *  4. **Stop stops the spend.** The run goes terminal *and* the in-flight Session is closed —
+ *     ended when it is running, **cancelled when its launch is still queued** — and the
+ *     `session.completed`/`session.failed` that produces advances nothing.
  */
 
 let queue: PgBossQueue;
@@ -958,6 +960,69 @@ describe('stop is a kill switch', () => {
     expect(
       stopped.json<{ meta: { stoppedSession: { outcome: string } } }>().meta.stoppedSession.outcome,
     ).toBe('already_terminal');
+  });
+
+  /**
+   * **The hole this test was written for: "stopped" used to mean "will start shortly".**
+   *
+   * A step whose Session is still `created` is a launch the concurrency semaphore has not reached.
+   * Stop reported it as `left_unstarted` and left it exactly where it was — with a live
+   * `session.launch` job behind it. The moment a slot freed, a run the operator had stopped spawned
+   * Claude Code, took a `maxConcurrentSessions` slot and held it until someone pressed End by hand.
+   *
+   * The test therefore does the one thing that makes that observable: it **frees the slot after the
+   * stop** and then asserts the runtime was never asked to launch. Against the old code the step's
+   * Session reaches `running` here and `runtime.launches` grows.
+   */
+  it('cancels a step whose launch was still queued, so freeing a slot spawns nothing', async () => {
+    // One slot, already taken: whatever the run creates next has to queue behind it.
+    app.sessions.registry.setMaxConcurrentSessions(1);
+    await app.sessions.registry.start();
+
+    const decoy = await seedSession({ projectId, userId, state: 'created' });
+    await app.sessions.registry.launch({
+      session: (await sessionRow(decoy)) as never,
+      action: 'start',
+      requestedBy: userId,
+    });
+    expect(app.sessions.registry.slotsInUse).toBe(1);
+
+    const workflowId = await seedChain();
+    const run = (await startRun(workflowId)).json<{ data: { id: string } }>().data;
+
+    await waitFor(async () => (await runStepRows(run.id)).length === 1, 'step 1');
+    const [first] = await runStepRows(run.id);
+    const stepSessionId = first?.sessionId ?? '';
+    const launchesBefore = runtime.launches.length;
+
+    // The Session exists and has *not* started — its launch is a durable job, not a process.
+    expect((await sessionRow(stepSessionId))?.state).toBe('created');
+
+    const stopped = await post(`/api/v1/agent-workflow-runs/${run.id}/stop`);
+    expect(stopped.statusCode).toBe(200);
+    expect(
+      stopped.json<{ meta: { stoppedSession: { sessionId: string; outcome: string } } }>().meta
+        .stoppedSession,
+    ).toEqual({ sessionId: stepSessionId, outcome: 'cancelled' });
+
+    // F7's only exit from `created`, with the reason that says the operator asked for it.
+    const cancelled = await sessionRow(stepSessionId);
+    expect(cancelled?.state).toBe('failed');
+    expect(cancelled?.failureReason).toBe('cancelled');
+
+    // Free the slot. This is the moment the old behaviour spent money.
+    await post(`/api/v1/sessions/${decoy}/end`);
+    await waitFor(async () => app.sessions.registry.slotsInUse === 0, 'the slot to come back');
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+
+    expect(runtime.launches).toHaveLength(launchesBefore);
+    expect((await sessionRow(stepSessionId))?.state).toBe('failed');
+    expect(app.sessions.registry.slotsInUse).toBe(0);
+
+    // And the `session.failed` the cancel emitted advanced nothing: the run is stopped, so the
+    // chain stays at one attempt.
+    expect(await runStepRows(run.id)).toHaveLength(1);
+    expect((await runRow(run.id))?.state).toBe('stopped');
   });
 
   it('frees the project for a new run', async () => {

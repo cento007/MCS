@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
 import { decodePullRequestCursor, encodePullRequestCursor } from './cursors.js';
+import { pullRequestDetailSchema, pullRequestSchema } from './response-schemas.js';
 import { PULL_REQUEST_STATES } from './serialize.js';
 import type { PullRequestService } from './service.js';
 
@@ -77,7 +79,12 @@ export function registerPullRequestRoutes(
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/pull-requests',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(pullRequestSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const rows = await pullRequests.list({
@@ -92,7 +99,13 @@ export function registerPullRequestRoutes(
 
   app.get<{ Params: IdParams; Querystring: NestedListQuery }>(
     '/api/v1/repositories/:id/pull-requests',
-    { schema: { params: idParamsSchema, querystring: nestedListQuerySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        querystring: nestedListQuerySchema,
+        response: { 200: listEnvelopeSchema(pullRequestSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const rows = await pullRequests.listForRepository(request.params.id, {
@@ -106,7 +119,12 @@ export function registerPullRequestRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/pull-requests/:id',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(pullRequestDetailSchema) },
+      },
+    },
     async (request) => dataEnvelope(await pullRequests.get(request.params.id)),
   );
 }

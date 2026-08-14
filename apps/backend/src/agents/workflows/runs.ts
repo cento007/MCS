@@ -78,10 +78,16 @@ import { assertMaxSessions, normalizeRunTask } from './validation.js';
  * chain continues. Nothing is lost: the failed attempt keeps its own row and its own Session.
  *
  * **4. Stop is a kill switch, and it stops the spend.** Stopping marks the run `stopped` **first**,
- * in its own transaction, and then ends the in-flight Session — so the `session.completed` that
- * results finds a run that is no longer `running` and advances nothing. Ending the Session is what
+ * in its own transaction, and then closes the in-flight Session — so the `session.completed` that
+ * results finds a run that is no longer `running` and advances nothing. Closing the Session is what
  * actually disposes the runtime; a "stopped" run whose Claude Code process was still writing to
  * the repository would be a lie with a bill attached.
+ *
+ * That last sentence used to be false in one case. A step whose Session was still `created` —
+ * queued behind the concurrency semaphore — was **left alone**, because F7 has no
+ * `created -> completed` edge and nothing could revoke a queued launch. The run read `stopped`
+ * while its `session.launch` job was still live, so the next free slot spawned Claude Code for a
+ * run nobody was watching. `SessionService.cancel` is the missing exit, and Stop now takes it.
  */
 
 /** The `agent_workflow.advance` job payload. A job name, not an event (TDS 04 §15.2). */
@@ -126,8 +132,16 @@ export interface ListRunsApiInput {
   readonly state?: 'running' | 'completed' | 'halted' | 'stopped' | undefined;
 }
 
-/** What a Stop did to the Session that was in flight. Reported in the response `meta`. */
-export type StoppedSessionOutcome = 'ended' | 'left_unstarted' | 'already_terminal';
+/**
+ * What a Stop did to the Session that was in flight. Reported in the response `meta`.
+ *
+ * `cancelled` replaced `left_unstarted`, and the rename is the fix rather than a description of
+ * it. `left_unstarted` was accurate about what the endpoint did — nothing — and that was the
+ * defect: the Session stayed `created` with a live `session.launch` job behind it, so a "stopped"
+ * run could still spawn a Claude Code process, take a `maxConcurrentSessions` slot and sit there
+ * until someone ended it by hand.
+ */
+export type StoppedSessionOutcome = 'ended' | 'cancelled' | 'already_terminal';
 
 export interface StopResult {
   readonly run: AgentWorkflowRunResource;
@@ -1017,12 +1031,24 @@ export class AgentWorkflowRunService {
   }
 
   /**
-   * End the Session a Stop interrupted — the part that actually stops the spend.
+   * Close the Session a Stop interrupted — the part that actually stops the spend.
    *
-   * Three outcomes, and conflating them would hide the one that matters: a Session still in
-   * `created` is a launch the semaphore never got to, and F7 has no `created -> completed` edge,
-   * so it is **left alone** and the caller is told. It cannot be prompted (the run and the attempt
-   * are both off `running`), so the worst it can do is start and sit idle.
+   * Three outcomes, and conflating them would hide the one that matters:
+   *
+   *  - **`running`/`paused` -> `ended`.** The runtime is disposed; this is the money case.
+   *  - **`created` -> `cancelled`.** The launch never happened, and until this existed that was
+   *    the *dangerous* case rather than the harmless one: the Session sat in `created` behind a
+   *    durable `session.launch` job, so a run the operator had stopped would still spawn Claude
+   *    Code the moment a concurrency slot freed. Cancelling moves it to `failed(cancelled)`, and
+   *    F7 has no way back into `running` from there — so the queued job becomes a no-op by the
+   *    same rule that governs every other launch.
+   *  - **anything terminal -> `already_terminal`.** Nothing to do; saying "ended" would claim an
+   *    action this endpoint did not take.
+   *
+   * The loop runs at most twice, and only for the one interleaving that can defeat a single read:
+   * the queued launch winning the race between the read and the cancel. The second pass sees
+   * `running` and ends it. It is bounded rather than a retry loop because after `end` there is no
+   * third state to chase.
    */
   async #endInFlightSession(
     actor: WorkflowActor,
@@ -1031,23 +1057,35 @@ export class AgentWorkflowRunService {
   ): Promise<StopResult['stoppedSession']> {
     if (step === null) return null;
 
-    const session = await this.#sessions.get(step.sessionId).catch(() => null);
-    if (session === null) return null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const session = await this.#sessions.get(step.sessionId).catch(() => null);
+      if (session === null) return null;
 
-    if (session.state === 'created') {
-      return { sessionId: step.sessionId, outcome: 'left_unstarted' };
-    }
-    if (session.state !== 'running' && session.state !== 'paused') {
-      return { sessionId: step.sessionId, outcome: 'already_terminal' };
+      if (
+        session.state !== 'created' &&
+        session.state !== 'running' &&
+        session.state !== 'paused'
+      ) {
+        return { sessionId: step.sessionId, outcome: 'already_terminal' };
+      }
+
+      const outcome: StoppedSessionOutcome = session.state === 'created' ? 'cancelled' : 'ended';
+
+      try {
+        if (session.state === 'created') await this.#sessions.cancel(actor, step.sessionId, ctx);
+        else await this.#sessions.end(actor, step.sessionId, ctx);
+        return { sessionId: step.sessionId, outcome };
+      } catch (error) {
+        this.#onError?.(error, `stopping workflow session ${step.sessionId}`);
+        // The state moved under us. One more read settles it; a second failure is reported as the
+        // terminal state it almost certainly is rather than retried forever.
+        if (attempt === 0) continue;
+        return { sessionId: step.sessionId, outcome: 'already_terminal' };
+      }
     }
 
-    try {
-      await this.#sessions.end(actor, step.sessionId, ctx);
-      return { sessionId: step.sessionId, outcome: 'ended' };
-    } catch (error) {
-      this.#onError?.(error, `stopping workflow session ${step.sessionId}`);
-      return { sessionId: step.sessionId, outcome: 'already_terminal' };
-    }
+    /* c8 ignore next 2 — the loop returns on every path; this satisfies the compiler. */
+    return { sessionId: step.sessionId, outcome: 'already_terminal' };
   }
 
   async #require(id: string): Promise<AgentWorkflowRunRow> {

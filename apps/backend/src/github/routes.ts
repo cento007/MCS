@@ -1,12 +1,15 @@
 import { createJob, type Db, QUEUE_NAMES, type Queue } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
+import { jobAcceptedSchema } from '../adrs/response-schemas.js';
 import { recordAuditEntry } from '../audit/index.js';
 import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { ApiError, dataEnvelope } from '../http/errors.js';
+import { dataEnvelopeSchema } from '../http/response-schema.js';
 import { findRepositoryById } from '../repositories/store.js';
 import type { SecretVault } from '../settings/secrets.js';
 import type { RepositoryDiscoveryService } from './discover.js';
+import { discoveryReportSchema } from './response-schemas.js';
 import { GITHUB_NOT_CONFIGURED_MESSAGE, readGithubToken } from './settings.js';
 
 /**
@@ -65,14 +68,22 @@ export interface GithubRoutesOptions {
 export function registerGithubRoutes(app: FastifyInstance, options: GithubRoutesOptions): void {
   const { db, queue, vault, discovery } = options;
 
-  app.post('/api/v1/repositories/discover', async (request) =>
+  app.post(
+    '/api/v1/repositories/discover',
+    { schema: { response: { 200: dataEnvelopeSchema(discoveryReportSchema) } } },
     // §1.2: a bounded, computed read model returns `{ data: … }` with no `meta`.
-    dataEnvelope(await discovery.discover(requirePrincipal(request), requestContextOf(request))),
+    async (request) =>
+      dataEnvelope(await discovery.discover(requirePrincipal(request), requestContextOf(request))),
   );
 
   app.post<{ Params: RepositoryIdParams }>(
     '/api/v1/repositories/:id/sync',
-    { schema: { params: repositoryIdParamsSchema } },
+    {
+      schema: {
+        params: repositoryIdParamsSchema,
+        response: { 202: dataEnvelopeSchema(jobAcceptedSchema) },
+      },
+    },
     async (request, reply) => {
       const principal = requirePrincipal(request);
       const ctx = requestContextOf(request);

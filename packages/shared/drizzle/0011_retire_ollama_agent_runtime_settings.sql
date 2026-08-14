@@ -1,0 +1,31 @@
+-- Withdraw the two `integrations.ollama` keys that described an agent runtime this build cannot
+-- select, and delete the rows an operator had already written for them.
+--
+-- `integrations.ollama.enabled` was read by nothing from the day it was declared — it became this
+-- codebase's standing example of an inert setting, cited in six modules — and
+-- `integrations.ollama.defaultModel` was read by nothing either. Both described using Ollama as an
+-- *agent* runtime (PRD §5.4): `AGENT_RUNTIMES` has one member, `ManagedRuntime` always drives the
+-- Claude Agent SDK, and migration 0010 narrowed `ck_sessions_runtime` to match. There was nothing
+-- to gate, and redefining `enabled` as "is Ollama in use" would have been a second answer to a
+-- question `integrations.qdrant.embeddingModel` already answers.
+--
+-- **`host` and `port` are untouched and still read**: the embedder that produces every semantic
+-- memory vector connects through them (`apps/backend/src/memory/settings.ts`).
+--
+-- ## Why the rows are deleted rather than left
+--
+-- Settings documents are built from the key registry, not from the table, so an undeclared row is
+-- invisible: `GET /settings` would not fail, it would simply never mention it again, and
+-- `#applyPlan` only writes keys that are in the plan, so no later save would clear it either. That
+-- is a row nothing can read, nothing can edit and nothing can delete — and one that a future
+-- multi-runtime slice re-declaring `enabled` would silently inherit as a decision made years
+-- earlier. Removing it is the only outcome that leaves the table describing the same world the
+-- registry does.
+--
+-- The operator's stored values at the time of writing were `ollama_enabled = true` and
+-- `ollama_default_model = 'llama3.1'`. Neither had any effect on any behaviour, so deleting them
+-- changes nothing an operator can observe; it is recorded here, and in the progress log, precisely
+-- so that the deletion is not silent.
+DELETE FROM "settings"
+ WHERE "category" = 'integrations'
+   AND "key" IN ('ollama_enabled', 'ollama_default_model');

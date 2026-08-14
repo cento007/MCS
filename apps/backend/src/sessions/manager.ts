@@ -27,6 +27,12 @@ import type { SessionStateMachine } from './state-machine.js';
  * and **no `session.state_changed` is emitted**. There is no 409 for capacity and no
  * client-side retry loop.
  *
+ * **A queued launch is revoked by moving the Session, never by chasing the job.** pg-boss jobs are
+ * at-least-once and may already be in flight, so "delete the job" is a race with no winner. What a
+ * caller does instead is `SessionService.cancel`, which takes the Session out of `created` — and
+ * every launch path here already asks the same question the F7 state machine asks. The consumer
+ * declines cheaply (no slot, no spawn); the state machine declines authoritatively.
+ *
  * Slot accounting is bus-driven rather than call-driven: a slot is held from the moment it is
  * acquired until the Session leaves `running` by *any* path (pause, end, crash, restart
  * recovery), and the only thing that knows a Session left `running` is
@@ -242,7 +248,15 @@ export class ManagedSessionRegistry {
 
   async #consumeLaunchJob(payload: SessionLaunchJob, signal: AbortSignal): Promise<void> {
     // Idempotent consumption (F6.3). A redelivered job whose Session has already launched,
-    // been archived, or moved on in any way finds a state mismatch and does nothing.
+    // been archived, **been cancelled**, or moved on in any way finds a state mismatch and does
+    // nothing.
+    //
+    // This is also the whole of "a queued launch can be revoked", and it costs nothing: a Session
+    // cancelled while queued (`SessionService.cancel`) is `failed`, `failed !== 'created'`, and
+    // the job returns here — *before* a slot is acquired and before a process is spawned. What
+    // makes that a guarantee rather than a check is that it is not the check: see
+    // `#performLaunch`, where F7 refuses the transition under `FOR UPDATE` even if the whole race
+    // falls the other way.
     const session = await findSessionById(this.#db, payload.sessionId);
     if (session === null) return;
     if (session.state !== payload.fromState) return;
@@ -278,6 +292,14 @@ export class ManagedSessionRegistry {
         this.#onLaunchError?.(error, payload.sessionId);
         return;
       }
+      // The Session left its pre-launch state between the re-read above and the transition —
+      // in practice, a cancel that committed inside that window. F7 refused the launch, which is
+      // the correct outcome and **not** a job failure: redelivering would re-spawn and be refused
+      // again, forever. `#performLaunch` has already disposed the runtime it briefly held.
+      if (error instanceof ApiError && error.code === 'INVALID_STATE_TRANSITION') {
+        this.#onLaunchError?.(error, payload.sessionId);
+        return;
+      }
       throw error;
     }
   }
@@ -286,6 +308,13 @@ export class ManagedSessionRegistry {
    * Ask the runtime to spawn/attach, then record F7's "system confirms spawn" as
    * `created -> running` (or the in-place `paused -> running`). A spawn failure transitions the
    * Session to `failed` with `session.failed` and re-raises `RUNTIME_UNAVAILABLE` (§6.3).
+   *
+   * **The transition is the gate, and that is deliberate.** It locks the row `FOR UPDATE` and
+   * validates against F7, so a Session that was cancelled after the caller's last read cannot
+   * reach `running` however the race falls — the guarantee is the state machine's, not this
+   * method's ordering. The one thing this method owes such a race is cleanup: a process was
+   * spawned a moment ago for a launch that is now refused, and it must not be left holding a
+   * working tree. So the refusal disposes it before re-raising.
    */
   async #performLaunch(intent: LaunchIntent): Promise<void> {
     const session = intent.session;
@@ -309,23 +338,41 @@ export class ManagedSessionRegistry {
       throw asRuntimeUnavailable(error, session.id);
     }
 
-    await this.#stateMachine.transition({
-      sessionId: session.id,
-      to: 'running',
-      // F7: the user asked, the *system* confirms the spawn. The row records the user action
-      // that started it, which is what the timeline is for.
-      trigger: 'user',
-      action: intent.action,
-      runtime: {
-        runtimeSessionId: outcome.runtimeSessionId,
-        ...(outcome.runtimeVersion === undefined ? {} : { runtimeVersion: outcome.runtimeVersion }),
-        ...(outcome.model === undefined ? {} : { model: outcome.model }),
-        ...(outcome.machine === undefined ? {} : { machine: outcome.machine }),
-        ...(outcome.environment === undefined ? {} : { environment: outcome.environment }),
-        ...(outcome.transcriptPath === undefined ? {} : { transcriptPath: outcome.transcriptPath }),
-      },
-      ...(intent.correlationId === undefined ? {} : { correlationId: intent.correlationId }),
-    });
+    try {
+      await this.#stateMachine.transition({
+        sessionId: session.id,
+        to: 'running',
+        // F7: the user asked, the *system* confirms the spawn. The row records the user action
+        // that started it, which is what the timeline is for.
+        trigger: 'user',
+        action: intent.action,
+        runtime: {
+          runtimeSessionId: outcome.runtimeSessionId,
+          ...(outcome.runtimeVersion === undefined
+            ? {}
+            : { runtimeVersion: outcome.runtimeVersion }),
+          ...(outcome.model === undefined ? {} : { model: outcome.model }),
+          ...(outcome.machine === undefined ? {} : { machine: outcome.machine }),
+          ...(outcome.environment === undefined ? {} : { environment: outcome.environment }),
+          ...(outcome.transcriptPath === undefined
+            ? {}
+            : { transcriptPath: outcome.transcriptPath }),
+        },
+        ...(intent.correlationId === undefined ? {} : { correlationId: intent.correlationId }),
+      });
+    } catch (error) {
+      // Refused (the Session was cancelled or moved on mid-launch), or the write failed. Either
+      // way the runtime we just obtained belongs to nothing: no row records it, no controller
+      // will ever prompt it, and only a manual `[End]` would clear it. Best-effort, because a
+      // dispose that throws must not replace the refusal with a less informative error.
+      try {
+        await this.#runtime.dispose(session.id, 'failed');
+      } catch (disposeError) {
+        /* c8 ignore next */
+        this.#onLaunchError?.(disposeError, session.id);
+      }
+      throw error;
+    }
   }
 
   async #failLaunch(session: SessionRow, error: unknown): Promise<void> {

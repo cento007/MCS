@@ -12,6 +12,8 @@ import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
+import { agentSchema } from './response-schemas.js';
 import type { AgentService } from './service.js';
 
 /**
@@ -156,6 +158,9 @@ interface UpdateBody {
   archived?: boolean;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const agentResponse = dataEnvelopeSchema(agentSchema);
+
 export interface AgentRoutesOptions {
   readonly agents: AgentService;
 }
@@ -165,7 +170,12 @@ export function registerAgentRoutes(app: FastifyInstance, options: AgentRoutesOp
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/agents',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(agentSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'asc';
@@ -188,7 +198,7 @@ export function registerAgentRoutes(app: FastifyInstance, options: AgentRoutesOp
 
   app.post<{ Body: CreateBody }>(
     '/api/v1/agents',
-    { schema: { body: createBodySchema } },
+    { schema: { body: createBodySchema, response: { 201: agentResponse } } },
     async (request, reply) => {
       const body = request.body;
       const created = await agents.create(
@@ -216,13 +226,19 @@ export function registerAgentRoutes(app: FastifyInstance, options: AgentRoutesOp
 
   app.get<{ Params: IdParams }>(
     '/api/v1/agents/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 200: agentResponse } } },
     async (request) => dataEnvelope(await agents.get(request.params.id)),
   );
 
   app.patch<{ Params: IdParams; Body: UpdateBody }>(
     '/api/v1/agents/:id',
-    { schema: { params: idParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: updateBodySchema,
+        response: { 200: agentResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await agents.update(

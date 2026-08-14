@@ -71,7 +71,7 @@ export function makeIntegrations(
       apiKey: { isSet: false, updatedAt: null },
       embeddingModel: 'nomic-embed-text',
     },
-    ollama: { host: '127.0.0.1', port: 11434, defaultModel: '', enabled: false },
+    ollama: { host: '127.0.0.1', port: 11434 },
     ...overrides,
   };
 }

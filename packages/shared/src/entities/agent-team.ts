@@ -31,7 +31,8 @@
  * on one team cannot be the QA on another without being a different agent with different
  * instructions. A `role` column would therefore duplicate `agents.name` in every row it is
  * populated and disagree with it in the rest — a second place for one fact, which is the defect
- * `integrations.ollama.enabled` is the standing example of in this codebase.
+ * `integrations.ollama.enabled` was the standing example of in this codebase until it was
+ * withdrawn from the key registry for gating nothing.
  *
  * ## Why membership has no ordinal
  *

@@ -2,7 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { requirePrincipal } from '../auth/guard.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
 import { decodeNotificationCursor, encodeNotificationCursor } from './cursors.js';
+import { notificationSchema, readAllResultSchema } from './response-schemas.js';
 import type { NotificationService } from './service.js';
 
 /**
@@ -47,6 +49,9 @@ interface ListQuery {
   unread?: boolean;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const notificationResponse = dataEnvelopeSchema(notificationSchema);
+
 export interface NotificationRoutesOptions {
   readonly notifications: NotificationService;
 }
@@ -59,7 +64,12 @@ export function registerNotificationRoutes(
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/notifications',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(notificationSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
 
@@ -87,19 +97,21 @@ export function registerNotificationRoutes(
 
   app.get<{ Params: NotificationIdParams }>(
     '/api/v1/notifications/:id',
-    { schema: { params: notificationIdParamsSchema } },
+    { schema: { params: notificationIdParamsSchema, response: { 200: notificationResponse } } },
     async (request) =>
       dataEnvelope(await notifications.get(requirePrincipal(request), request.params.id)),
   );
 
   app.post<{ Params: NotificationIdParams }>(
     '/api/v1/notifications/:id/read',
-    { schema: { params: notificationIdParamsSchema } },
+    { schema: { params: notificationIdParamsSchema, response: { 200: notificationResponse } } },
     async (request) =>
       dataEnvelope(await notifications.markRead(requirePrincipal(request), request.params.id)),
   );
 
-  app.post('/api/v1/notifications/read-all', async (request) =>
-    dataEnvelope(await notifications.markAllRead(requirePrincipal(request))),
+  app.post(
+    '/api/v1/notifications/read-all',
+    { schema: { response: { 200: dataEnvelopeSchema(readAllResultSchema) } } },
+    async (request) => dataEnvelope(await notifications.markAllRead(requirePrincipal(request))),
   );
 }

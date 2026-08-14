@@ -12,7 +12,13 @@ import { requirePrincipal } from '../../auth/guard.js';
 import { requestContextOf } from '../../http/context.js';
 import { dataEnvelope } from '../../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  listEnvelopeSchema,
+  noContentSchema,
+} from '../../http/response-schema.js';
 import { readProjectAvailableAgents } from './availability.js';
+import { agentTeamSchema, projectAvailableAgentsSchema } from './response-schemas.js';
 import type { AgentTeamService } from './service.js';
 
 /**
@@ -146,6 +152,9 @@ interface UpdateBody {
   projectIds?: string[];
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const agentTeamResponse = dataEnvelopeSchema(agentTeamSchema);
+
 export interface AgentTeamRoutesOptions {
   readonly teams: AgentTeamService;
   readonly db: Db;
@@ -159,7 +168,12 @@ export function registerAgentTeamRoutes(
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/agent-teams',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(agentTeamSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'asc';
@@ -178,7 +192,7 @@ export function registerAgentTeamRoutes(
 
   app.post<{ Body: CreateBody }>(
     '/api/v1/agent-teams',
-    { schema: { body: createBodySchema } },
+    { schema: { body: createBodySchema, response: { 201: agentTeamResponse } } },
     async (request, reply) => {
       const body = request.body;
       const created = await teams.create(
@@ -201,13 +215,19 @@ export function registerAgentTeamRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/agent-teams/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 200: agentTeamResponse } } },
     async (request) => dataEnvelope(await teams.get(request.params.id)),
   );
 
   app.patch<{ Params: IdParams; Body: UpdateBody }>(
     '/api/v1/agent-teams/:id',
-    { schema: { params: idParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: updateBodySchema,
+        response: { 200: agentTeamResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await teams.update(
@@ -231,7 +251,7 @@ export function registerAgentTeamRoutes(
 
   app.delete<{ Params: IdParams }>(
     '/api/v1/agent-teams/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 204: noContentSchema } } },
     async (request, reply) => {
       await teams.remove(requirePrincipal(request), request.params.id, requestContextOf(request));
       reply.code(204);
@@ -242,7 +262,12 @@ export function registerAgentTeamRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/projects/:id/available-agents',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(projectAvailableAgentsSchema) },
+      },
+    },
     async (request) => dataEnvelope(await readProjectAvailableAgents(db, request.params.id)),
   );
 }

@@ -345,6 +345,10 @@ Launch respects `maxConcurrentSessions` (F1.5), but **saturation is not an error
 
 Failure modes are unchanged: an illegal transition is still `409 INVALID_STATE_TRANSITION`, and a spawn failure at dequeue time still moves the Session to `failed` (with `session.failed`) — for a queued launch that outcome arrives as an event, not as the HTTP response, since the response was already returned.
 
+**Revoking a queued launch (added Phase 4).** This section, as written, had no way to undo a `launch: 'queued'`: the Session stays `created`, the durable job outlives everything, and F7 has no `created → completed` edge, so `POST /sessions/{id}/end` could not close it either. A caller that decided the Session must not run — a stopped agent-workflow run is the first (§13.2.2) — could only wait for a slot to free and watch a Claude Code process start. The Session domain therefore has **`SessionService.cancel`**: `created → failed` with `failure_reason = 'cancelled'`, trigger `user`, legal from `created` only and refused for an `observed` Session. **The job is not cancelled — the Session is moved**, because pg-boss is at-least-once and a job may already be in flight; the launch path asks F7 whether the Session may reach `running`, under `FOR UPDATE`, and after this it may not. A spawn that wins the race is disposed before the job completes.
+
+**No route is declared for it yet, deliberately**, and this is a gap rather than a decision: the capability is reachable only from the workflow Stop path, so an operator cannot cancel a queued launch they started themselves from `POST /sessions/{id}/start`. `POST /api/v1/sessions/{id}/cancel` is the obvious spelling when it is added.
+
 ### 6.3 Lifecycle sub-actions (F5.1 / F7)
 
 Every transition below emits `session.state_changed` **plus** the specific event (F7 rule) and appends a timeline entry with trigger `user` — *at the moment the transition actually happens*, which for a queued launch is when the `session.launch` job runs, not when the request returns (§6.2.1). Illegal transitions → `409 INVALID_STATE_TRANSITION` (`details: { from, action }`). Actions inapplicable to `observed` sessions (per WS0 non-blocking finding #2; physical semantics defined by WS1) → `409 OPERATION_NOT_SUPPORTED`. Concurrency saturation is **never** an error (§6.2.1).
@@ -831,8 +835,8 @@ interface SecuritySettings {                            // PUT /api/v1/settings/
 > **Phase 4 — interface only.** This section is a placeholder/extension point.
 > Detailed design is out of TDS scope per the project-plan scope guard.
 
-- `PUT /api/v1/settings/agents` — `{ defaultRuntime, defaultPermissionTemplate }` (reserved shape).
-- `PUT /api/v1/settings/integrations/ollama` — `{ host, port, defaultModel, enabled }` (Phase 3+).
+- `PUT /api/v1/settings/agents` — `{ defaultRuntime, defaultPermissionTemplate }` (reserved shape). **`defaultRuntime` was declined** in Phase 4 slice 1: `AGENT_RUNTIMES` has one member, so a control over it chooses nothing. Only `defaultPermissionTemplate` is declared, and `POST /agents` reads it.
+- `PUT /api/v1/settings/integrations/ollama` — **`{ host, port }`**. `defaultModel` and `enabled` were withdrawn (migration `0011`): both described Ollama as an *agent runtime*, which nothing in this build can select, and neither was ever read by any code path. `enabled` had become the codebase's standing example of an inert setting. `host` and `port` are live — the embedder that produces every semantic-memory vector connects through them — and the embedding *model* is `integrations.qdrant.embeddingModel`, on the Qdrant card, because it is stamped onto the collection. A multi-runtime slice re-declares both keys alongside a widened `AGENT_RUNTIMES` and a widened `ck_sessions_runtime` (see `03-database-schema.md` §3.9).
 
 ### 7.3 Endpoints
 
@@ -971,7 +975,7 @@ Backs the Dashboard "Upcoming Tasks" widget (PRD §8.1). **No entity, no table, 
 ```ts
 // 200
 { data: Array<{
-    kind: 'obsidian_sync' | 'github_poll' | 'daily_report',
+    kind: 'obsidian_sync' | 'github_poll' | 'daily_report' | 'memory_retention',
     label: string,                   // display text, e.g. "Obsidian vault sync"
     enabled: boolean,
     nextRunAt: string | null,        // ISO 8601 UTC; null when disabled or interval = 0
@@ -979,13 +983,16 @@ Backs the Dashboard "Upcoming Tasks" widget (PRD §8.1). **No entity, no table, 
 }> }
 ```
 
-Fixed cardinality (three kinds in Phase 1), so no cursor pagination and no `meta` (§1.2). Read-only: there is no POST/PATCH — the operator changes the schedule in Settings, and manual runs use the existing action endpoints (`POST /sync-runs`, `POST /repositories/{id}/sync`).
+Fixed cardinality (four kinds), so no cursor pagination and no `meta` (§1.2). Read-only: there is no POST/PATCH — the operator changes the schedule in Settings, and manual runs use the existing action endpoints (`POST /sync-runs`, `POST /repositories/{id}/sync`).
 
 | `kind` | `enabled` | `lastRunAt` | `nextRunAt` |
 |---|---|---|---|
 | `obsidian_sync` | `obsidian.vaultPath` set **and** `syncMode ≠ 'paused'` **and** `syncIntervalMinutes > 0` | `completedAt` of the newest `SyncRun` with `kind = 'obsidian'` | `lastRunAt + syncIntervalMinutes`, or `now + syncIntervalMinutes` when there is no prior run |
 | `github_poll` | GitHub PAT set **and** `github.syncIntervalMinutes > 0` | `max(repositories.last_synced_at)` | `lastRunAt + syncIntervalMinutes`, or `now + syncIntervalMinutes` when never synced |
 | `daily_report` | `notifications.dailyReport.enabled` **and** Telegram enabled | `createdAt` of the newest Notification with `type = 'daily_report'` | next occurrence of `dailyReport.time` in `general.timezone`, converted to UTC |
+| `memory_retention` ᴬ | at least one tier of `memory.retentionDays` is non-zero | `completed_on` of the newest finished `memory.retention` job pg-boss still holds | `start_after` of the earliest queued `memory.retention` job |
+
+ᴬ **Added after this section was written** (Phase 3's expiry sweep, `apps/backend/src/memory/retention.ts`), and recorded here as an addition rather than back-filled silently. It is the same species as the other three — a self-rescheduling durable job — and it was the only one of the four this read model did not report, which made a recurring deletion of the operator's memory invisible. It is the one row whose `nextRunAt` and `lastRunAt` come **from the queue** rather than from a domain artifact plus an interval setting: a sweep that deletes nothing writes nothing, and its interval is a constant (`MEMORY_RETENTION_TICK_MINUTES`), deliberately not a setting. Both reads are best-effort against pg-boss's vendored table and degrade to `null`, so a change there costs one widget row rather than the endpoint; `lastRunAt` returns to `null` once pg-boss deletes the completed tick.
 
 `enabled: false` ⇒ `nextRunAt: null` (the row is still returned, so the UI can say *why* nothing is scheduled and link to Settings). A computed `nextRunAt` in the past means the run is due/overdue — the endpoint reports the schedule, not the queue, and does not clamp it. Phase 2 kinds (`obsidian_sync`, `daily_report`) are returned from Phase 1 with `enabled: false` until their workers exist, which is what makes the widget honest on day one rather than empty.
 
@@ -1362,7 +1369,9 @@ PRD §5.6 is one line — `Developer → QA → Security → Architect`. This sl
 
 **Failure halts; halting is recoverable.** A failed step stops the chain with `haltReason` on the run and `state: 'failed'` on the attempt. `POST /{id}/resume` re-runs that position in a **new** Session as attempt N+1 (F7 states never move backward); the failed attempt keeps its own row and its own Session, so nothing is rewritten. A failure never retries itself: the attempt rows cannot distinguish "failed just now" from "failed and the operator asked again", so an auto-retry derived from state alone would be an autonomous spend loop.
 
-**Stop is a kill switch that stops the spend.** The run is marked `stopped` **first**, in its own transaction, and the in-flight Session is ended afterwards — so the `session.completed` that ending produces finds a run that is no longer `running` and advances nothing (the attempt row is `stopped` too, so the guard is double). `meta.stoppedSession` reports `ended`, `already_terminal`, `left_unstarted` or `null`: F7 has no `created → completed` edge, so a launch still waiting for a concurrency slot is left where it is and the operator is told rather than lied to.
+**Stop is a kill switch that stops the spend.** The run is marked `stopped` **first**, in its own transaction, and the in-flight Session is closed afterwards — so the `session.completed`/`session.failed` that produces finds a run that is no longer `running` and advances nothing (the attempt row is `stopped` too, so the guard is double). `meta.stoppedSession` reports `ended`, `cancelled`, `already_terminal` or `null`.
+
+**`left_unstarted` was renamed to `cancelled`, and the rename *is* the fix.** The original outcome was an accurate name for the endpoint doing nothing: a step whose Session was still `created` kept its durable `session.launch` job, so a run the operator had stopped would spawn Claude Code the moment a concurrency slot freed, take that slot, and hold it until someone pressed End by hand. Stop now calls `SessionService.cancel` (§6.2.1), which moves the Session to `failed(cancelled)` — the fact that revokes the launch. The read reaches `already_terminal` only when the state moved under it; the loop re-reads once, so a launch that wins the race is *ended* rather than mis-reported.
 
 **Three spend bounds, and two of them are database constraints.** This is the most dangerous feature in the product, so the limits are not loops that could be wrong: `ck_agent_workflow_steps_ordinal` makes an eleventh step unrepresentable; `ck_agent_workflow_runs_sessions_launched` makes a run unable to record more launched Sessions than its own `maxSessions` (operator-set, defaulting to one per step plus three retries, ceiling 20); and `ux_agent_workflow_runs_active` admits **one `running` run per Project**, because two chains in one working tree is a merge conflict with a bill attached.
 

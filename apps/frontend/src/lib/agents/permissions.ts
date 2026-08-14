@@ -8,9 +8,9 @@ import { type AgentPermissions, normalizeAgentPermissions } from '@mc/shared/typ
  * Delete · Documentation: Create ADR, Create Notes, Edit Notes — and it would be trivial to draw
  * twelve switches from that list. It would also be the most dangerous thing the Agents screen
  * could do. A switch reading `Merge: off` that gates nothing is worse than no switch at all: an
- * operator reads it as a guarantee and stops watching. This codebase already shipped one setting
- * nothing reads (`integrations.ollama.enabled`); that one wasted a configuration step, and this
- * one would be a safety claim.
+ * operator reads it as a guarantee and stops watching. This codebase shipped one setting nothing
+ * read (`integrations.ollama.enabled`) and had to withdraw it; that one wasted a configuration
+ * step, and this one would be a safety claim.
  *
  * ## Three switches, and where the other nine went
  *

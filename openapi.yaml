@@ -4,21 +4,29 @@ info:
   version: '1.0.0'
   description: |-
     Generated from the Backend’s Fastify route table by `pnpm api:spec` (F5.1). Do not edit
-    by hand: `pnpm api:spec:check` fails when this file and the routes disagree.
+    by hand: `pnpm api:spec:check` fails when this file and the routes disagree, and
+    `pnpm api:types:check` fails when apps/frontend/src/lib/api/types.generated.ts does.
 
-    PARTIAL BY CONSTRUCTION, AND HONESTLY SO. Request shapes here are the schemas Ajv actually
-    enforces, so they are exact. RESPONSE shapes are absent: no route in this Backend declares
-    a Fastify response schema today, so there is nothing to generate from and nothing is
-    invented. Every operation is marked `x-mc-response-schema: undeclared`; the response
-    contracts are prose in docs/tds/04-api-contracts-and-events.md, and §16 of that document
-    holds the hand-written reference for the Sessions resource.
+    REQUEST shapes are the schemas Ajv actually enforces, so they are exact.
 
-    Consequence for consumers: types generated from this document cover requests, path and
-    query parameters, and the error envelope. They do not yet cover success payloads.
+    RESPONSE shapes are the schemas each route declares under `schema.response`. Read the
+    guarantee precisely: they are DECLARATIONS, NOT SERIALIZERS. The Backend installs a
+    serializer compiler that ignores them and calls JSON.stringify, so a schema here can never
+    remove a field the handler produced — the failure mode a Fastify response schema normally
+    carries. What keeps them true instead is a conformance check that validates every reply
+    against its own schema in the test tiers, in both directions: an undeclared property and a
+    missing required property are both failures. See apps/backend/src/http/response-schema.ts.
 
-    One entry is not an HTTP resource: GET /ws is the single multiplexed WebSocket upgrade
-    endpoint (F5.6, TDS 04 §14). It is listed because it is a registered route — omitting it
-    would make this document quietly incomplete — but it speaks the WS frame protocol.
+    Operations still marked `x-mc-response-schema: undeclared` are the ones with no declaration,
+    and the marker exists so that gap stays countable. Today they are: GET /health,
+    GET /services/health and GET /schedule (owned by modules outside this change),
+    GET|PUT /settings/{category} (the GET serves one of five different documents, which needs a
+    `oneOf` the conformance checker does not implement; the PUT has no success response at all),
+    and GET /ws.
+
+    GET /ws is not an HTTP resource: it is the single multiplexed WebSocket upgrade endpoint
+    (F5.6, TDS 04 §14). It is listed because it is a registered route — omitting it would make
+    this document quietly incomplete — but it speaks the WS frame protocol.
 servers:
   - url: /api/v1
 security:
@@ -69,9 +77,26 @@ paths:
               - rejected
               - superseded
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Adr'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -120,9 +145,21 @@ paths:
                   type: string
                   maxLength: 100000
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Adr'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -142,9 +179,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Adr'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -199,9 +248,21 @@ paths:
                     - 'null'
                   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Adr'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -251,9 +312,26 @@ paths:
               - global
               - project
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentTeam'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -307,9 +385,21 @@ paths:
                     type: string
                     pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentTeam'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -329,9 +419,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentTeam'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -379,9 +481,21 @@ paths:
                     type: string
                     pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentTeam'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -400,9 +514,11 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -460,9 +576,26 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentWorkflowRun'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -516,9 +649,21 @@ paths:
                   minimum: 1
                   maximum: 20
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflowRun'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -538,9 +683,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflowRun'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -570,9 +727,21 @@ paths:
               additionalProperties: false
               properties: {}
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflowRun'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -602,9 +771,32 @@ paths:
               additionalProperties: false
               properties: {}
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflowRun'
+                  meta:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - stoppedSession
+                    properties:
+                      stoppedSession:
+                        anyOf:
+                          - $ref: '#/components/schemas/StoppedSession'
+                          - type: 'null'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -659,9 +851,26 @@ paths:
               - global
               - project
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentWorkflow'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -722,9 +931,21 @@ paths:
                           - 'null'
                         maxLength: 4000
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflow'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -744,9 +965,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflow'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -802,9 +1035,21 @@ paths:
                 archived:
                   type: boolean
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentWorkflow'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -824,9 +1069,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/WorkflowCostEstimate'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -888,9 +1145,26 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Agent'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -961,9 +1235,21 @@ paths:
                     - 'null'
                   maxLength: 20000
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Agent'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -983,9 +1269,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Agent'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1046,9 +1344,21 @@ paths:
                 archived:
                   type: boolean
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Agent'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1119,9 +1429,26 @@ paths:
             minLength: 1
             maxLength: 64
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLogEntry'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1141,9 +1468,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuditLogEntry'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1175,9 +1514,21 @@ paths:
                   minLength: 1
                   maxLength: 1024
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/LoginResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: public
       x-mc-strictness:
@@ -1189,9 +1540,11 @@ paths:
       operationId: postAuthLogout
       summary: 'POST /auth/logout'
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1204,9 +1557,21 @@ paths:
       operationId: getAuthMe
       summary: 'GET /auth/me'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthMe'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1238,9 +1603,11 @@ paths:
                   minLength: 12
                   maxLength: 1024
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1268,9 +1635,26 @@ paths:
             minimum: 1
             maximum: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiTokenSummary'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1310,9 +1694,21 @@ paths:
                   minLength: 1
                   maxLength: 40
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CreatedApiToken'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1332,9 +1728,11 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1354,9 +1752,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CommitDetail'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1418,9 +1828,11 @@ paths:
                   type: object
                   additionalProperties: true
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: ingest
@@ -1439,9 +1851,21 @@ paths:
       operationId: getMemoryItemsBackfill
       summary: 'GET /memory-items/backfill'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MemoryBackfillStatus'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1466,9 +1890,21 @@ paths:
                     - incremental
                     - rebuild
       responses:
+        '202':
+          description: 'Accepted — the work is queued; the outcome is observable on the resource it changes.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MemoryBackfillAccepted'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1534,9 +1970,21 @@ paths:
                   minimum: 0
                   maximum: 1
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MemorySearchResponse'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1556,9 +2004,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MemoryItem'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1591,9 +2051,26 @@ paths:
           schema:
             type: boolean
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1606,9 +2083,21 @@ paths:
       operationId: postNotificationsReadAll
       summary: 'POST /notifications/read-all'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NotificationsReadAll'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1628,9 +2117,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Notification'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1650,9 +2151,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Notification'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1693,9 +2206,26 @@ paths:
               - asc
               - desc
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1734,9 +2264,21 @@ paths:
                     - assisted
                     - null
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1756,9 +2298,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1807,9 +2361,21 @@ paths:
                     - 'null'
                   maxLength: 64
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1828,9 +2394,11 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1850,9 +2418,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ProjectAvailableAgents'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1896,9 +2476,26 @@ paths:
               - closed
               - draft
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PullRequest'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1918,9 +2515,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PullRequestDetail'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -1962,9 +2571,26 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Repository'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2003,9 +2629,21 @@ paths:
                   minLength: 1
                   maxLength: 255
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Repository'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2018,9 +2656,21 @@ paths:
       operationId: postRepositoriesDiscover
       summary: 'POST /repositories/discover'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DiscoveryReport'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2040,9 +2690,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Repository'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2082,9 +2744,21 @@ paths:
                   minLength: 1
                   maxLength: 255
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Repository'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2103,9 +2777,11 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '204':
+          description: 'No Content'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2160,9 +2836,26 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Commit'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2206,9 +2899,26 @@ paths:
               - closed
               - draft
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PullRequest'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2228,9 +2938,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RepositoryStatus'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2250,9 +2972,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '202':
+          description: 'Accepted — the work is queued; the outcome is observable on the resource it changes.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobAccepted'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2309,9 +3043,26 @@ paths:
             minLength: 1
             maxLength: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchResult'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2394,9 +3145,26 @@ paths:
               - failed
               - archived
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2441,9 +3209,21 @@ paths:
                   type: string
                   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2463,9 +3243,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2509,9 +3301,21 @@ paths:
                     - 'null'
                   pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2531,9 +3335,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2566,9 +3382,21 @@ paths:
                   type: string
                   maxLength: 200
       responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2602,9 +3430,26 @@ paths:
             minimum: 1
             maximum: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Commit'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2634,9 +3479,21 @@ paths:
               additionalProperties: false
               properties: {}
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContextPackage'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2656,9 +3513,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2692,9 +3561,21 @@ paths:
                   enum:
                     - markdown
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SessionExport'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2714,9 +3595,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SessionFiles'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2736,9 +3629,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '202':
+          description: 'Accepted — the work is queued; the outcome is observable on the resource it changes.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobAccepted'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2758,9 +3663,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InterruptResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2821,9 +3738,26 @@ paths:
               - pending
               - interrupted
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Message'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2843,9 +3777,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2865,9 +3811,36 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
+                  meta:
+                    $ref: '#/components/schemas/LaunchMeta'
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2887,9 +3860,24 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
+                  meta:
+                    $ref: '#/components/schemas/LaunchMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2923,9 +3911,26 @@ paths:
             minimum: 1
             maximum: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TimelineEntry'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2938,9 +3943,21 @@ paths:
       operationId: getSettings
       summary: 'GET /settings'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SettingsDocument'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -2966,9 +3983,21 @@ paths:
                     - read_write
                     - full
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AgentsSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3019,9 +4048,21 @@ paths:
                     - projects
                     - sessions
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GeneralSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3034,9 +4075,21 @@ paths:
       operationId: getSettingsIntegrations
       summary: 'GET /settings/integrations'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/IntegrationsSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3086,9 +4139,21 @@ paths:
                       minimum: 1
                       maximum: 100
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ClaudeCodeSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3101,9 +4166,21 @@ paths:
       operationId: postSettingsIntegrationsClaudeCodeTestConnection
       summary: 'POST /settings/integrations/claude-code/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3158,9 +4235,21 @@ paths:
                     - manual
                     - assisted
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GithubSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3173,9 +4262,21 @@ paths:
       operationId: postSettingsIntegrationsGithubTestConnection
       summary: 'POST /settings/integrations/github/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3218,9 +4319,21 @@ paths:
                     - mission_control_wins
                     - manual
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ObsidianSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3233,9 +4346,21 @@ paths:
       operationId: postSettingsIntegrationsObsidianTestConnection
       summary: 'POST /settings/integrations/obsidian/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3262,15 +4387,22 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 65535
-                defaultModel:
-                  type: string
-                  maxLength: 200
-                enabled:
-                  type: boolean
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OllamaSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3283,9 +4415,21 @@ paths:
       operationId: postSettingsIntegrationsOllamaTestConnection
       summary: 'POST /settings/integrations/ollama/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3322,9 +4466,21 @@ paths:
                   type: string
                   maxLength: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/QdrantSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3337,9 +4493,21 @@ paths:
       operationId: postSettingsIntegrationsQdrantTestConnection
       summary: 'POST /settings/integrations/qdrant/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3373,9 +4541,21 @@ paths:
                 enabled:
                   type: boolean
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TelegramSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3388,9 +4568,21 @@ paths:
       operationId: postSettingsIntegrationsTelegramTestConnection
       summary: 'POST /settings/integrations/telegram/test-connection'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestConnectionResult'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3442,9 +4634,21 @@ paths:
                       minimum: 0
                       maximum: 3650
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/MemorySettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3499,9 +4703,21 @@ paths:
                       type: string
                       pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/NotificationsSettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3536,9 +4752,21 @@ paths:
                     minLength: 1
                     maxLength: 255
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SecuritySettings'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3603,9 +4831,21 @@ paths:
       operationId: getSpend
       summary: 'GET /spend'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Spend'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3633,9 +4873,26 @@ paths:
             minimum: 1
             maximum: 200
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                  - meta
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SyncRun'
+                  meta:
+                    $ref: '#/components/schemas/ListEnvelopeMeta'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3659,9 +4916,21 @@ paths:
                   enum:
                     - obsidian
       responses:
+        '202':
+          description: 'Accepted — the work is queued; the outcome is observable on the resource it changes.'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SyncRun'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3674,9 +4943,21 @@ paths:
       operationId: getSyncRunsPreview
       summary: 'GET /sync-runs/preview'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SyncPreview'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3696,9 +4977,21 @@ paths:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SyncRunDetail'
         default:
           $ref: '#/components/responses/ErrorEnvelope'
-      x-mc-response-schema: undeclared
+      x-mc-response-schema: declared
       x-mc-auth:
         mode: authenticated
         scope: full
@@ -3723,13 +5016,1070 @@ paths:
         body: strict
 components:
   schemas:
+    Adr:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - adrNumber
+        - title
+        - status
+        - context
+        - decision
+        - alternatives
+        - consequences
+        - sourceSessionId
+        - supersededByAdrId
+        - obsidianPath
+        - syncedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        adrNumber:
+          type: integer
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/AdrStatus'
+        context:
+          type: string
+        decision:
+          type: string
+        alternatives:
+          type: string
+        consequences:
+          type: string
+        sourceSessionId:
+          type:
+            - string
+            - 'null'
+        supersededByAdrId:
+          type:
+            - string
+            - 'null'
+        obsidianPath:
+          type:
+            - string
+            - 'null'
+        syncedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AdrStatus:
+      type: string
+      enum:
+        - proposed
+        - accepted
+        - rejected
+        - superseded
+    Agent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - projectId
+        - sessionId
+        - runtime
+        - permissions
+        - disallowedTools
+        - instructions
+        - archivedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        scope:
+          $ref: '#/components/schemas/AgentScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        sessionId:
+          type:
+            - string
+            - 'null'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        permissions:
+          $ref: '#/components/schemas/AgentPermissions'
+        disallowedTools:
+          type: array
+          items:
+            type: string
+          description: 'Derived from `permissions` by the same function the launch path calls, and never accepted on a write. `permissions` says what was asked for; this says what actually happens to the runtime, so the model can be audited rather than trusted.'
+        instructions:
+          type:
+            - string
+            - 'null'
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AgentPermissions:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+      properties:
+        repository:
+          type: object
+          additionalProperties: false
+          required:
+            - read
+            - write
+            - shell
+          properties:
+            read:
+              type: boolean
+            write:
+              type: boolean
+            shell:
+              type: boolean
+    AgentRuntime:
+      type: string
+      enum:
+        - claude_code
+    AgentScope:
+      type: string
+      enum:
+        - global
+        - project
+        - session
+    AgentTeam:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - projectId
+        - members
+        - projectIds
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        scope:
+          $ref: '#/components/schemas/AgentTeamScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentTeamMember'
+        projectIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AgentTeamMember:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - name
+        - scope
+        - projectId
+        - runtime
+        - archivedAt
+        - addedAt
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        scope:
+          $ref: '#/components/schemas/AgentScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        addedAt:
+          type: string
+    AgentTeamScope:
+      type: string
+      enum:
+        - global
+        - project
+    AgentWorkflow:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - projectId
+        - steps
+        - stepCount
+        - archivedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        scope:
+          $ref: '#/components/schemas/AgentWorkflowScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentWorkflowStep'
+        stepCount:
+          type: integer
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AgentWorkflowHandoff:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - reason
+        - promptBytes
+      properties:
+        state:
+          $ref: '#/components/schemas/AgentWorkflowHandoffState'
+        reason:
+          type:
+            - string
+            - 'null'
+        promptBytes:
+          type: integer
+    AgentWorkflowHandoffState:
+      type: string
+      enum:
+        - none
+        - full
+        - degraded
+    AgentWorkflowRun:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - workflowId
+        - projectId
+        - repositoryId
+        - task
+        - workingDirectory
+        - branch
+        - model
+        - state
+        - stepCount
+        - currentStepOrdinal
+        - maxSessions
+        - sessionsLaunched
+        - haltReason
+        - steps
+        - startedAt
+        - completedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        projectId:
+          type: string
+        repositoryId:
+          type:
+            - string
+            - 'null'
+        task:
+          type: string
+        workingDirectory:
+          type: string
+        branch:
+          type:
+            - string
+            - 'null'
+        model:
+          type:
+            - string
+            - 'null'
+        state:
+          $ref: '#/components/schemas/AgentWorkflowRunState'
+        stepCount:
+          type: integer
+        currentStepOrdinal:
+          type:
+            - integer
+            - 'null'
+        maxSessions:
+          type: integer
+        sessionsLaunched:
+          type: integer
+        haltReason:
+          type:
+            - string
+            - 'null'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentWorkflowRunStep'
+        startedAt:
+          type: string
+        completedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AgentWorkflowRunState:
+      type: string
+      enum:
+        - running
+        - completed
+        - halted
+        - stopped
+    AgentWorkflowRunStep:
+      type: object
+      additionalProperties: false
+      required:
+        - ordinal
+        - attempt
+        - agentId
+        - sessionId
+        - state
+        - handoff
+        - promptSentAt
+        - error
+        - startedAt
+        - completedAt
+      properties:
+        ordinal:
+          type: integer
+        attempt:
+          type: integer
+        agentId:
+          type: string
+        sessionId:
+          type: string
+        state:
+          $ref: '#/components/schemas/AgentWorkflowRunStepState'
+        handoff:
+          $ref: '#/components/schemas/AgentWorkflowHandoff'
+        promptSentAt:
+          type:
+            - string
+            - 'null'
+        error:
+          type:
+            - string
+            - 'null'
+        startedAt:
+          type: string
+        completedAt:
+          type:
+            - string
+            - 'null'
+    AgentWorkflowRunStepState:
+      type: string
+      enum:
+        - running
+        - completed
+        - failed
+        - stopped
+    AgentWorkflowScope:
+      type: string
+      enum:
+        - global
+        - project
+    AgentWorkflowStep:
+      type: object
+      additionalProperties: false
+      required:
+        - ordinal
+        - agentId
+        - agentName
+        - agentScope
+        - agentProjectId
+        - agentArchivedAt
+        - instructions
+      properties:
+        ordinal:
+          type: integer
+        agentId:
+          type: string
+        agentName:
+          type: string
+        agentScope:
+          type: string
+        agentProjectId:
+          type:
+            - string
+            - 'null'
+        agentArchivedAt:
+          type:
+            - string
+            - 'null'
+        instructions:
+          type:
+            - string
+            - 'null'
+    AgentsSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - defaultPermissionTemplate
+      properties:
+        defaultPermissionTemplate:
+          type: string
+          enum:
+            - read_only
+            - read_write
+            - full
+    ApiTokenSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - prefix
+        - scopes
+        - lastUsedAt
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - full
+              - ingest
+        lastUsedAt:
+          type:
+            - string
+            - 'null'
+        expiresAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+    AssignedTeam:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - projectId
+        - memberCount
+        - archivedMemberCount
+        - assignedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        scope:
+          $ref: '#/components/schemas/AgentTeamScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        memberCount:
+          type: integer
+        archivedMemberCount:
+          type: integer
+        assignedAt:
+          type: string
+    AuditLogEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - occurredAt
+        - actorType
+        - actorId
+        - action
+        - entityType
+        - entityId
+        - before
+        - after
+        - requestId
+      properties:
+        id:
+          type: string
+        occurredAt:
+          type: string
+        actorType:
+          type: string
+          enum:
+            - user
+            - agent
+            - system
+        actorId:
+          type:
+            - string
+            - 'null'
+        action:
+          type: string
+        entityType:
+          type:
+            - string
+            - 'null'
+        entityId:
+          type:
+            - string
+            - 'null'
+        before:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        after:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        requestId:
+          type:
+            - string
+            - 'null'
+    AuthMe:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+        - authMethod
+        - session
+      properties:
+        user:
+          $ref: '#/components/schemas/CurrentUser'
+        authMethod:
+          type: string
+          enum:
+            - cookie
+            - token
+        session:
+          anyOf:
+            - $ref: '#/components/schemas/AuthSession'
+            - type: 'null'
+    AuthSession:
+      type: object
+      additionalProperties: false
+      required:
+        - expiresAt
+      properties:
+        expiresAt:
+          type: string
+    AvailableAgent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - projectId
+        - sessionId
+        - runtime
+        - permissions
+        - disallowedTools
+        - instructions
+        - archivedAt
+        - createdAt
+        - updatedAt
+        - onTeam
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        scope:
+          $ref: '#/components/schemas/AgentScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        sessionId:
+          type:
+            - string
+            - 'null'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        permissions:
+          $ref: '#/components/schemas/AgentPermissions'
+        disallowedTools:
+          type: array
+          items:
+            type: string
+          description: 'Derived from `permissions` by the same function the launch path calls, and never accepted on a write. `permissions` says what was asked for; this says what actually happens to the runtime, so the model can be audited rather than trusted.'
+        instructions:
+          type:
+            - string
+            - 'null'
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        onTeam:
+          type: boolean
+    ClaudeCodeSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - cliPath
+        - defaultModel
+        - maxConcurrentSessions
+        - costBudget
+      properties:
+        cliPath:
+          type: string
+        defaultModel:
+          type: string
+        maxConcurrentSessions:
+          type: integer
+        costBudget:
+          type: object
+          additionalProperties: false
+          properties:
+            dailyUsd:
+              type:
+                - number
+                - 'null'
+            perSessionUsd:
+              type:
+                - number
+                - 'null'
+            alertThresholdPercent:
+              type: integer
+          required:
+            - dailyUsd
+            - perSessionUsd
+            - alertThresholdPercent
+    Commit:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - repositoryId
+        - sessionId
+        - sha
+        - message
+        - authorName
+        - authorEmail
+        - committedAt
+        - filesChanged
+        - additions
+        - deletions
+        - createdAt
+      properties:
+        id:
+          type: string
+        repositoryId:
+          type: string
+        sessionId:
+          type:
+            - string
+            - 'null'
+        sha:
+          type: string
+        message:
+          type: string
+        authorName:
+          type: string
+        authorEmail:
+          type:
+            - string
+            - 'null'
+        committedAt:
+          type: string
+        filesChanged:
+          type: integer
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        createdAt:
+          type: string
+    CommitDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - repositoryId
+        - sessionId
+        - sha
+        - message
+        - authorName
+        - authorEmail
+        - committedAt
+        - filesChanged
+        - additions
+        - deletions
+        - createdAt
+        - files
+      properties:
+        id:
+          type: string
+        repositoryId:
+          type: string
+        sessionId:
+          type:
+            - string
+            - 'null'
+        sha:
+          type: string
+        message:
+          type: string
+        authorName:
+          type: string
+        authorEmail:
+          type:
+            - string
+            - 'null'
+        committedAt:
+          type: string
+        filesChanged:
+          type: integer
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        createdAt:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitFile'
+    CommitFile:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - status
+        - additions
+        - deletions
+      properties:
+        path:
+          type: string
+        status:
+          type: string
+          enum:
+            - added
+            - modified
+            - deleted
+            - renamed
+        additions:
+          type: integer
+        deletions:
+          type: integer
+    ContextPackage:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+        - tokenEstimate
+        - bytes
+        - generatedAt
+        - relatedContext
+      properties:
+        content:
+          type: string
+        tokenEstimate:
+          type: integer
+        bytes:
+          type: integer
+        generatedAt:
+          type: string
+        relatedContext:
+          $ref: '#/components/schemas/ContextPackageRelated'
+    ContextPackageGapReason:
+      type: string
+      enum:
+        - not_configured
+        - unavailable
+        - stamp_mismatch
+        - index_empty
+        - below_threshold
+        - timed_out
+        - no_query
+        - only_own_session
+    ContextPackageRelated:
+      type: object
+      additionalProperties: false
+      required:
+        - resultCount
+        - gapReason
+        - gapDetail
+        - embeddingModel
+      properties:
+        resultCount:
+          type: integer
+        gapReason:
+          anyOf:
+            - $ref: '#/components/schemas/ContextPackageGapReason'
+            - type: 'null'
+        gapDetail:
+          type:
+            - string
+            - 'null'
+        embeddingModel:
+          type:
+            - string
+            - 'null'
+    CreatedApiToken:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - prefix
+        - scopes
+        - lastUsedAt
+        - expiresAt
+        - createdAt
+        - token
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - full
+              - ingest
+        lastUsedAt:
+          type:
+            - string
+            - 'null'
+        expiresAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        token:
+          type: string
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - username
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+    DiscoveredRepository:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+        - owner
+        - repo
+      properties:
+        repository:
+          $ref: '#/components/schemas/Repository'
+        owner:
+          type: string
+        repo:
+          type: string
+    DiscoveryReport:
+      type: object
+      additionalProperties: false
+      required:
+        - scannedAt
+        - truncated
+        - roots
+        - registered
+        - skipped
+        - counts
+        - workflowMode
+        - capability
+      properties:
+        scannedAt:
+          type: string
+        truncated:
+          type: boolean
+        roots:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveryRoot'
+        registered:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredRepository'
+        skipped:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoverySkip'
+        counts:
+          type: object
+          additionalProperties: false
+          required:
+            - workingTreesFound
+            - registered
+            - skipped
+          properties:
+            workingTreesFound:
+              type: integer
+            registered:
+              type: integer
+            skipped:
+              type: integer
+        workflowMode:
+          $ref: '#/components/schemas/GithubWorkflowMode'
+        capability:
+          type: string
+          enum:
+            - read_only
+    DiscoveryRoot:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - status
+        - found
+        - detail
+      properties:
+        path:
+          type: string
+        status:
+          $ref: '#/components/schemas/DiscoveryRootStatus'
+        found:
+          type: integer
+        detail:
+          type:
+            - string
+            - 'null'
+    DiscoveryRootStatus:
+      type: string
+      enum:
+        - scanned
+        - scanned_as_repository
+        - path_missing
+        - not_a_directory
+        - not_absolute
+        - unreadable
+        - truncated
+    DiscoverySkip:
+      type: object
+      additionalProperties: false
+      required:
+        - localPath
+        - reason
+        - detail
+        - repositoryId
+      properties:
+        localPath:
+          type: string
+        reason:
+          $ref: '#/components/schemas/DiscoverySkipReason'
+        detail:
+          type:
+            - string
+            - 'null'
+        repositoryId:
+          type:
+            - string
+            - 'null'
+    DiscoverySkipReason:
+      type: string
+      enum:
+        - already_registered
+        - not_a_git_repository
+        - no_remote
+        - remote_not_github
+        - remote_unreadable
+        - invalid_path
     ErrorEnvelope:
       type: object
+      additionalProperties: false
       required:
         - error
       properties:
         error:
           type: object
+          additionalProperties: false
           required:
             - code
             - message
@@ -3737,8 +6087,7 @@ components:
             - requestId
           properties:
             code:
-              type: string
-              pattern: '^[A-Z][A-Z0-9_]*$'
+              $ref: '#/components/schemas/ErrorEnvelopeCode'
             message:
               type: string
             details:
@@ -3748,6 +6097,2048 @@ components:
             requestId:
               type: string
               description: 'Also returned as the X-Request-Id header, and in every log line.'
+    ErrorEnvelopeCode:
+      type: string
+      description: |-
+        The F5.4 error-code registry (TDS 04 §1.3), verbatim from the Backend’s http/errors.ts.
+        Named ErrorEnvelopeCode rather than ErrorCode because the SPA already owns that name for a
+        deliberately wider union: lib/api/errors.ts admits codes the client synthesises for failures
+        that never reached the server (NETWORK_ERROR, ABORTED). This is the server’s list only.
+      enum:
+        - CONFLICT
+        - DATABASE_SCHEMA_MISMATCH
+        - FORBIDDEN
+        - INTEGRATION_NOT_CONFIGURED
+        - INTERNAL
+        - INVALID_CREDENTIALS
+        - INVALID_CURSOR
+        - INVALID_STATE_TRANSITION
+        - NOT_FOUND
+        - NO_TURN_IN_FLIGHT
+        - OPERATION_NOT_SUPPORTED
+        - ORIGIN_NOT_ALLOWED
+        - PAYLOAD_TOO_LARGE
+        - RATE_LIMITED
+        - RUNTIME_UNAVAILABLE
+        - SESSION_NOT_RUNNING
+        - UNAUTHORIZED
+        - VALIDATION_FAILED
+    GeneralSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - instanceName
+        - timezone
+        - dateFormat
+        - timeFormat
+        - theme
+        - defaultLandingPage
+      properties:
+        instanceName:
+          type: string
+        timezone:
+          type: string
+        dateFormat:
+          type: string
+          enum:
+            - YYYY-MM-DD
+            - DD-MM-YYYY
+            - MM/DD/YYYY
+            - 'D MMM YYYY'
+        timeFormat:
+          type: string
+          enum:
+            - '24h'
+            - '12h'
+        theme:
+          type: string
+          enum:
+            - dark
+            - light
+        defaultLandingPage:
+          type: string
+          enum:
+            - dashboard
+            - projects
+            - sessions
+    GithubSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - token
+        - account
+        - organizations
+        - discoveryRoots
+        - syncIntervalMinutes
+        - workflowMode
+      properties:
+        token:
+          $ref: '#/components/schemas/SecretFieldRead'
+        account:
+          type:
+            - string
+            - 'null'
+        organizations:
+          type: array
+          items:
+            type: string
+        discoveryRoots:
+          type: array
+          items:
+            type: string
+        syncIntervalMinutes:
+          type: integer
+        workflowMode:
+          type: string
+          enum:
+            - manual
+            - assisted
+    GithubWorkflowMode:
+      type: string
+      enum:
+        - manual
+        - assisted
+    IntegrationsSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - github
+        - claudeCode
+        - telegram
+        - obsidian
+        - qdrant
+        - ollama
+      properties:
+        github:
+          $ref: '#/components/schemas/GithubSettings'
+        claudeCode:
+          $ref: '#/components/schemas/ClaudeCodeSettings'
+        telegram:
+          $ref: '#/components/schemas/TelegramSettings'
+        obsidian:
+          $ref: '#/components/schemas/ObsidianSettings'
+        qdrant:
+          $ref: '#/components/schemas/QdrantSettings'
+        ollama:
+          $ref: '#/components/schemas/OllamaSettings'
+    InterruptResult:
+      type: object
+      additionalProperties: false
+      required:
+        - sessionId
+        - messageId
+      properties:
+        sessionId:
+          type: string
+        messageId:
+          type:
+            - string
+            - 'null'
+    JobAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - jobId
+      properties:
+        jobId:
+          type: string
+    LaunchMeta:
+      type: object
+      additionalProperties: false
+      required:
+        - launch
+      properties:
+        launch:
+          type: string
+          enum:
+            - started
+            - queued
+          description: '`queued` means the Session stayed in its pre-launch state and a durable session.launch job will move it. Render it as ''Queued for launch'', never as a failure.'
+    ListEnvelopeMeta:
+      type: object
+      additionalProperties: false
+      required:
+        - nextCursor
+        - limit
+      properties:
+        nextCursor:
+          type:
+            - string
+            - 'null'
+        limit:
+          type: integer
+    LoginResult:
+      type: object
+      additionalProperties: false
+      required:
+        - user
+        - expiresAt
+      properties:
+        user:
+          $ref: '#/components/schemas/CurrentUser'
+        expiresAt:
+          type: string
+    MemoryBackfillAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - state
+        - mode
+        - createdAt
+      properties:
+        runId:
+          type: string
+        state:
+          type: string
+        mode:
+          type: string
+          enum:
+            - incremental
+            - rebuild
+        createdAt:
+          type: string
+    MemoryBackfillProgress:
+      type: object
+      additionalProperties: false
+      required:
+        - stage
+        - cursor
+        - sourcesSeen
+        - sourcesIndexed
+        - sourcesSkipped
+        - chunksEmbedded
+        - chunksDeleted
+        - failures
+        - lastError
+        - pruned
+        - notesDone
+        - documentsDone
+      properties:
+        stage:
+          type:
+            - string
+            - 'null'
+          enum:
+            - adr
+            - pull_request
+            - commit
+            - session
+            - null
+        cursor:
+          type:
+            - string
+            - 'null'
+        sourcesSeen:
+          type: integer
+        sourcesIndexed:
+          type: integer
+        sourcesSkipped:
+          type: integer
+        chunksEmbedded:
+          type: integer
+        chunksDeleted:
+          type: integer
+        failures:
+          type: integer
+        lastError:
+          type:
+            - string
+            - 'null'
+        pruned:
+          type: integer
+        notesDone:
+          type: boolean
+        documentsDone:
+          type: boolean
+    MemoryBackfillStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - runId
+        - state
+        - mode
+        - trigger
+        - startedAt
+        - completedAt
+        - error
+        - progress
+        - summary
+        - configured
+        - runtime
+        - runtimeReason
+        - indexedModels
+        - rowsFromOtherModels
+      properties:
+        runId:
+          type:
+            - string
+            - 'null'
+        state:
+          type:
+            - string
+            - 'null'
+        mode:
+          anyOf:
+            - $ref: '#/components/schemas/MemoryRunMode'
+            - type: 'null'
+        trigger:
+          type:
+            - string
+            - 'null'
+        startedAt:
+          type:
+            - string
+            - 'null'
+        completedAt:
+          type:
+            - string
+            - 'null'
+        error:
+          type:
+            - string
+            - 'null'
+        progress:
+          anyOf:
+            - $ref: '#/components/schemas/MemoryBackfillProgress'
+            - type: 'null'
+        summary:
+          type:
+            - string
+            - 'null'
+        configured:
+          type: boolean
+        runtime:
+          $ref: '#/components/schemas/MemoryRuntimeKind'
+        runtimeReason:
+          type:
+            - string
+            - 'null'
+        indexedModels:
+          type: array
+          items:
+            type: string
+        rowsFromOtherModels:
+          type: integer
+    MemoryEmptyReason:
+      type: string
+      enum:
+        - none
+        - not_configured
+        - unavailable
+        - stamp_mismatch
+        - index_empty
+        - below_threshold
+    MemoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - memoryItemId
+        - score
+        - tier
+        - sourceType
+        - sourceId
+        - sourceRef
+        - title
+        - content
+        - chunkOrdinal
+        - chunkCount
+        - occurredAt
+        - context
+      properties:
+        memoryItemId:
+          type: string
+        score:
+          type: number
+        tier:
+          $ref: '#/components/schemas/MemoryTier'
+        sourceType:
+          $ref: '#/components/schemas/MemorySourceType'
+        sourceId:
+          type:
+            - string
+            - 'null'
+        sourceRef:
+          type:
+            - string
+            - 'null'
+        title:
+          type: string
+        content:
+          type: string
+        chunkOrdinal:
+          type: integer
+        chunkCount:
+          type: integer
+        occurredAt:
+          type:
+            - string
+            - 'null'
+        context:
+          $ref: '#/components/schemas/MemoryResultContext'
+    MemoryResultContext:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - repositoryId
+        - sessionId
+      properties:
+        projectId:
+          type:
+            - string
+            - 'null'
+        repositoryId:
+          type:
+            - string
+            - 'null'
+        sessionId:
+          type:
+            - string
+            - 'null'
+    MemoryRunMode:
+      type: string
+      enum:
+        - incremental
+        - rebuild
+    MemoryRuntimeKind:
+      type: string
+      enum:
+        - not_configured
+        - unavailable
+        - stamp_mismatch
+        - ready
+    MemorySearchResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - results
+        - emptyReason
+        - detail
+        - minScore
+        - embeddingModel
+        - candidatesConsidered
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryItem'
+        emptyReason:
+          $ref: '#/components/schemas/MemoryEmptyReason'
+          description: 'Six situations that all render as "no results" and for which the operator next action is completely different. A screen that renders them as one sends the operator to the wrong place four times out of five.'
+        detail:
+          type:
+            - string
+            - 'null'
+        minScore:
+          type: number
+        embeddingModel:
+          type:
+            - string
+            - 'null'
+        candidatesConsidered:
+          type: integer
+    MemorySettings:
+      type: object
+      additionalProperties: false
+      required:
+        - indexedSources
+        - retentionDays
+      properties:
+        indexedSources:
+          type: object
+          additionalProperties: false
+          properties:
+            session:
+              type: boolean
+            commit:
+              type: boolean
+            adr:
+              type: boolean
+            obsidianNote:
+              type: boolean
+            pullRequest:
+              type: boolean
+            document:
+              type: boolean
+          required:
+            - session
+            - commit
+            - adr
+            - obsidianNote
+            - pullRequest
+            - document
+        retentionDays:
+          type: object
+          additionalProperties: false
+          properties:
+            session:
+              type: integer
+            project:
+              type: integer
+            global:
+              type: integer
+          required:
+            - session
+            - project
+            - global
+    MemorySourceType:
+      type: string
+      enum:
+        - session
+        - commit
+        - adr
+        - obsidian_note
+        - pull_request
+        - document
+    MemoryTier:
+      type: string
+      enum:
+        - session
+        - project
+        - agent
+        - global
+    Message:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sessionId
+        - ordinal
+        - role
+        - status
+        - content
+        - model
+        - tokenUsage
+        - runtimeUuid
+        - occurredAt
+        - createdAt
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        ordinal:
+          type: integer
+        role:
+          $ref: '#/components/schemas/MessageRole'
+        status:
+          type: string
+          enum:
+            - complete
+            - pending
+            - interrupted
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageContentBlock'
+        model:
+          type:
+            - string
+            - 'null'
+        tokenUsage:
+          anyOf:
+            - $ref: '#/components/schemas/MessageTokenUsage'
+            - type: 'null'
+        runtimeUuid:
+          type:
+            - string
+            - 'null'
+        occurredAt:
+          type: string
+        createdAt:
+          type: string
+    MessageContentBlock:
+      type: object
+      additionalProperties: true
+      required:
+        - type
+      properties:
+        type:
+          type: string
+    MessageRole:
+      type: string
+      enum:
+        - user
+        - assistant
+        - system
+        - tool
+    MessageTokenUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+        - output
+      properties:
+        input:
+          type: integer
+        output:
+          type: integer
+    Notification:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - severity
+        - title
+        - body
+        - payload
+        - correlationId
+        - readAt
+        - createdAt
+        - telegram
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        severity:
+          $ref: '#/components/schemas/NotificationSeverity'
+        title:
+          type: string
+        body:
+          type: string
+        payload:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        correlationId:
+          type:
+            - string
+            - 'null'
+        readAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        telegram:
+          $ref: '#/components/schemas/NotificationTelegramDelivery'
+    NotificationSeverity:
+      type: string
+      enum:
+        - info
+        - warning
+        - error
+    NotificationTelegramDelivery:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - sentAt
+        - error
+      properties:
+        status:
+          $ref: '#/components/schemas/TelegramDeliveryStatus'
+        sentAt:
+          type:
+            - string
+            - 'null'
+        error:
+          type:
+            - string
+            - 'null'
+    NotificationType:
+      type: string
+      enum:
+        - session_completed
+        - session_failed
+        - sync_failed
+        - repository_problem
+        - daily_report
+        - cost_budget_alert
+    NotificationsReadAll:
+      type: object
+      additionalProperties: false
+      required:
+        - updated
+      properties:
+        updated:
+          type: integer
+    NotificationsSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - events
+        - dailyReport
+        - quietHours
+      properties:
+        events:
+          type: object
+          additionalProperties: false
+          properties:
+            sessionComplete:
+              type: boolean
+            sessionFailed:
+              type: boolean
+            syncFailed:
+              type: boolean
+            repositoryProblem:
+              type: boolean
+            costBudgetAlert:
+              type: boolean
+          required:
+            - sessionComplete
+            - sessionFailed
+            - syncFailed
+            - repositoryProblem
+            - costBudgetAlert
+        dailyReport:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+            time:
+              type: string
+          required:
+            - enabled
+            - time
+        quietHours:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+            start:
+              type: string
+            end:
+              type: string
+          required:
+            - enabled
+            - start
+            - end
+    ObsidianSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - vaultPath
+        - syncMode
+        - syncIntervalMinutes
+        - conflictPolicy
+      properties:
+        vaultPath:
+          type:
+            - string
+            - 'null'
+        syncMode:
+          type: string
+          enum:
+            - two_way
+            - one_way
+            - paused
+        syncIntervalMinutes:
+          type: integer
+        conflictPolicy:
+          type: string
+          enum:
+            - newer_wins
+            - obsidian_wins
+            - mission_control_wins
+            - manual
+    ObsidianSyncMode:
+      type: string
+      enum:
+        - two_way
+        - one_way
+        - paused
+    OllamaSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - host
+        - port
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+    Project:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - workspaceId
+        - name
+        - description
+        - workflowMode
+        - createdAt
+        - updatedAt
+        - archivedAt
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        workflowMode:
+          anyOf:
+            - $ref: '#/components/schemas/WorkflowMode'
+            - type: 'null'
+          description: 'null means INHERIT integrations.github.workflowMode (arbitration A10), not "no mode". Three-valued by design: a two-valued field could not express "follow the global default".'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        archivedAt:
+          type:
+            - string
+            - 'null'
+    ProjectAvailableAgents:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - team
+        - agents
+      properties:
+        projectId:
+          type: string
+        team:
+          anyOf:
+            - $ref: '#/components/schemas/AssignedTeam'
+            - type: 'null'
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableAgent'
+    PullRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - repositoryId
+        - number
+        - title
+        - url
+        - state
+        - authorLogin
+        - sourceBranch
+        - targetBranch
+        - openedAt
+        - reviewedAt
+        - mergedAt
+        - closedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        repositoryId:
+          type: string
+        number:
+          type: integer
+        title:
+          type: string
+        url:
+          type:
+            - string
+            - 'null'
+        state:
+          $ref: '#/components/schemas/PullRequestState'
+        authorLogin:
+          type:
+            - string
+            - 'null'
+        sourceBranch:
+          type:
+            - string
+            - 'null'
+        targetBranch:
+          type:
+            - string
+            - 'null'
+        openedAt:
+          type:
+            - string
+            - 'null'
+        reviewedAt:
+          type:
+            - string
+            - 'null'
+        mergedAt:
+          type:
+            - string
+            - 'null'
+        closedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    PullRequestDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - repositoryId
+        - number
+        - title
+        - url
+        - state
+        - authorLogin
+        - sourceBranch
+        - targetBranch
+        - openedAt
+        - reviewedAt
+        - mergedAt
+        - closedAt
+        - createdAt
+        - updatedAt
+        - description
+      properties:
+        id:
+          type: string
+        repositoryId:
+          type: string
+        number:
+          type: integer
+        title:
+          type: string
+        url:
+          type:
+            - string
+            - 'null'
+        state:
+          $ref: '#/components/schemas/PullRequestState'
+        authorLogin:
+          type:
+            - string
+            - 'null'
+        sourceBranch:
+          type:
+            - string
+            - 'null'
+        targetBranch:
+          type:
+            - string
+            - 'null'
+        openedAt:
+          type:
+            - string
+            - 'null'
+        reviewedAt:
+          type:
+            - string
+            - 'null'
+        mergedAt:
+          type:
+            - string
+            - 'null'
+        closedAt:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+    PullRequestState:
+      type: string
+      enum:
+        - open
+        - merged
+        - closed
+        - draft
+    QdrantSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - host
+        - port
+        - apiKey
+        - embeddingModel
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        apiKey:
+          $ref: '#/components/schemas/SecretFieldRead'
+        embeddingModel:
+          type: string
+    Repository:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - name
+        - localPath
+        - remoteUrl
+        - visibility
+        - defaultBranch
+        - lastSyncedAt
+        - syncStatus
+        - lastSyncError
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type:
+            - string
+            - 'null'
+        name:
+          type: string
+        localPath:
+          type: string
+        remoteUrl:
+          type:
+            - string
+            - 'null'
+        visibility:
+          $ref: '#/components/schemas/RepositoryVisibility'
+        defaultBranch:
+          type: string
+        lastSyncedAt:
+          type:
+            - string
+            - 'null'
+        syncStatus:
+          $ref: '#/components/schemas/RepositorySyncStatus'
+        lastSyncError:
+          type:
+            - string
+            - 'null'
+          description: 'Why the last sync failed. Additive to TDS 04 5.1 and served so the Repositories view can explain a `failed` badge without sending the operator to the audit log.'
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    RepositoryStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - repositoryId
+        - localPath
+        - isGitWorkingTree
+        - currentBranch
+        - detachedHead
+        - headSha
+        - uncommittedFiles
+        - ahead
+        - behind
+        - unavailableReason
+        - detail
+        - checkedAt
+      properties:
+        repositoryId:
+          type: string
+        localPath:
+          type: string
+        isGitWorkingTree:
+          type: boolean
+        currentBranch:
+          type:
+            - string
+            - 'null'
+        detachedHead:
+          type: boolean
+        headSha:
+          type:
+            - string
+            - 'null'
+        uncommittedFiles:
+          type:
+            - integer
+            - 'null'
+        ahead:
+          type:
+            - integer
+            - 'null'
+        behind:
+          type:
+            - integer
+            - 'null'
+        unavailableReason:
+          anyOf:
+            - $ref: '#/components/schemas/WorkingTreeUnavailableReason'
+            - type: 'null'
+          description: 'null iff the tree was read. Otherwise why not - an answer, not an error. Every value must render as *unverifiable*, never as clean.'
+        detail:
+          type:
+            - string
+            - 'null'
+        checkedAt:
+          type: string
+    RepositorySyncStatus:
+      type: string
+      enum:
+        - ok
+        - failed
+        - never
+    RepositoryVisibility:
+      type: string
+      enum:
+        - public
+        - private
+        - unknown
+    SearchResult:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - id
+        - title
+        - snippet
+        - occurredAt
+        - rank
+        - context
+      properties:
+        type:
+          $ref: '#/components/schemas/SearchType'
+        id:
+          type: string
+        title:
+          type: string
+          description: 'PLAIN TEXT - render as text, never as HTML. It is the branch label straight from the corpus, so a commit subject containing markup arrives with those characters intact.'
+        snippet:
+          type: string
+          description: 'HTML - and <mark>/</mark> are the only tags it can contain. Everything from the corpus is escaped first, which is what makes that promise also the bound.'
+        occurredAt:
+          type: string
+        rank:
+          type: number
+        context:
+          $ref: '#/components/schemas/SearchResultContext'
+    SearchResultContext:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - repositoryId
+        - sessionId
+      properties:
+        projectId:
+          type:
+            - string
+            - 'null'
+        repositoryId:
+          type:
+            - string
+            - 'null'
+        sessionId:
+          type:
+            - string
+            - 'null'
+    SearchType:
+      type: string
+      enum:
+        - session
+        - adr
+        - commit
+        - message
+        - pull_request
+    SecretFieldRead:
+      type: object
+      additionalProperties: false
+      required:
+        - isSet
+        - updatedAt
+      properties:
+        isSet:
+          type: boolean
+        updatedAt:
+          type:
+            - string
+            - 'null'
+    SecuritySettings:
+      type: object
+      additionalProperties: false
+      required:
+        - sessionTimeoutMinutes
+        - auditLogRetentionDays
+        - allowedOrigins
+      properties:
+        sessionTimeoutMinutes:
+          type: integer
+        auditLogRetentionDays:
+          type: integer
+        allowedOrigins:
+          type: array
+          items:
+            type: string
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - repositoryId
+        - sessionType
+        - state
+        - title
+        - failureReason
+        - notes
+        - branch
+        - workingDirectory
+        - agentId
+        - runtime
+        - observation
+        - costUsd
+        - tokenUsage
+        - durationSeconds
+        - resumedFromSessionId
+        - clonedFromSessionId
+        - createdAt
+        - startedAt
+        - completedAt
+        - archivedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        repositoryId:
+          type:
+            - string
+            - 'null'
+        sessionType:
+          $ref: '#/components/schemas/SessionType'
+        state:
+          $ref: '#/components/schemas/SessionState'
+        title:
+          type: string
+          description: 'Always a string; '''' is the unset value, not a title of zero length. Display falls back to a derived label.'
+        failureReason:
+          type:
+            - string
+            - 'null'
+          description: 'Why a `failed` Session failed - spawn_error, process_crash, backend_restart. `null` in every other state, and legitimately `null` in `failed` too when the transition carried no reason. It is the whole triage signal.'
+        notes:
+          type:
+            - string
+            - 'null'
+        branch:
+          type:
+            - string
+            - 'null'
+        workingDirectory:
+          type: string
+        agentId:
+          type:
+            - string
+            - 'null'
+          description: 'The Agent persona this Session runs as (PRD 5.1), or null. The id ONLY - the Agent resource is served by GET /agents/{id}, because inlining a persona would put a 20 000-character system prompt on the session list.'
+        runtime:
+          $ref: '#/components/schemas/SessionRuntimeInfo'
+        observation:
+          anyOf:
+            - $ref: '#/components/schemas/SessionObservation'
+            - type: 'null'
+        costUsd:
+          type:
+            - number
+            - 'null'
+        tokenUsage:
+          anyOf:
+            - $ref: '#/components/schemas/SessionTokenUsage'
+            - type: 'null'
+        durationSeconds:
+          type:
+            - integer
+            - 'null'
+        resumedFromSessionId:
+          type:
+            - string
+            - 'null'
+        clonedFromSessionId:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        startedAt:
+          type:
+            - string
+            - 'null'
+        completedAt:
+          type:
+            - string
+            - 'null'
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type: string
+    SessionExport:
+      type: object
+      additionalProperties: false
+      required:
+        - format
+        - filename
+        - content
+      properties:
+        format:
+          type: string
+          enum:
+            - markdown
+        filename:
+          type: string
+        content:
+          type: string
+    SessionFileTouch:
+      type: object
+      additionalProperties: false
+      required:
+        - path
+        - outsideRoot
+        - touchCount
+        - toolTouchCount
+        - commitCount
+        - sources
+        - status
+        - additions
+        - deletions
+        - lastTouchedAt
+      properties:
+        path:
+          type: string
+        outsideRoot:
+          type: boolean
+        touchCount:
+          type: integer
+        toolTouchCount:
+          type: integer
+        commitCount:
+          type: integer
+        sources:
+          type: array
+          items:
+            type: string
+            enum:
+              - tool
+              - commit
+        status:
+          type:
+            - string
+            - 'null'
+        additions:
+          type:
+            - integer
+            - 'null'
+        deletions:
+          type:
+            - integer
+            - 'null'
+        lastTouchedAt:
+          type: string
+    SessionFiles:
+      type: object
+      additionalProperties: false
+      required:
+        - root
+        - files
+        - totalFiles
+        - truncated
+        - commitsAsOf
+        - completeness
+        - completenessReason
+      properties:
+        root:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionFileTouch'
+        totalFiles:
+          type: integer
+        truncated:
+          type: boolean
+        commitsAsOf:
+          type:
+            - string
+            - 'null'
+        completeness:
+          type: string
+          enum:
+            - complete
+            - partial
+          description: 'Contractual: a Files tab that merely looks short is indistinguishable from a Session that genuinely touched few files, so `partial` must be rendered and never quietly absorbed.'
+        completenessReason:
+          type:
+            - string
+            - 'null'
+          enum:
+            - observation_degraded
+            - hooks_not_installed
+            - null
+    SessionObservation:
+      type: object
+      additionalProperties: false
+      required:
+        - channel
+        - degraded
+        - reason
+        - driftCount
+        - updatedAt
+      properties:
+        channel:
+          type: string
+          enum:
+            - hooks_and_transcript
+            - hooks_only
+            - transcript_only
+        degraded:
+          type: boolean
+        reason:
+          type:
+            - string
+            - 'null'
+        driftCount:
+          type: integer
+        updatedAt:
+          type: string
+    SessionRuntimeInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - runtimeSessionId
+        - claudeVersion
+        - model
+        - machine
+        - environment
+      properties:
+        kind:
+          type: string
+        runtimeSessionId:
+          type:
+            - string
+            - 'null'
+        claudeVersion:
+          type:
+            - string
+            - 'null'
+        model:
+          type:
+            - string
+            - 'null'
+        machine:
+          type:
+            - string
+            - 'null'
+        environment:
+          type:
+            - string
+            - 'null'
+    SessionState:
+      type: string
+      enum:
+        - created
+        - running
+        - paused
+        - completed
+        - failed
+        - archived
+    SessionTokenUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+        - output
+        - cacheRead
+        - cacheWrite
+      properties:
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+        cacheWrite:
+          type: integer
+    SessionType:
+      type: string
+      enum:
+        - managed
+        - observed
+    SettingsDocument:
+      type: object
+      additionalProperties: false
+      required:
+        - general
+        - notifications
+        - memory
+        - agents
+        - security
+        - integrations
+      properties:
+        general:
+          $ref: '#/components/schemas/GeneralSettings'
+        notifications:
+          $ref: '#/components/schemas/NotificationsSettings'
+        memory:
+          $ref: '#/components/schemas/MemorySettings'
+        agents:
+          $ref: '#/components/schemas/AgentsSettings'
+        security:
+          $ref: '#/components/schemas/SecuritySettings'
+        integrations:
+          $ref: '#/components/schemas/IntegrationsSettings'
+    Spend:
+      type: object
+      additionalProperties: false
+      required:
+        - timezone
+        - generatedAt
+        - day
+        - month
+        - budget
+        - dayStatus
+      properties:
+        timezone:
+          type: string
+        generatedAt:
+          type: string
+        day:
+          $ref: '#/components/schemas/SpendPeriod'
+        month:
+          $ref: '#/components/schemas/SpendPeriod'
+        budget:
+          $ref: '#/components/schemas/SpendBudget'
+        dayStatus:
+          $ref: '#/components/schemas/SpendDayStatus'
+          description: 'Computed server-side, deliberately: four surfaces state the same spend number and must never disagree about when the bar turns amber. The client rounds a percentage for display and derives nothing else.'
+    SpendBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - dailyUsd
+        - perSessionUsd
+        - alertThresholdPercent
+        - alertsEnabled
+      properties:
+        dailyUsd:
+          type:
+            - number
+            - 'null'
+        perSessionUsd:
+          type:
+            - number
+            - 'null'
+        alertThresholdPercent:
+          type: integer
+        alertsEnabled:
+          type: boolean
+    SpendDayStatus:
+      type: string
+      enum:
+        - no_budget
+        - ok
+        - alert
+        - over
+    SpendPeriod:
+      type: object
+      additionalProperties: false
+      required:
+        - periodStart
+        - periodEnd
+        - totalCostUsd
+        - sessionCount
+      properties:
+        periodStart:
+          type: string
+        periodEnd:
+          type: string
+        totalCostUsd:
+          type: number
+        sessionCount:
+          type: integer
+    StoppedSession:
+      type: object
+      additionalProperties: false
+      required:
+        - sessionId
+        - outcome
+      properties:
+        sessionId:
+          type: string
+        outcome:
+          type: string
+          enum:
+            - ended
+            - cancelled
+            - already_terminal
+    SyncPreview:
+      type: object
+      additionalProperties: false
+      required:
+        - vaultPath
+        - syncMode
+        - conflictPolicy
+        - paused
+        - problem
+        - summary
+        - items
+        - itemsTruncated
+        - duplicateIdPaths
+      properties:
+        vaultPath:
+          type: string
+        syncMode:
+          $ref: '#/components/schemas/ObsidianSyncMode'
+        conflictPolicy:
+          type: string
+        paused:
+          type: boolean
+        problem:
+          type:
+            - object
+            - 'null'
+          additionalProperties: false
+          required:
+            - kind
+            - detail
+          properties:
+            kind:
+              type: string
+            detail:
+              type: string
+        summary:
+          $ref: '#/components/schemas/SyncPreviewSummary'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncPreviewItem'
+        itemsTruncated:
+          type: boolean
+        duplicateIdPaths:
+          type: array
+          items:
+            type: string
+    SyncPreviewItem:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - entityType
+        - entityId
+        - vaultPath
+        - reason
+        - resolution
+        - wouldKeepVaultCopy
+      properties:
+        action:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: string
+        vaultPath:
+          type: string
+        reason:
+          type: string
+        resolution:
+          type:
+            - string
+            - 'null'
+        wouldKeepVaultCopy:
+          type: boolean
+    SyncPreviewSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - create
+        - update
+        - import
+        - inSync
+        - conflict
+        - pendingPull
+        - error
+        - unmanaged
+      properties:
+        create:
+          type: integer
+        update:
+          type: integer
+        import:
+          type: integer
+        inSync:
+          type: integer
+        conflict:
+          type: integer
+        pendingPull:
+          type: integer
+        error:
+          type: integer
+        unmanaged:
+          type: integer
+    SyncRun:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - state
+        - trigger
+        - startedAt
+        - completedAt
+        - stats
+        - error
+        - createdAt
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - obsidian
+        state:
+          $ref: '#/components/schemas/SyncRunState'
+        trigger:
+          $ref: '#/components/schemas/SyncRunTrigger'
+        startedAt:
+          type:
+            - string
+            - 'null'
+        completedAt:
+          type:
+            - string
+            - 'null'
+        stats:
+          anyOf:
+            - $ref: '#/components/schemas/SyncRunStats'
+            - type: 'null'
+        error:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+    SyncRunDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - state
+        - trigger
+        - startedAt
+        - completedAt
+        - stats
+        - error
+        - createdAt
+        - conflicts
+        - errors
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+            - obsidian
+        state:
+          $ref: '#/components/schemas/SyncRunState'
+        trigger:
+          $ref: '#/components/schemas/SyncRunTrigger'
+        startedAt:
+          type:
+            - string
+            - 'null'
+        completedAt:
+          type:
+            - string
+            - 'null'
+        stats:
+          anyOf:
+            - $ref: '#/components/schemas/SyncRunStats'
+            - type: 'null'
+        error:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type: string
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncRunFileDetail'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncRunFileDetail'
+    SyncRunFileDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - vaultPath
+        - entityType
+        - entityId
+        - status
+        - lastError
+        - lastSyncedAt
+      properties:
+        vaultPath:
+          type: string
+        entityType:
+          type:
+            - string
+            - 'null'
+        entityId:
+          type:
+            - string
+            - 'null'
+        status:
+          type: string
+        lastError:
+          type:
+            - string
+            - 'null'
+        lastSyncedAt:
+          type:
+            - string
+            - 'null'
+    SyncRunState:
+      type: string
+      enum:
+        - queued
+        - running
+        - completed
+        - failed
+    SyncRunStats:
+      type: object
+      additionalProperties: false
+      required:
+        - notesExported
+        - notesImported
+        - conflicts
+      properties:
+        notesExported:
+          type: integer
+        notesImported:
+          type: integer
+        conflicts:
+          type: integer
+    SyncRunTrigger:
+      type: string
+      enum:
+        - user
+        - schedule
+    TelegramDeliveryStatus:
+      type: string
+      enum:
+        - skipped
+        - pending
+        - sent
+        - failed
+    TelegramSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - botToken
+        - chatId
+        - enabled
+      properties:
+        botToken:
+          $ref: '#/components/schemas/SecretFieldRead'
+        chatId:
+          type:
+            - string
+            - 'null'
+        enabled:
+          type: boolean
+    TestConnectionResult:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - checkedAt
+        - latencyMs
+        - message
+        - detail
+      properties:
+        ok:
+          type: boolean
+        checkedAt:
+          type: string
+        latencyMs:
+          type:
+            - number
+            - 'null'
+        message:
+          type: string
+        detail:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+    TimelineEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - occurredAt
+        - type
+        - kind
+        - trigger
+      properties:
+        id:
+          type: string
+        occurredAt:
+          type: string
+        type:
+          type: string
+        kind:
+          $ref: '#/components/schemas/TimelineKind'
+        trigger:
+          type: string
+          enum:
+            - user
+            - system
+        fromState:
+          $ref: '#/components/schemas/SessionState'
+        toState:
+          $ref: '#/components/schemas/SessionState'
+        refType:
+          type: string
+          enum:
+            - commit
+            - message
+        refId:
+          type: string
+        detail:
+          type: string
+    TimelineKind:
+      type: string
+      enum:
+        - state_changed
+        - commit_linked
+        - prompt_submitted
+        - tool_used
+        - observation_changed
+        - other
+    WorkflowCostBudget:
+      type: object
+      additionalProperties: false
+      required:
+        - dailyUsd
+        - spentTodayUsd
+        - remainingUsd
+      properties:
+        dailyUsd:
+          type:
+            - number
+            - 'null'
+        spentTodayUsd:
+          type: number
+        remainingUsd:
+          type:
+            - number
+            - 'null'
+    WorkflowCostEstimate:
+      type: object
+      additionalProperties: false
+      required:
+        - workflowId
+        - stepCount
+        - defaultMaxSessions
+        - basis
+        - steps
+        - projected
+        - stepsWithoutHistory
+        - budget
+      properties:
+        workflowId:
+          type: string
+        stepCount:
+          type: integer
+        defaultMaxSessions:
+          type: integer
+        basis:
+          type: string
+          enum:
+            - observed_sessions
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowCostEstimateStep'
+        projected:
+          anyOf:
+            - $ref: '#/components/schemas/WorkflowCostProjection'
+            - type: 'null'
+        stepsWithoutHistory:
+          type: integer
+        budget:
+          $ref: '#/components/schemas/WorkflowCostBudget'
+    WorkflowCostEstimateStep:
+      type: object
+      additionalProperties: false
+      required:
+        - ordinal
+        - agentId
+        - agentName
+        - observed
+      properties:
+        ordinal:
+          type: integer
+        agentId:
+          type: string
+        agentName:
+          type: string
+        observed:
+          anyOf:
+            - $ref: '#/components/schemas/WorkflowCostObserved'
+            - type: 'null'
+    WorkflowCostObserved:
+      type: object
+      additionalProperties: false
+      required:
+        - sessionCount
+        - meanUsd
+        - maxUsd
+      properties:
+        sessionCount:
+          type: integer
+        meanUsd:
+          type: number
+        maxUsd:
+          type: number
+    WorkflowCostProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - meanUsd
+        - maxUsd
+        - coveredSteps
+      properties:
+        meanUsd:
+          type: number
+        maxUsd:
+          type: number
+        coveredSteps:
+          type: integer
+    WorkflowMode:
+      type: string
+      enum:
+        - manual
+        - assisted
+    WorkingTreeUnavailableReason:
+      type: string
+      enum:
+        - path_missing
+        - not_a_directory
+        - not_a_git_repository
+        - git_unavailable
+        - timed_out
+        - git_failed
   responses:
     ErrorEnvelope:
       description: 'Any non-2xx response (F5.4). The status code and the `error.code` registry entry carry the meaning; see docs/tds/04-api-contracts-and-events.md §1.3.'

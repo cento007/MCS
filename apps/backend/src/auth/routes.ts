@@ -1,11 +1,22 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ApiError, dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  listEnvelopeSchema,
+  noContentSchema,
+} from '../http/response-schema.js';
 import { serializeClearedSessionCookie, serializeSessionCookie } from './cookie.js';
 import { PUBLIC_ROUTE, requirePrincipal } from './guard.js';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './passwords.js';
 import { API_TOKEN_SCOPES, type ApiTokenScope } from './principal.js';
 import { FixedWindowRateLimiter, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS } from './rate-limit.js';
+import {
+  apiTokenSchema,
+  authMeSchema,
+  createdApiTokenSchema,
+  loginResultSchema,
+} from './response-schemas.js';
 import type { ApiTokenView, AuthService, RequestContext } from './service.js';
 
 /**
@@ -152,7 +163,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
     '/api/v1/auth/login',
     {
       config: { auth: PUBLIC_ROUTE },
-      schema: { body: loginBodySchema },
+      schema: { body: loginBodySchema, response: { 200: dataEnvelopeSchema(loginResultSchema) } },
     },
     async (request, reply) => {
       const decision = loginRateLimiter.consume(request.ip);
@@ -184,28 +195,39 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
     },
   );
 
-  app.post('/api/v1/auth/logout', async (request, reply) => {
-    await auth.logout(requirePrincipal(request), contextOf(request));
-    reply.header('set-cookie', serializeClearedSessionCookie({ secure: cookieSecureFor(request) }));
-    return noContent(reply);
-  });
+  app.post(
+    '/api/v1/auth/logout',
+    { schema: { response: { 204: noContentSchema } } },
+    async (request, reply) => {
+      await auth.logout(requirePrincipal(request), contextOf(request));
+      reply.header(
+        'set-cookie',
+        serializeClearedSessionCookie({ secure: cookieSecureFor(request) }),
+      );
+      return noContent(reply);
+    },
+  );
 
-  app.get('/api/v1/auth/me', async (request) => {
-    const principal = requirePrincipal(request);
-    return dataEnvelope({
-      user: { id: principal.userId, username: principal.username },
-      authMethod: principal.authMethod,
-      // `null` for token auth (TDS 04 §3.1) — a bearer token has no server-side session.
-      session:
-        principal.authSession === null
-          ? null
-          : { expiresAt: principal.authSession.expiresAt.toISOString() },
-    });
-  });
+  app.get(
+    '/api/v1/auth/me',
+    { schema: { response: { 200: dataEnvelopeSchema(authMeSchema) } } },
+    async (request) => {
+      const principal = requirePrincipal(request);
+      return dataEnvelope({
+        user: { id: principal.userId, username: principal.username },
+        authMethod: principal.authMethod,
+        // `null` for token auth (TDS 04 §3.1) — a bearer token has no server-side session.
+        session:
+          principal.authSession === null
+            ? null
+            : { expiresAt: principal.authSession.expiresAt.toISOString() },
+      });
+    },
+  );
 
   app.post<{ Body: PasswordBody }>(
     '/api/v1/auth/password',
-    { schema: { body: passwordBodySchema } },
+    { schema: { body: passwordBodySchema, response: { 204: noContentSchema } } },
     async (request, reply) => {
       await auth.changePassword(requirePrincipal(request), request.body, contextOf(request));
       return noContent(reply);
@@ -216,7 +238,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/auth/tokens',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(apiTokenSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const afterId = decodeIdCursor(request.query.cursor);
@@ -230,7 +257,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
 
   app.post<{ Body: CreateTokenBody }>(
     '/api/v1/auth/tokens',
-    { schema: { body: createTokenBodySchema } },
+    {
+      schema: {
+        body: createTokenBodySchema,
+        response: { 201: dataEnvelopeSchema(createdApiTokenSchema) },
+      },
+    },
     async (request, reply) => {
       const created = await auth.createApiToken(
         requirePrincipal(request),
@@ -253,7 +285,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRoutesOpti
 
   app.delete<{ Params: TokenIdParams }>(
     '/api/v1/auth/tokens/:id',
-    { schema: { params: tokenIdParamsSchema } },
+    { schema: { params: tokenIdParamsSchema, response: { 204: noContentSchema } } },
     async (request, reply) => {
       await auth.revokeApiToken(requirePrincipal(request), request.params.id, contextOf(request));
       return noContent(reply);

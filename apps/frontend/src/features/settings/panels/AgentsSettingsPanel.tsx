@@ -24,8 +24,9 @@ import { usePanelForm } from '../form.js';
  *    agent's sessions. A real reader, with a visible effect.
  *  - `defaultRuntime` is **not** declared, and this panel does not draw it. `AGENT_RUNTIMES` has
  *    exactly one member because exactly one runtime can be launched (F1.5), so a control choosing
- *    among them chooses nothing — which is the `integrations.ollama.enabled` mistake, and this
- *    codebase is still paying for that one.
+ *    among them chooses nothing — which is the `integrations.ollama.enabled` mistake, and that one
+ *    was eventually withdrawn from the key registry rather than wired, for want of anything to
+ *    gate.
  *
  * This panel replaced a `PhasePlaceholder` that promised "default runtime and default permission
  * template". Half of that promise is now real and the other half was withdrawn on purpose, so

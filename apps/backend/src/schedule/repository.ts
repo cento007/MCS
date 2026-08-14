@@ -1,4 +1,4 @@
-import { type Db, schema } from '@mc/shared';
+import { type Db, QUEUE_NAMES, schema } from '@mc/shared';
 import { and, desc, eq, isNotNull, sql } from 'drizzle-orm';
 
 /**
@@ -14,10 +14,12 @@ export interface ScheduleSources {
   readonly repositoriesLastSyncedAt: Date | null;
   /** `createdAt` of the newest Notification with `type = 'daily_report'` (TDS 03 §4.2). */
   readonly dailyReportLastRunAt: Date | null;
+  /** The `memory.retention` chain's own job rows — see {@link readQueueTickTimes}. */
+  readonly memoryRetention: QueueTickTimes;
 }
 
 export async function readScheduleSources(db: Db): Promise<ScheduleSources> {
-  const [obsidian, repositories, dailyReport] = await Promise.all([
+  const [obsidian, repositories, dailyReport, memoryRetention] = await Promise.all([
     // Newest run first — served by `ix_sync_runs_kind_created_at`. A run still in flight has
     // `completed_at IS NULL`, which reads as "no completed run yet" rather than as a lie about
     // when the last one finished.
@@ -43,13 +45,68 @@ export async function readScheduleSources(db: Db): Promise<ScheduleSources> {
       )
       .orderBy(desc(schema.notifications.createdAt))
       .limit(1),
+
+    readQueueTickTimes(db, QUEUE_NAMES.MEMORY_RETENTION),
   ]);
 
   return {
     obsidianLastRunAt: obsidian[0]?.completedAt ?? null,
     repositoriesLastSyncedAt: asDate(repositories[0]?.lastSyncedAt ?? null),
     dailyReportLastRunAt: dailyReport[0]?.createdAt ?? null,
+    memoryRetention,
   };
+}
+
+/** When a self-rescheduling job chain next fires, and when it last finished. */
+export interface QueueTickTimes {
+  /** `start_after` of the earliest tick still waiting. `null` when the chain is not scheduled. */
+  readonly nextAt: Date | null;
+  /** `completed_on` of the newest finished tick pg-boss still holds. */
+  readonly lastRunAt: Date | null;
+}
+
+/**
+ * Read a self-rescheduling chain's next and last tick **from the queue itself**.
+ *
+ * Every other row in §7.7 derives `nextRunAt` from an interval setting plus a domain artifact —
+ * a `SyncRun`, `repositories.last_synced_at`, a `daily_report` Notification. The memory retention
+ * chain has no such artifact: a sweep that deletes nothing writes nothing, and its interval is a
+ * constant rather than a setting (`MEMORY_RETENTION_TICK_MINUTES` — deliberately not a knob). Its
+ * next tick is a *durable job*, so the job is where the answer is, and it is the exact instant
+ * rather than an interval arithmetic that would only agree with it by luck.
+ *
+ * **Best-effort and deliberately isolated**, exactly like `readOldestReadyJobAge` in
+ * `health/services.ts`: this reads pg-boss's vendored table, so a schema change there must cost a
+ * detail on one widget row, never the whole endpoint. `to_regclass` guards an install whose queue
+ * has not been provisioned (the no-op queue, and every unit test).
+ *
+ * `lastRunAt` is bounded by pg-boss's own retention of completed jobs — it goes back to `null`
+ * once the last successful tick has been deleted. That is a smaller claim than the other three
+ * rows make, and it is the honest one available: nothing else records that a sweep happened.
+ */
+export async function readQueueTickTimes(db: Db, queueName: string): Promise<QueueTickTimes> {
+  try {
+    const result = await db.execute<{
+      next_at: Date | string | null;
+      last_at: Date | string | null;
+    }>(
+      sql`
+        SELECT CASE WHEN to_regclass('pgboss.job') IS NULL THEN NULL ELSE (
+                 SELECT min(start_after) FROM pgboss.job
+                  WHERE name = ${queueName} AND state IN ('created', 'retry')) END AS next_at,
+               CASE WHEN to_regclass('pgboss.job') IS NULL THEN NULL ELSE (
+                 SELECT max(completed_on) FROM pgboss.job
+                  WHERE name = ${queueName} AND state = 'completed') END AS last_at
+      `,
+    );
+
+    return {
+      nextAt: asDate(result.rows[0]?.next_at ?? null),
+      lastRunAt: asDate(result.rows[0]?.last_at ?? null),
+    };
+  } catch {
+    return { nextAt: null, lastRunAt: null };
+  }
 }
 
 /**

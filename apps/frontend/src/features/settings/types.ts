@@ -139,16 +139,18 @@ export interface QdrantSettings {
 }
 
 /**
- * Phase 3 — `host`/`port` are live: embeddings are produced through this runtime regardless of
- * the `enabled` toggle, which nothing currently reads (it is reserved for using Ollama as an
- * *agent* runtime, PRD §5.4). `defaultModel` is the agent-runtime model, not the embedding one —
- * that lives on `QdrantSettings.embeddingModel`, beside the collection it must match.
+ * Phase 3 — `host` and `port`, both live: every embedding is produced through them.
+ *
+ * The card used to carry two more fields, `enabled` and `defaultModel`, and both described Ollama
+ * as an *agent* runtime (PRD §5.4) that this build cannot select — `AGENT_RUNTIMES` has one
+ * member. Neither was read by anything, and the toggle's own description said so, which is a
+ * strange thing for a switch to have to admit. They were withdrawn from the key registry rather
+ * than left as furniture; the embedding model lives on `QdrantSettings.embeddingModel`, beside the
+ * collection it must match, and always did.
  */
 export interface OllamaSettings {
   readonly host: string;
   readonly port: number;
-  readonly defaultModel: string;
-  readonly enabled: boolean;
 }
 
 export interface IntegrationsSettings {

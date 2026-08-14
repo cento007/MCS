@@ -22,6 +22,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import { AGENT_RUNTIMES, type AgentRuntime } from '../../entities/agent.js';
 import {
   MESSAGE_ROLES,
   SEMI_TERMINAL_SESSION_STATES,
@@ -40,8 +41,22 @@ import { projects, repositories } from './projects.js';
  */
 const SESSION_TYPES = ['managed', 'observed'] as const satisfies readonly SessionType[];
 
-/** Claude Code CLI is the primary V1 runtime; Ollama is optional (F1.5). V2 runtimes via CHECK alter. */
-const SESSION_RUNTIMES = ['claude_code', 'ollama'] as const;
+/**
+ * The runtimes a Session can run on — **derived from `AGENT_RUNTIMES`, not re-typed.**
+ *
+ * It read `['claude_code', 'ollama']` until migration `0010`, and that was the wider of two
+ * disagreeing claims: `ck_agents_runtime` admits only `claude_code`, `AgentBindingResolver` copies
+ * an agent's runtime onto the Session, `insertSession` defaults to `claude_code`, and
+ * `ManagedRuntime` drives the Claude Agent SDK unconditionally. No code path could produce an
+ * `ollama` Session, and the live database contained none — so the CHECK described a capability
+ * that did not exist. The same slice withdrew `integrations.ollama.enabled`, which was the
+ * settings half of the same fiction.
+ *
+ * `satisfies readonly AgentRuntime[]` is what stops it drifting again: the two vocabularies are
+ * now one, and widening for a real second runtime is a single edit in `entities/agent.ts` plus a
+ * CHECK alter on both tables. Exactly the mechanism `agents.ts` already uses.
+ */
+const SESSION_RUNTIMES = AGENT_RUNTIMES satisfies readonly AgentRuntime[];
 
 /**
  * The three non-terminal F7 states, **derived** from the state machine rather than re-typed:

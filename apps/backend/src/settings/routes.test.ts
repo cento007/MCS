@@ -1,14 +1,20 @@
 import {
   type Db,
+  DOCUMENT_CATEGORIES,
   INTEGRATION_SLUGS,
   type IntegrationSlug,
-  type IntegrationsSettings,
   type SettingsDocument,
 } from '@mc/shared';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Principal } from '../auth/principal.js';
 import { registerHttpConventions } from '../http/index.js';
+import {
+  categoryDocument,
+  EMPTY_CATEGORY,
+  integrationDocument,
+  integrationsDocument,
+} from './documents.js';
 import { registerSettingsRoutes, type SettingsPort, type TestConnectionPort } from './routes.js';
 import { SecretVault } from './secrets.js';
 import { TestConnectionService } from './test-connection/index.js';
@@ -40,14 +46,35 @@ const PRINCIPAL: Principal = {
   apiToken: null,
 };
 
+/**
+ * A fresh install's documents, straight from the key registry.
+ *
+ * The stubs here used to be `{ category }` and `{} as unknown as IntegrationsSettings` — shapes no
+ * `SettingsPort` could ever return. That was invisible while the routes published no response
+ * schema; now the conformance check reads every reply against the schema its route declares, and a
+ * fake that lies about its port's contract is caught the same way a serializer that drifted would
+ * be. Building them from `categoryDocument`/`integrationsDocument` costs one line each, removes two
+ * `as unknown as` casts, and keeps these tests about routing rather than about content.
+ */
+const defaultDocument: SettingsDocument = {
+  ...(Object.fromEntries(
+    DOCUMENT_CATEGORIES.map((category) => [category, categoryDocument(category, EMPTY_CATEGORY)]),
+  ) as Omit<SettingsDocument, 'integrations'>),
+  integrations: integrationsDocument(EMPTY_CATEGORY),
+};
+
 function fakeSettings(overrides: Partial<SettingsPort> = {}): SettingsPort {
   return {
-    readAll: overrides.readAll ?? (async () => ({ general: {} }) as unknown as SettingsDocument),
-    readCategory: overrides.readCategory ?? (async (category) => ({ category })),
-    readIntegrations:
-      overrides.readIntegrations ?? (async () => ({}) as unknown as IntegrationsSettings),
-    replaceCategory: overrides.replaceCategory ?? (async (_p, category) => ({ category })),
-    replaceIntegration: overrides.replaceIntegration ?? (async (_p, slug) => ({ slug })),
+    readAll: overrides.readAll ?? (async () => defaultDocument),
+    readCategory:
+      overrides.readCategory ?? (async (category) => categoryDocument(category, EMPTY_CATEGORY)),
+    readIntegrations: overrides.readIntegrations ?? (async () => defaultDocument.integrations),
+    replaceCategory:
+      overrides.replaceCategory ??
+      (async (_p, category) => categoryDocument(category, EMPTY_CATEGORY)),
+    replaceIntegration:
+      overrides.replaceIntegration ??
+      (async (_p, slug) => integrationDocument(slug, EMPTY_CATEGORY)),
   };
 }
 
@@ -105,7 +132,7 @@ describe('reads (§7.3)', () => {
     const response = await build().inject({ method: 'GET', url: '/api/v1/settings/general' });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ data: { category: 'general' } });
+    expect(response.json()).toEqual({ data: categoryDocument('general', EMPTY_CATEGORY) });
   });
 
   it('serves the whole document', async () => {
@@ -149,6 +176,7 @@ describe('reads (§7.3)', () => {
 describe('writes (§7.3)', () => {
   it('replaces a category and answers with the masked document', async () => {
     const replaceCategory = vi.fn<SettingsPort['replaceCategory']>(async () => ({
+      ...categoryDocument('general', EMPTY_CATEGORY),
       theme: 'light',
     }));
     const response = await build(fakeSettings({ replaceCategory })).inject({
@@ -158,7 +186,7 @@ describe('writes (§7.3)', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ data: { theme: 'light' } });
+    expect(response.json<{ data: { theme: string } }>().data.theme).toBe('light');
     expect(replaceCategory.mock.calls[0]?.[0]).toBe(PRINCIPAL);
   });
 

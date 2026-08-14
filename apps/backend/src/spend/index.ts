@@ -1,10 +1,12 @@
 import type { Db } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
+import { dataEnvelopeSchema } from '../http/response-schema.js';
 import { type CostBudget, readCostBudget } from '../settings/claude-code.js';
 import { DEFAULT_TIMEZONE, readTimezone } from '../settings/general.js';
 import { readNotificationsSettings } from '../settings/notifications.js';
 import { isInvalidTimezoneError, readSpendAggregate } from './aggregate.js';
+import { spendSchema } from './response-schemas.js';
 import { type DayStatus, deriveDayStatus } from './status.js';
 
 /**
@@ -28,6 +30,7 @@ import { type DayStatus, deriveDayStatus } from './status.js';
  */
 
 export * from './aggregate.js';
+export * from './response-schemas.js';
 export * from './status.js';
 
 export interface SpendPeriodResource {
@@ -156,7 +159,11 @@ export function registerSpend(app: FastifyInstance, options: RegisterSpendOption
       : { onTimezoneRejected: options.onTimezoneRejected }),
   });
 
-  app.get('/api/v1/spend', async () => dataEnvelope(await service.read()));
+  app.get(
+    '/api/v1/spend',
+    { schema: { response: { 200: dataEnvelopeSchema(spendSchema) } } },
+    async () => dataEnvelope(await service.read()),
+  );
 
   return service;
 }

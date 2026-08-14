@@ -145,7 +145,7 @@ describe('the stop control', () => {
     api.on('POST', `/api/v1/agent-workflow-runs/${RUN_ID}/stop`, {
       body: {
         data: makeRun({ state: 'stopped' }),
-        meta: { stoppedSession: { sessionId: SESSION_TWO, outcome: 'left_unstarted' } },
+        meta: { stoppedSession: { sessionId: SESSION_TWO, outcome: 'cancelled' } },
       },
     });
     renderWorkflows(`/agents/runs/${RUN_ID}`);
@@ -154,7 +154,10 @@ describe('the stop control', () => {
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Stop run' }));
 
+    // Two claims, and both matter: no process ran, and none will — the queued launch is revoked,
+    // not merely still queued (which is what the outcome said before it was one).
     await screen.findByText(/had not started yet/i);
+    await screen.findByText(/queued launch was cancelled/i);
   });
 
   it('is offered on a halted run and withheld from a terminal one', async () => {

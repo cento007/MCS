@@ -27,8 +27,9 @@ import {
  * Settings → Memory, enforced (PRD §4.4 item 4).
  *
  * The rule these tests exist to keep is the one this codebase has been bitten by twice —
- * `integrations.ollama.enabled` is read by nothing to this day, and the Telegram chat-id
- * double-parse silently skipped every notification: **a setting that nothing reads is a lie.**
+ * `integrations.ollama.enabled` was read by nothing for three phases before it was withdrawn, and
+ * the Telegram chat-id double-parse silently skipped every notification: **a setting that nothing
+ * reads is a lie.**
  * So every assertion below is of the form "the operator flipped a switch and the behaviour
  * changed", against a real database, and never "the document round-trips".
  *

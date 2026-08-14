@@ -71,6 +71,20 @@
       "when": 1786692993529,
       "tag": "0009_boring_micromacro",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786700173003,
+      "tag": "0010_narrow_session_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786700194739,
+      "tag": "0011_retire_ollama_agent_runtime_settings",
+      "breakpoints": true
     }
   ]
 }

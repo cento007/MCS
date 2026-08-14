@@ -195,8 +195,10 @@ export class TestConnectionService {
    * The model under test is `integrations.qdrant.embeddingModel` — the embedder is configured on
    * the Qdrant card because it is stamped onto the Qdrant collection, and it is *that* name
    * whose capabilities decide whether anything can ever be indexed.
-   * `integrations.ollama.defaultModel` is the agent-runtime choice and is a different question,
-   * for a phase that has not shipped.
+   *
+   * There is no second model setting to confuse it with any more. `integrations.ollama.defaultModel`
+   * named the model for agents running *on* Ollama, a phase that has not shipped and cannot be
+   * selected, and it was withdrawn from the key registry along with `integrations.ollama.enabled`.
    */
   async #ollama(): Promise<TestConnectionResult> {
     const values = await readCategoryValues(this.#db, 'integrations');

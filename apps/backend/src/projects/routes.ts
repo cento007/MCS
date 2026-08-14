@@ -3,6 +3,12 @@ import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  listEnvelopeSchema,
+  noContentSchema,
+} from '../http/response-schema.js';
+import { projectSchema } from './response-schemas.js';
 import { WORKFLOW_MODES } from './serialize.js';
 import type { ProjectService } from './service.js';
 import { MAX_PROJECT_NAME_LENGTH } from './validation.js';
@@ -97,6 +103,9 @@ interface UpdateBody {
   archivedAt?: string | null;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const projectResponse = dataEnvelopeSchema(projectSchema);
+
 export interface ProjectRoutesOptions {
   readonly projects: ProjectService;
 }
@@ -106,7 +115,12 @@ export function registerProjectRoutes(app: FastifyInstance, options: ProjectRout
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/projects',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(projectSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       // F5.3's default ordering key is the UUIDv7 `id`, ascending; §4 states no exception.
@@ -125,7 +139,7 @@ export function registerProjectRoutes(app: FastifyInstance, options: ProjectRout
 
   app.post<{ Body: CreateBody }>(
     '/api/v1/projects',
-    { schema: { body: createBodySchema } },
+    { schema: { body: createBodySchema, response: { 201: projectResponse } } },
     async (request, reply) => {
       const created = await projects.create(
         requirePrincipal(request),
@@ -144,13 +158,19 @@ export function registerProjectRoutes(app: FastifyInstance, options: ProjectRout
 
   app.get<{ Params: ProjectIdParams }>(
     '/api/v1/projects/:id',
-    { schema: { params: projectIdParamsSchema } },
+    { schema: { params: projectIdParamsSchema, response: { 200: projectResponse } } },
     async (request) => dataEnvelope(await projects.get(request.params.id)),
   );
 
   app.patch<{ Params: ProjectIdParams; Body: UpdateBody }>(
     '/api/v1/projects/:id',
-    { schema: { params: projectIdParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: projectIdParamsSchema,
+        body: updateBodySchema,
+        response: { 200: projectResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await projects.update(
@@ -171,7 +191,7 @@ export function registerProjectRoutes(app: FastifyInstance, options: ProjectRout
 
   app.delete<{ Params: ProjectIdParams }>(
     '/api/v1/projects/:id',
-    { schema: { params: projectIdParamsSchema } },
+    { schema: { params: projectIdParamsSchema, response: { 204: noContentSchema } } },
     async (request, reply) => {
       await projects.remove(
         requirePrincipal(request),

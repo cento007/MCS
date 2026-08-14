@@ -1,5 +1,6 @@
 import type { FastifySchema } from 'fastify';
 import { bodyPolicyOf } from '../body-strictness.js';
+import { ERROR_CODES } from '../errors.js';
 import { queryPolicyOf } from '../query-strictness.js';
 import type { ApiRoute } from '../route-table.js';
 import type { YamlValue } from './yaml.js';
@@ -12,14 +13,13 @@ import type { YamlValue } from './yaml.js';
  * difference is what the output is allowed to say. Three things pushed this to ~200 lines of
  * our own code:
  *
- *  1. **Honesty about what is missing.** No route in this Backend declares a *response* schema
- *     — Fastify serialisation is not used, handlers return plain objects. A generator that
- *     quietly emits `responses: { 200: { description: 'Default Response' } }` (which is what
- *     `@fastify/swagger` does) publishes a document that looks complete and tells the reader
- *     nothing true about the success payload. This one marks every operation
- *     `x-mc-response-schema: undeclared` and says so once, loudly, in `info.description`. A
- *     spec that lies is worse than one that is honestly partial — and the marker is what makes
- *     "declare response schemas" a countable piece of work rather than a vague intention.
+ *  1. **Honesty about what is missing.** A generator that quietly emits
+ *     `responses: { 200: { description: 'Default Response' } }` (which is what `@fastify/swagger`
+ *     does) publishes a document that looks complete and tells the reader nothing true about the
+ *     success payload. This one emits the declared response schema where a route has one and
+ *     marks the operation `x-mc-response-schema: undeclared` where it does not — so the gap stays
+ *     countable rather than being papered over. A spec that lies is worse than one that is
+ *     honestly partial.
  *  2. **No runtime dependency.** `@fastify/swagger` is a plugin registered into the running
  *     server; this is a build-time function over data the server already keeps.
  *  3. **Byte stability.** The document is committed and checked for staleness, so paths,
@@ -73,11 +73,14 @@ export function buildOpenApiDocument(
 
   const paths: Record<string, Record<string, YamlValue>> = {};
   const operationIds = new Map<string, string>();
+  // Filled as operations are built: every schema carrying a `title` is hoisted here once and
+  // referenced by `$ref` from then on, which is what gives the generated client types their names.
+  const componentSchemas = new Map<string, YamlValue>();
 
   for (const route of apiRoutes) {
     const path = openApiPath(route.url);
     const method = route.method.toLowerCase();
-    const operation = buildOperation(route, path, method);
+    const operation = buildOperation(route, path, method, componentSchemas);
 
     const id = operation['operationId'] as string;
     const clash = operationIds.get(id);
@@ -119,30 +122,71 @@ export function buildOpenApiDocument(
     servers: [{ url: API_BASE_PATH }],
     security: [{ cookieAuth: [] }, { bearerAuth: [] }],
     paths: sortedPaths,
-    components: COMPONENTS,
+    components: components(componentSchemas),
   };
+}
+
+/**
+ * `components.schemas`, in a fixed alphabetical order.
+ *
+ * The registration order is the route-registration order, which is an implementation detail of
+ * `app.ts`; sorting here is what keeps the committed document byte-stable when a module moves.
+ */
+function components(hoisted: ReadonlyMap<string, YamlValue>): YamlValue {
+  const schemas: Record<string, YamlValue> = {
+    ...(BASE_COMPONENTS['schemas'] as Record<string, YamlValue>),
+  };
+  for (const name of [...hoisted.keys()].sort()) {
+    schemas[name] = hoisted.get(name) as YamlValue;
+  }
+
+  const ordered: Record<string, YamlValue> = {};
+  for (const name of Object.keys(schemas).sort()) ordered[name] = schemas[name] as YamlValue;
+
+  return { ...BASE_COMPONENTS, schemas: ordered };
 }
 
 const DOCUMENT_DESCRIPTION = [
   'Generated from the Backend’s Fastify route table by `pnpm api:spec` (F5.1). Do not edit',
-  'by hand: `pnpm api:spec:check` fails when this file and the routes disagree.',
+  'by hand: `pnpm api:spec:check` fails when this file and the routes disagree, and',
+  '`pnpm api:types:check` fails when apps/frontend/src/lib/api/types.generated.ts does.',
   '',
-  'PARTIAL BY CONSTRUCTION, AND HONESTLY SO. Request shapes here are the schemas Ajv actually',
-  'enforces, so they are exact. RESPONSE shapes are absent: no route in this Backend declares',
-  'a Fastify response schema today, so there is nothing to generate from and nothing is',
-  'invented. Every operation is marked `x-mc-response-schema: undeclared`; the response',
-  'contracts are prose in docs/tds/04-api-contracts-and-events.md, and §16 of that document',
-  'holds the hand-written reference for the Sessions resource.',
+  'REQUEST shapes are the schemas Ajv actually enforces, so they are exact.',
   '',
-  'Consequence for consumers: types generated from this document cover requests, path and',
-  'query parameters, and the error envelope. They do not yet cover success payloads.',
+  'RESPONSE shapes are the schemas each route declares under `schema.response`. Read the',
+  'guarantee precisely: they are DECLARATIONS, NOT SERIALIZERS. The Backend installs a',
+  'serializer compiler that ignores them and calls JSON.stringify, so a schema here can never',
+  'remove a field the handler produced — the failure mode a Fastify response schema normally',
+  'carries. What keeps them true instead is a conformance check that validates every reply',
+  'against its own schema in the test tiers, in both directions: an undeclared property and a',
+  'missing required property are both failures. See apps/backend/src/http/response-schema.ts.',
   '',
-  'One entry is not an HTTP resource: GET /ws is the single multiplexed WebSocket upgrade',
-  'endpoint (F5.6, TDS 04 §14). It is listed because it is a registered route — omitting it',
-  'would make this document quietly incomplete — but it speaks the WS frame protocol.',
+  'Operations still marked `x-mc-response-schema: undeclared` are the ones with no declaration,',
+  'and the marker exists so that gap stays countable. Today they are: GET /health,',
+  'GET /services/health and GET /schedule (owned by modules outside this change),',
+  'GET|PUT /settings/{category} (the GET serves one of five different documents, which needs a',
+  '`oneOf` the conformance checker does not implement; the PUT has no success response at all),',
+  'and GET /ws.',
+  '',
+  'GET /ws is not an HTTP resource: it is the single multiplexed WebSocket upgrade endpoint',
+  '(F5.6, TDS 04 §14). It is listed because it is a registered route — omitting it would make',
+  'this document quietly incomplete — but it speaks the WS frame protocol.',
 ].join('\n');
 
-function buildOperation(route: ApiRoute, path: string, method: string): Record<string, YamlValue> {
+/** Status code -> the description OpenAPI requires. Nothing here is invented per route. */
+const STATUS_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  '200': 'OK',
+  '201': 'Created',
+  '202': 'Accepted — the work is queued; the outcome is observable on the resource it changes.',
+  '204': 'No Content',
+};
+
+function buildOperation(
+  route: ApiRoute,
+  path: string,
+  method: string,
+  componentSchemas: Map<string, YamlValue>,
+): Record<string, YamlValue> {
   const schema: FastifySchema | undefined = route.schema;
   const auth = authPolicyOf(route);
   const queryPolicy = queryPolicyOf(route.url, schema);
@@ -166,11 +210,13 @@ function buildOperation(route: ApiRoute, path: string, method: string): Record<s
     };
   }
 
+  const responses = buildResponses(schema, componentSchemas);
   operation['responses'] = {
+    ...responses,
     default: { $ref: '#/components/responses/ErrorEnvelope' },
   };
 
-  operation['x-mc-response-schema'] = 'undeclared';
+  operation['x-mc-response-schema'] = Object.keys(responses).length > 0 ? 'declared' : 'undeclared';
   operation['x-mc-auth'] = authExtension(auth);
   operation['x-mc-strictness'] = {
     query: queryPolicy.mode,
@@ -185,6 +231,119 @@ function buildOperation(route: ApiRoute, path: string, method: string): Record<s
   else if (auth.allowCookie === false) operation['security'] = [{ bearerAuth: [] }];
 
   return operation;
+}
+
+/**
+ * The declared success responses, in ascending status order.
+ *
+ * A `204` is emitted with no `content`, which is what RFC 9110 requires and what the route means:
+ * `noContentSchema` is a marker rather than a body shape (see `http/response-schema.ts`).
+ */
+function buildResponses(
+  schema: FastifySchema | undefined,
+  componentSchemas: Map<string, YamlValue>,
+): Record<string, YamlValue> {
+  const declared = schema?.response;
+  if (!isRecord(declared)) return {};
+
+  const responses: Record<string, YamlValue> = {};
+  for (const status of Object.keys(declared).sort()) {
+    const body = declared[status];
+    if (!isRecord(body)) continue;
+
+    const description = STATUS_DESCRIPTIONS[status] ?? `Status ${status}`;
+    if (body['title'] === 'NoContent') {
+      responses[status] = { description };
+      continue;
+    }
+
+    responses[status] = {
+      description,
+      content: {
+        'application/json': { schema: hoist(body, componentSchemas) },
+      },
+    };
+  }
+  return responses;
+}
+
+/**
+ * Replace every titled sub-schema with a `$ref` into `components.schemas`, registering it there
+ * on first sight.
+ *
+ * **A repeated title must describe a repeated shape.** Two different schemas sharing a name would
+ * make `components.schemas.Session` mean whichever one was registered first and would generate a
+ * client type that is wrong for the other — so the collision is a hard error in the generator
+ * rather than a silent last-writer-wins.
+ *
+ * Nullability survives the hoist as `anyOf: [{ $ref }, { type: 'null' }]`, which is OpenAPI 3.1's
+ * spelling. The inline `type: ['object', 'null']` form the routes use is what the conformance
+ * checker sees; this is only the published shape.
+ */
+function hoist(schema: Record<string, unknown>, components: Map<string, YamlValue>): YamlValue {
+  const title = schema['title'];
+  const types = schema['type'];
+  const nullable = Array.isArray(types) && types.includes('null') && types.length > 1;
+
+  if (typeof title === 'string' && title.length > 0) {
+    const core: Record<string, unknown> = { ...schema };
+    delete core['title'];
+    // A `description` belongs to the *field*, not to the shared component: `Project.workflowMode`
+    // documents what `null` means there, which is not a fact about the `WorkflowMode` vocabulary.
+    // Left inside the core it would also make two references to one component disagree and trip
+    // the collision guard below. OpenAPI 3.1 allows sibling keywords next to `$ref`, so it rides
+    // on the reference.
+    const description = core['description'];
+    delete core['description'];
+    if (nullable) {
+      const remaining = (types as unknown[]).filter((entry) => entry !== 'null');
+      core['type'] = remaining.length === 1 ? remaining[0] : remaining;
+      // Symmetric with `nullable()`, which added it: the component describes the vocabulary, and
+      // the `null` branch lives in the `anyOf` at the reference site.
+      const values = core['enum'];
+      if (Array.isArray(values)) core['enum'] = values.filter((value) => value !== null);
+    }
+
+    const rendered = hoistChildren(core, components);
+    const existing = components.get(title);
+    if (existing === undefined) {
+      components.set(title, rendered);
+    } else if (JSON.stringify(existing) !== JSON.stringify(rendered)) {
+      throw new Error(
+        `Two different response schemas are both titled "${title}". A component name must ` +
+          'describe exactly one shape, or the generated client type is wrong for one of them.',
+      );
+    }
+
+    const reference: YamlValue = { $ref: `#/components/schemas/${title}` };
+    const resolved: YamlValue = nullable ? { anyOf: [reference, { type: 'null' }] } : reference;
+    return typeof description === 'string' ? { ...(resolved as object), description } : resolved;
+  }
+
+  return hoistChildren(schema, components);
+}
+
+function hoistChildren(
+  schema: Record<string, unknown>,
+  components: Map<string, YamlValue>,
+): YamlValue {
+  const result: Record<string, YamlValue> = {};
+  for (const [keyword, value] of Object.entries(schema)) {
+    if (keyword === 'properties' && isRecord(value)) {
+      const properties: Record<string, YamlValue> = {};
+      for (const [name, child] of Object.entries(value)) {
+        properties[name] = isRecord(child) ? hoist(child, components) : (child as YamlValue);
+      }
+      result['properties'] = properties;
+      continue;
+    }
+    if (keyword === 'items' && isRecord(value)) {
+      result['items'] = hoist(value, components);
+      continue;
+    }
+    result[keyword] = value as YamlValue;
+  }
+  return result;
 }
 
 function authPolicyOf(route: ApiRoute): {
@@ -293,22 +452,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The only shape this document can state with certainty: the F5.4 error envelope, which every
- * non-2xx response in the system has (`http/errors.ts`), and the two credentials the guard
- * accepts (`auth/guard.ts`). Both are copied from TDS 04 §16 and verified by
- * `openapi.contract.test.ts` against the code that produces them.
+ * The F5.4 error envelope, which every non-2xx response in the system has (`http/errors.ts`), and
+ * the two credentials the guard accepts (`auth/guard.ts`). Both are verified by
+ * `openapi.contract.test.ts` against the code that produces them; the per-resource success
+ * schemas are hoisted in beside these from the route table.
+ *
+ * **`error.code` is an enum, read from the registry itself** rather than the `^[A-Z][A-Z0-9_]*$`
+ * pattern it used to carry. A pattern types the *spelling* of a code and says nothing about which
+ * codes exist, so a client switching on `error.code` got no help from the contract and no compile
+ * error for a code the Backend never sends. `ERROR_CODES` is a frozen object in one module and is
+ * the same list `ApiError` can construct, so the enum cannot fall behind it — and the generated
+ * client type becomes a union the SPA's error mapping can be checked against exhaustively.
  */
-const COMPONENTS: YamlValue = {
+const BASE_COMPONENTS: Record<string, YamlValue> = {
   schemas: {
+    ErrorEnvelopeCode: {
+      type: 'string',
+      description:
+        'The F5.4 error-code registry (TDS 04 §1.3), verbatim from the Backend’s http/errors.ts.\n' +
+        'Named ErrorEnvelopeCode rather than ErrorCode because the SPA already owns that name for a\n' +
+        'deliberately wider union: lib/api/errors.ts admits codes the client synthesises for failures\n' +
+        'that never reached the server (NETWORK_ERROR, ABORTED). This is the server’s list only.',
+      enum: [...Object.keys(ERROR_CODES)].sort(),
+    },
     ErrorEnvelope: {
       type: 'object',
+      additionalProperties: false,
       required: ['error'],
       properties: {
         error: {
           type: 'object',
+          additionalProperties: false,
           required: ['code', 'message', 'details', 'requestId'],
           properties: {
-            code: { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' },
+            code: { $ref: '#/components/schemas/ErrorEnvelopeCode' },
             message: { type: 'string' },
             details: { type: ['object', 'null'] },
             requestId: {

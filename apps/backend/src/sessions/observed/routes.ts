@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { INGEST_ROUTE } from '../../auth/guard.js';
+import { noContentSchema } from '../../http/response-schema.js';
 import { normalizeHookRequestBody } from './hook-events.js';
 import type { ObservedIngestService } from './ingest.js';
 
@@ -60,7 +61,7 @@ export function registerObservedRoutes(app: FastifyInstance, options: ObservedRo
     {
       config: { auth: INGEST_ROUTE },
       bodyLimit: HOOK_EVENT_BODY_LIMIT_BYTES,
-      schema: { body: hookEventBodySchema },
+      schema: { body: hookEventBodySchema, response: { 204: noContentSchema } },
     },
     async (request, reply) => {
       const event = normalizeHookRequestBody(request.body);

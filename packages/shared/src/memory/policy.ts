@@ -23,8 +23,8 @@ import type {
  * and there are five places that must: the incremental indexer, the backfill sweep, the vault
  * note stage, the repository documentation stage, and retrieval. Five independent reads of the
  * same two rows is five chances for one of them to forget — which is exactly how
- * `integrations.ollama.enabled` ended up being a switch nothing consults. One shape, one parser,
- * one set of predicates.
+ * `integrations.ollama.enabled` ended up being a switch nothing consulted, and eventually a
+ * registry key withdrawn rather than wired. One shape, one parser, one set of predicates.
  *
  * Modelled on `obsidian/settings.ts`, and in `@mc/shared` for the same reason: the sweep that
  * consumes `indexedSources` lives in `memory/backfill.ts`, which a worker may import and which

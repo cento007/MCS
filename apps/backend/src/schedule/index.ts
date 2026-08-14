@@ -1,4 +1,4 @@
-import type { Db } from '@mc/shared';
+import { type Db, type MemoryPolicy, readMemoryPolicy, retentionDisabled } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
 import { DEFAULT_TIMEZONE, readTimezone } from '../settings/general.js';
@@ -22,18 +22,38 @@ import { nextIntervalRunAt } from './rules.js';
  * ever persisted. A1 settled this in WS5's favour precisely so no Task entity would be
  * invented — F4.1 is untouched, and none is implied.
  *
- * Fixed cardinality (three kinds in Phase 1), so no cursor pagination and no `meta` (§1.2).
- * Read-only: there is no POST/PATCH — the operator changes the schedule in Settings, and manual
- * runs use the existing action endpoints.
+ * Fixed cardinality (four kinds), so no cursor pagination and no `meta` (§1.2). Read-only: there
+ * is no POST/PATCH — the operator changes the schedule in Settings, and manual runs use the
+ * existing action endpoints.
  *
  * Phase 2 kinds are returned from Phase 1 with `enabled: false` until their workers exist,
  * which is what makes the widget honest on day one rather than empty.
+ *
+ * ## The fourth kind, and the rule it was added under
+ *
+ * `memory_retention` is Phase 3's expiry sweep (`memory/retention.ts`). It is a **real
+ * self-rescheduling chain** — the same species as `github.poll`, `obsidian.schedule` and
+ * `notification.schedule`, all three of which this endpoint already reports — and it was the only
+ * one of the four that was invisible. A recurring job that deletes an operator's memory on a timer
+ * they cannot see is the same defect as a setting nothing reads, pointed the other way: the
+ * schedule is real and the read model denied it existed.
+ *
+ * It is the one row whose `nextRunAt` comes from the queue rather than from an interval setting,
+ * and that is not an inconsistency to iron out. The other three each have a domain artifact to
+ * count from; a retention tick that deletes nothing writes nothing, and its interval is a constant
+ * rather than a setting (`MEMORY_RETENTION_TICK_MINUTES`, deliberately not a knob). See
+ * `readQueueTickTimes`.
  */
 
 export * from './repository.js';
 export * from './rules.js';
 
-export const SCHEDULE_KINDS = ['obsidian_sync', 'github_poll', 'daily_report'] as const;
+export const SCHEDULE_KINDS = [
+  'obsidian_sync',
+  'github_poll',
+  'daily_report',
+  'memory_retention',
+] as const;
 export type ScheduleKind = (typeof SCHEDULE_KINDS)[number];
 
 export interface ScheduleEntry {
@@ -49,6 +69,7 @@ const LABELS: Readonly<Record<ScheduleKind, string>> = {
   obsidian_sync: 'Obsidian vault sync',
   github_poll: 'GitHub repository poll',
   daily_report: 'Daily report',
+  memory_retention: 'Memory retention sweep',
 };
 
 export interface ScheduleServiceOptions {
@@ -66,11 +87,12 @@ export class ScheduleService {
   }
 
   async read(): Promise<readonly ScheduleEntry[]> {
-    const [timezone, integrations, notifications, sources] = await Promise.all([
+    const [timezone, integrations, notifications, sources, memoryPolicy] = await Promise.all([
       readTimezone(this.#db),
       readScheduleIntegrationSettings(this.#db),
       readNotificationsSettings(this.#db),
       readScheduleSources(this.#db),
+      readMemoryPolicy(this.#db),
     ]);
 
     const now = this.#now();
@@ -79,6 +101,7 @@ export class ScheduleService {
       obsidianEntry(integrations, sources, now),
       githubEntry(integrations, sources, now),
       await this.#dailyReportEntry(integrations, notifications, sources, timezone),
+      memoryRetentionEntry(memoryPolicy, sources),
     ];
   }
 
@@ -158,6 +181,34 @@ function githubEntry(
       now,
     }),
     sources.repositoriesLastSyncedAt,
+  );
+}
+
+/**
+ * The Phase 3 expiry sweep (`memory/retention.ts`).
+ *
+ * **`enabled` is the policy, not the runtime.** It is true exactly when at least one tier has a
+ * non-zero `retentionDays` — which is exactly when `MemoryRetentionScheduler.prime()` keeps a tick
+ * queued. Every tier at `0` means nothing expires and the chain deliberately stops; that is the
+ * off position of the only control an operator has here, and it lives in Settings → Memory.
+ *
+ * It is deliberately **not** conditioned on the memory runtime being reachable. A tick that finds
+ * Ollama down postpones rather than skips (deleting rows whose vectors it cannot delete is the one
+ * outcome worse than deleting nothing), so the sweep is still scheduled and still due. Reporting
+ * `enabled: false` because Qdrant is asleep would answer a question the operator did not ask; the
+ * Services panel is where reachability is reported, and it already is.
+ *
+ * `lastRunAt` can be `null` while `enabled` is true — pg-boss eventually deletes the completed
+ * tick, and nothing else records a sweep. "Never run" is then a slightly weaker claim than the
+ * other rows make, and it is the one the data supports.
+ */
+function memoryRetentionEntry(policy: MemoryPolicy, sources: ScheduleSources): ScheduleEntry {
+  const enabled = !retentionDisabled(policy);
+  return entry(
+    'memory_retention',
+    enabled,
+    sources.memoryRetention.nextAt,
+    sources.memoryRetention.lastRunAt,
   );
 }
 

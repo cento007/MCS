@@ -1,14 +1,28 @@
 import { MESSAGE_ROLES, SESSION_STATES } from '@mc/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { requirePrincipal } from '../auth/guard.js';
+import { commitSchema } from '../commits/response-schemas.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  dataWithMetaSchema,
+  listEnvelopeSchema,
+} from '../http/response-schema.js';
 import {
   decodeCommitCursor,
   decodeOrdinalCursor,
   encodeCommitCursor,
   encodeOrdinalCursor,
 } from './cursors.js';
+import {
+  interruptResultSchema,
+  launchMetaSchema,
+  messageSchema,
+  sessionFilesSchema,
+  sessionSchema,
+  timelineEntrySchema,
+} from './response-schemas.js';
 import type { RequestContext, SessionService } from './service.js';
 import { MAX_TITLE_LENGTH } from './title.js';
 
@@ -166,6 +180,16 @@ interface NestedListQuery {
   cursor?: string;
 }
 
+/**
+ * The `response` blocks below are **declarations, not serializers** — `http/response-schema.ts`
+ * installs a serializer compiler that ignores them, so none of them can drop a field the handler
+ * produced. They exist so `openapi.yaml` can state the success payloads and so
+ * `apps/frontend/src/lib/api/types.ts` can be generated rather than transcribed; the conformance
+ * hook validates every reply against them in the test tiers, which is what keeps them true.
+ */
+const sessionResponse = dataEnvelopeSchema(sessionSchema);
+const sessionLaunchResponse = dataWithMetaSchema(sessionSchema, launchMetaSchema);
+
 export interface SessionRoutesOptions {
   readonly sessions: SessionService;
 }
@@ -177,7 +201,12 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/sessions',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(sessionSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       // §6.2: newest first by default, which is also what makes the Needs Attention widget's
@@ -200,7 +229,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Body: CreateBody }>(
     '/api/v1/sessions',
-    { schema: { body: createBodySchema } },
+    { schema: { body: createBodySchema, response: { 201: sessionResponse } } },
     async (request, reply) => {
       const created = await sessions.create(
         requirePrincipal(request),
@@ -223,13 +252,19 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id',
-    { schema: { params: sessionIdParamsSchema } },
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionResponse } } },
     async (request) => dataEnvelope(await sessions.get(request.params.id)),
   );
 
   app.patch<{ Params: SessionIdParams; Body: UpdateBody }>(
     '/api/v1/sessions/:id',
-    { schema: { params: sessionIdParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        body: updateBodySchema,
+        response: { 200: sessionResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await sessions.update(
@@ -254,7 +289,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/start',
-    { schema: { params: sessionIdParamsSchema } },
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionLaunchResponse } } },
     async (request) => {
       const result = await sessions.start(
         requirePrincipal(request),
@@ -268,7 +303,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/pause',
-    { schema: { params: sessionIdParamsSchema } },
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionResponse } } },
     async (request) =>
       dataEnvelope(
         await sessions.pause(requirePrincipal(request), request.params.id, contextOf(request)),
@@ -277,7 +312,14 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/resume',
-    { schema: { params: sessionIdParamsSchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        // Two shapes, two status codes: `200` resumes in place and reports the launch
+        // disposition; `201` is a NEW Session (§6.3) and carries the bare envelope.
+        response: { 200: sessionLaunchResponse, 201: sessionResponse },
+      },
+    },
     async (request, reply) => {
       const outcome = await sessions.resume(
         requirePrincipal(request),
@@ -297,7 +339,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/end',
-    { schema: { params: sessionIdParamsSchema } },
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionResponse } } },
     async (request) =>
       dataEnvelope(
         await sessions.end(requirePrincipal(request), request.params.id, contextOf(request)),
@@ -306,7 +348,7 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/archive',
-    { schema: { params: sessionIdParamsSchema } },
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionResponse } } },
     async (request) =>
       dataEnvelope(
         await sessions.archive(requirePrincipal(request), request.params.id, contextOf(request)),
@@ -315,7 +357,13 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams; Body: CloneBody }>(
     '/api/v1/sessions/:id/clone',
-    { schema: { params: sessionIdParamsSchema, body: cloneBodySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        body: cloneBodySchema,
+        response: { 201: sessionResponse },
+      },
+    },
     async (request, reply) => {
       const cloned = await sessions.clone(
         requirePrincipal(request),
@@ -331,7 +379,12 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.post<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/interrupt',
-    { schema: { params: sessionIdParamsSchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        response: { 200: dataEnvelopeSchema(interruptResultSchema) },
+      },
+    },
     async (request) =>
       dataEnvelope(
         await sessions.interrupt(requirePrincipal(request), request.params.id, contextOf(request)),
@@ -342,7 +395,13 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Params: SessionIdParams; Querystring: MessagesQuery }>(
     '/api/v1/sessions/:id/messages',
-    { schema: { params: sessionIdParamsSchema, querystring: messagesQuerySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        querystring: messagesQuerySchema,
+        response: { 200: listEnvelopeSchema(messageSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'asc';
@@ -370,7 +429,13 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Params: SessionIdParams; Querystring: NestedListQuery }>(
     '/api/v1/sessions/:id/timeline',
-    { schema: { params: sessionIdParamsSchema, querystring: nestedListQuerySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        querystring: nestedListQuerySchema,
+        response: { 200: listEnvelopeSchema(timelineEntrySchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const rows = await sessions.listTimeline(request.params.id, {
@@ -383,7 +448,14 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Params: SessionIdParams; Querystring: NestedListQuery }>(
     '/api/v1/sessions/:id/commits',
-    { schema: { params: sessionIdParamsSchema, querystring: nestedListQuerySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        querystring: nestedListQuerySchema,
+        // §6.10.1 serves "the `Commit` resource of §5.2" — one resource, one schema.
+        response: { 200: listEnvelopeSchema(commitSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const rows = await sessions.listCommits(request.params.id, {
@@ -407,7 +479,12 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
 
   app.get<{ Params: SessionIdParams }>(
     '/api/v1/sessions/:id/files',
-    { schema: { params: sessionIdParamsSchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        response: { 200: dataEnvelopeSchema(sessionFilesSchema) },
+      },
+    },
     // §1.2: a bounded read model returns `{ data: … }` with no `meta`.
     async (request) => dataEnvelope(await sessions.listFiles(request.params.id)),
   );

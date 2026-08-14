@@ -36,15 +36,22 @@ import { insertSessionEvent, lockSessionById, type SessionRow } from './reposito
  */
 
 /** The sub-action that asked for the transition. Reported in `details.action` (§6.3). */
-export type SessionAction = 'start' | 'pause' | 'resume' | 'end' | 'archive' | 'system';
+export type SessionAction = 'start' | 'cancel' | 'pause' | 'resume' | 'end' | 'archive' | 'system';
 
 /**
  * Actions an observed Session cannot take (WS1 §5.2):
  *   - `start`  — `created -> running` is system-only (attach confirmed), never a user action;
+ *   - `cancel` — the mirror of `start`: it abandons a launch Mission Control was going to make,
+ *     and it never made one for an observed Session;
  *   - `pause`/`resume` — Mission Control cannot gate an external CLI.
  * `end` *is* supported and means "stop observing"; `archive` is identical to managed.
  */
-const OBSERVED_UNSUPPORTED_ACTIONS: readonly SessionAction[] = ['start', 'pause', 'resume'];
+const OBSERVED_UNSUPPORTED_ACTIONS: readonly SessionAction[] = [
+  'start',
+  'cancel',
+  'pause',
+  'resume',
+];
 
 /** Runtime facts captured at spawn/attach, written with the `created -> running` transition. */
 export interface RuntimeFacts {
@@ -64,7 +71,12 @@ export interface TransitionRequest {
   /**
    * `sessions.failure_reason`, repeated in the `session_events` payload for the timeline
    * (TDS 03 §3.9). Recommended vocabulary: `spawn_error`, `process_crash`, `backend_restart`,
-   * `resume_target_lost`, `ingest_failure`.
+   * `resume_target_lost`, `ingest_failure`, `cancelled`.
+   *
+   * Not every value is a failure of the *work*: `backend_restart` is a deploy and `cancelled` is
+   * the operator abandoning a launch that had not happened. `failed` is F7's only exit for both,
+   * and this column is what tells them apart — the notification producer reads it and stays
+   * silent for `cancelled` alone.
    */
   readonly reason?: string | null;
   readonly correlationId?: string | null;

@@ -3,7 +3,15 @@ import type { Db } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../app.js';
-import { buildOpenApiDocument, OPENAPI_DOCUMENT_PATH, renderOpenApiYaml } from './index.js';
+import { ERROR_CODES } from '../errors.js';
+import type { ApiRoute } from '../route-table.js';
+import {
+  API_TYPES_PATH,
+  buildOpenApiDocument,
+  OPENAPI_DOCUMENT_PATH,
+  renderApiTypesFor,
+  renderOpenApiYaml,
+} from './index.js';
 
 /**
  * The F5.1 contract document (`openapi.yaml`) — generated, committed, and checked here.
@@ -80,21 +88,132 @@ describe('openapi.yaml', () => {
     expect([...documented].some((entry) => entry.startsWith('HEAD '))).toBe(false);
   });
 
-  it('claims no response shape it cannot produce', () => {
+  /**
+   * The operations that deliberately publish no success payload, with the reason each one has.
+   *
+   * A hard-coded list rather than a threshold: "at most N undeclared" would let the next
+   * undeclared route slip in under the count, and the point of the marker is that every remaining
+   * gap is a decision someone wrote down.
+   */
+  const UNDECLARED = new Map<string, string>([
+    ['GET /health', 'health/ — owned by another workstream in flight'],
+    ['GET /services/health', 'health/ — owned by another workstream in flight'],
+    ['GET /schedule', 'schedule/ — owned by another workstream in flight'],
+    [
+      'GET /settings/{category}',
+      'serves one of five different documents; the honest spelling is a `oneOf` the ' +
+        'response-conformance checker does not implement',
+    ],
+    ['PUT /settings/{category}', 'has no success response at all — it exists to answer NOT_FOUND'],
+    ['GET /ws', 'the WebSocket upgrade; it speaks the WS frame protocol, not JSON over HTTP'],
+  ]);
+
+  it('declares a response for every operation but the six that say why not', () => {
     const document = buildOpenApiDocument(app.apiRoutes) as {
       paths: Record<string, Record<string, Record<string, unknown>>>;
     };
 
-    const operations = Object.values(document.paths).flatMap((path) => Object.values(path));
+    const operations = Object.entries(document.paths).flatMap(([path, methods]) =>
+      Object.entries(methods).map(
+        ([method, operation]) => [`${method.toUpperCase()} ${path}`, operation] as const,
+      ),
+    );
     expect(operations.length).toBeGreaterThan(60);
 
-    for (const operation of operations) {
-      // Not one route in this Backend declares a Fastify `response` schema, so the document
-      // says so per operation rather than inventing a 200 body. When that changes, this
-      // assertion is the reminder that the generator must start emitting the real one.
-      expect(operation['x-mc-response-schema']).toBe('undeclared');
-      expect(Object.keys(operation['responses'] as object)).toEqual(['default']);
+    const undeclared = operations
+      .filter(([, operation]) => operation['x-mc-response-schema'] === 'undeclared')
+      .map(([name]) => name)
+      .sort();
+
+    expect(undeclared).toEqual([...UNDECLARED.keys()].sort());
+
+    for (const [name, operation] of operations) {
+      const responses = Object.keys(operation['responses'] as object);
+      // Every operation carries the F5.4 error envelope; a declared one also carries at least one
+      // success status.
+      expect(responses).toContain('default');
+      if (UNDECLARED.has(name)) {
+        expect(responses).toEqual(['default']);
+      } else {
+        expect(responses.length).toBeGreaterThan(1);
+      }
     }
+  });
+
+  it('types error.code as the registry itself, not as a spelling rule', () => {
+    const document = buildOpenApiDocument(app.apiRoutes) as {
+      components: { schemas: Record<string, Record<string, unknown>> };
+    };
+
+    const code = document.components.schemas['ErrorEnvelopeCode'] as { enum?: unknown };
+    // A pattern (`^[A-Z][A-Z0-9_]*$`) typed the shape of a code and said nothing about which
+    // codes exist, so a client switching on `error.code` got no help from the contract.
+    expect(code.enum).toEqual([...Object.keys(ERROR_CODES)].sort());
+
+    const envelope = document.components.schemas['ErrorEnvelope'] as {
+      properties: { error: { properties: { code: { $ref?: string } } } };
+    };
+    expect(envelope.properties.error.properties.code.$ref).toBe(
+      '#/components/schemas/ErrorEnvelopeCode',
+    );
+  });
+
+  it('hoists every named schema into components, and refuses to reuse a name for two shapes', () => {
+    const document = buildOpenApiDocument(app.apiRoutes) as {
+      components: { schemas: Record<string, unknown> };
+    };
+
+    // A spot check that the resources whose drift already hurt are named components rather than
+    // inline blobs — a `$ref` is what gives the generated client type its name.
+    for (const name of ['Session', 'Agent', 'AgentTeam', 'AgentWorkflow', 'AgentWorkflowRun']) {
+      expect(Object.keys(document.components.schemas)).toContain(name);
+    }
+
+    // And the collision guard itself: two different shapes under one title must throw rather than
+    // silently publish whichever was registered first.
+    const clashing: ApiRoute[] = [
+      {
+        method: 'GET',
+        url: '/api/v1/first',
+        schema: { response: { 200: { title: 'Clash', type: 'object', properties: {} } } },
+        config: undefined,
+        bodyLimitBytes: undefined,
+      },
+      {
+        method: 'GET',
+        url: '/api/v1/second',
+        schema: {
+          response: {
+            200: { title: 'Clash', type: 'object', properties: { extra: { type: 'string' } } },
+          },
+        },
+        config: undefined,
+        bodyLimitBytes: undefined,
+      },
+    ];
+    expect(() => buildOpenApiDocument(clashing)).toThrow(/both titled "Clash"/);
+  });
+
+  it('generates client types the SPA can import by name', () => {
+    const types = renderApiTypesFor(app);
+
+    // The field whose absence from the hand-written copy made the entire Phase 4 agent binding
+    // unreachable from the browser. Generated, it cannot go missing without the Backend failing
+    // to compile.
+    const session = types.slice(types.indexOf('export interface Session {'));
+    expect(session.slice(0, session.indexOf('\n}'))).toContain('readonly agentId: string | null;');
+    expect(types).toContain('export interface Agent {');
+    expect(types).toContain('export interface AgentTeam {');
+    expect(types).toContain('export interface AgentWorkflowRun {');
+    expect(types).toContain('GENERATED FILE — DO NOT EDIT.');
+  });
+
+  it('is exactly what the committed generated types file contains', () => {
+    const committed = readFileSync(API_TYPES_PATH, 'utf8');
+    expect(
+      renderApiTypesFor(app),
+      'types.generated.ts is stale — run `pnpm api:spec` and commit it',
+    ).toBe(committed);
   });
 
   it('records the auth policy the guard will actually apply', () => {

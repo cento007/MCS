@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
 import { decodeAuditCursor, encodeAuditCursor } from './cursors.js';
 import { type AuditLogService, parseInstant } from './query.js';
+import { auditLogEntrySchema } from './response-schemas.js';
 
 /**
  * `/api/v1/audit-log-entries` — TDS 04 §12.
@@ -70,7 +72,12 @@ export function registerAuditRoutes(app: FastifyInstance, options: AuditRoutesOp
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/audit-log-entries',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(auditLogEntrySchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const query = request.query;
@@ -104,7 +111,12 @@ export function registerAuditRoutes(app: FastifyInstance, options: AuditRoutesOp
 
   app.get<{ Params: { id: string } }>(
     '/api/v1/audit-log-entries/:id',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(auditLogEntrySchema) },
+      },
+    },
     async (request) => dataEnvelope(await audit.get(request.params.id)),
   );
 }

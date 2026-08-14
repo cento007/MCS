@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { clampLimit } from '../http/pagination.js';
+import { listEnvelopeSchema } from '../http/response-schema.js';
 import { decodeSearchCursor, searchFingerprint } from './cursors.js';
 import { MAX_QUERY_LENGTH, parseSearchTypes } from './parse.js';
+import { searchResultSchema } from './response-schemas.js';
 import type { SearchService } from './service.js';
 
 /**
@@ -51,7 +53,12 @@ export interface SearchRoutesOptions {
 export function registerSearchRoutes(app: FastifyInstance, options: SearchRoutesOptions): void {
   app.get<{ Querystring: SearchQuery }>(
     '/api/v1/search',
-    { schema: { querystring: querySchema } },
+    {
+      schema: {
+        querystring: querySchema,
+        response: { 200: listEnvelopeSchema(searchResultSchema) },
+      },
+    },
     async (request) => {
       const q = request.query.q.trim();
       const types = parseSearchTypes(request.query.types);

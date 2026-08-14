@@ -3,6 +3,8 @@ import type { FastifyError, FastifyInstance } from 'fastify';
 import { registerBodyStrictness } from './body-strictness.js';
 import { ApiError, type ErrorCode, errorEnvelope } from './errors.js';
 import { registerQueryStrictness } from './query-strictness.js';
+import { registerResponseConformance } from './response-conformance.js';
+import { registerNonStrippingSerializer } from './response-schema.js';
 import { registerRouteTable } from './route-table.js';
 
 /**
@@ -52,6 +54,15 @@ export function registerHttpConventions(app: FastifyInstance): void {
   // that is a 400 and why each is a single global hook rather than a per-route opt-in.
   registerQueryStrictness(app);
   registerBodyStrictness(app);
+
+  // The response half of the same principle, and the same trap read from the other side: an
+  // undeclared *response* field must not be a dropped field. `registerNonStrippingSerializer`
+  // makes the declared response schemas incapable of removing anything — which is what this
+  // Backend already did before any of them existed — and `registerResponseConformance` is what
+  // keeps them true, by validating every reply against its own schema in the test tiers.
+  // See `response-schema.ts` for the full argument.
+  registerNonStrippingSerializer(app);
+  registerResponseConformance(app);
 
   app.setNotFoundHandler((request, reply) => {
     void reply
@@ -149,4 +160,6 @@ export function registerHttpConventions(app: FastifyInstance): void {
 export * from './body-strictness.js';
 export * from './errors.js';
 export * from './query-strictness.js';
+export * from './response-conformance.js';
+export * from './response-schema.js';
 export * from './route-table.js';

@@ -84,7 +84,7 @@ describe('contract shape and auth', () => {
     expect(response.json<{ error: { code: string } }>().error.code).toBe('UNAUTHORIZED');
   });
 
-  it('returns the three Phase 1 kinds with no `meta` — fixed cardinality, no pagination', async () => {
+  it('returns the four kinds with no `meta` — fixed cardinality, no pagination', async () => {
     const response = await app.inject({
       method: 'GET',
       url: '/api/v1/schedule',
@@ -93,7 +93,12 @@ describe('contract shape and auth', () => {
 
     expect(Object.keys(response.json<Record<string, unknown>>())).toEqual(['data']);
     const rows = response.json<{ data: ScheduleEntry[] }>().data;
-    expect(rows.map((row) => row.kind)).toEqual(['obsidian_sync', 'github_poll', 'daily_report']);
+    expect(rows.map((row) => row.kind)).toEqual([
+      'obsidian_sync',
+      'github_poll',
+      'daily_report',
+      'memory_retention',
+    ]);
     for (const row of rows) {
       expect(Object.keys(row).sort()).toEqual([
         'enabled',
@@ -133,7 +138,7 @@ describe('contract shape and auth', () => {
 });
 
 describe('unconfigured instance — every row is returned, disabled and honest', () => {
-  it('returns all three rows with enabled: false and nextRunAt: null', async () => {
+  it('returns all four rows with enabled: false and nextRunAt: null', async () => {
     const rows = await readSchedule();
 
     for (const row of rows) {
@@ -310,6 +315,54 @@ describe('daily_report (§7.7 table)', () => {
 
     const entry = await entryOf('daily_report');
     expect(new Date(entry.nextRunAt as string).getUTCHours()).toBe(18);
+  });
+});
+
+/**
+ * The Phase 3 sweep — a chain that deletes an operator's memory on a timer, and was the only one
+ * of the four self-rescheduling jobs this endpoint did not report.
+ */
+describe('memory_retention (Phase 3)', () => {
+  it('is disabled while every tier keeps everything — the chain does not even run', async () => {
+    const entry = await entryOf('memory_retention');
+
+    expect(entry.enabled).toBe(false);
+    expect(entry.nextRunAt).toBeNull();
+    expect(entry.label).toBe('Memory retention sweep');
+  });
+
+  it('turns on the moment a tier is given a retention window', async () => {
+    await setSetting('memory', 'retention_days', { session: 30, project: 0, global: 0 });
+
+    expect((await entryOf('memory_retention')).enabled).toBe(true);
+  });
+
+  it('reports the tick the scheduler actually queued, not an interval it recomputed', async () => {
+    await setSetting('memory', 'retention_days', { session: 30, project: 0, global: 0 });
+
+    // Priming is what a real Backend does at boot and after `PUT /settings/memory`. The row must
+    // then name *that* job's due time — the sweep's interval is a constant, not a setting, so a
+    // recomputed answer would only agree with the queue by luck.
+    await built.memory.retention.prime();
+
+    const entry = await entryOf('memory_retention');
+    expect(entry.nextRunAt).not.toBeNull();
+
+    const queued = await testDatabase().db.execute<{ start_after: string }>(
+      "SELECT min(start_after)::text AS start_after FROM pgboss.job WHERE name = 'memory.retention' AND state IN ('created','retry')",
+    );
+    expect(Date.parse(entry.nextRunAt as string)).toBe(
+      Date.parse(queued.rows[0]?.start_after as string),
+    );
+  });
+
+  it('says "never run" rather than inventing a last sweep', async () => {
+    await setSetting('memory', 'retention_days', { session: 30, project: 0, global: 0 });
+    await built.memory.retention.prime();
+
+    // Nothing has swept yet, and no artifact records one — a sweep that deletes nothing writes
+    // nothing. `null` is the honest answer and the widget renders it as "never run".
+    expect((await entryOf('memory_retention')).lastRunAt).toBeNull();
   });
 });
 

@@ -16,6 +16,7 @@ import {
 } from '@mc/shared';
 import { and, eq, gte } from 'drizzle-orm';
 import type { EventBus, Outbox } from '../events/index.js';
+import { CANCELLED_REASON } from '../sessions/service.js';
 import { readCostBudget } from '../settings/claude-code.js';
 import { DEFAULT_TIMEZONE, readTimezone } from '../settings/general.js';
 import { readScheduleIntegrationSettings } from '../settings/integrations.js';
@@ -308,15 +309,23 @@ export class NotificationProducer {
         const facts = await readSessionFacts(this.#db, sessionId);
         if (facts === null) return null;
 
+        const failureReason = facts.failureReason ?? stringField(event.payload, 'reason');
+
+        // **A cancellation is not an alert.** `SessionService.cancel` writes `failed` because F7
+        // gives a Session that never launched no other exit, and it emits `session.failed` like
+        // every other transition into that state. Paging the operator with "Session failed" for
+        // the Session they just cancelled — usually by stopping a workflow run — would be the
+        // notification telling them something broke when they are the thing that happened. The
+        // *reason* is what separates this from `backend_restart` or `process_crash`, both of
+        // which are news and both of which still notify.
+        if (type === 'session_failed' && failureReason === CANCELLED_REASON) return null;
+
         return {
           type,
           rendered:
             type === 'session_completed'
               ? renderSessionCompleted(facts)
-              : renderSessionFailed({
-                  ...facts,
-                  failureReason: facts.failureReason ?? stringField(event.payload, 'reason'),
-                }),
+              : renderSessionFailed({ ...facts, failureReason }),
           payload: {
             eventType: event.type,
             sessionId,

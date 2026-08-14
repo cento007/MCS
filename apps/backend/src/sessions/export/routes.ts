@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../../http/errors.js';
+import { dataEnvelopeSchema } from '../../http/response-schema.js';
 import { EXPORT_FORMATS, type ExportFormat } from './render.js';
+import { contextPackageSchema, sessionExportSchema } from './response-schemas.js';
 import type { SessionExportService } from './service.js';
 
 /**
@@ -86,7 +88,13 @@ export function registerSessionExportRoutes(
 ): void {
   app.post<{ Params: SessionIdParams; Body: ExportBody | null }>(
     '/api/v1/sessions/:id/export',
-    { schema: { params: sessionIdParamsSchema, body: exportBodySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        body: exportBodySchema,
+        response: { 200: dataEnvelopeSchema(sessionExportSchema) },
+      },
+    },
     async (request) =>
       dataEnvelope(
         await options.service.export(request.params.id, request.body?.format ?? 'markdown'),
@@ -95,7 +103,13 @@ export function registerSessionExportRoutes(
 
   app.post<{ Params: SessionIdParams; Body: null }>(
     '/api/v1/sessions/:id/context-package',
-    { schema: { params: sessionIdParamsSchema, body: contextPackageBodySchema } },
+    {
+      schema: {
+        params: sessionIdParamsSchema,
+        body: contextPackageBodySchema,
+        response: { 200: dataEnvelopeSchema(contextPackageSchema) },
+      },
+    },
     async (request) => dataEnvelope(await options.service.contextPackage(request.params.id)),
   );
 }

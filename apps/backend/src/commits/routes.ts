@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
 import { decodeCommitCursor, encodeCommitCursor } from './cursors.js';
+import { commitDetailSchema, commitSchema } from './response-schemas.js';
 import type { CommitService } from './service.js';
 
 /**
@@ -71,7 +73,13 @@ export function registerCommitRoutes(app: FastifyInstance, options: CommitRoutes
 
   app.get<{ Params: IdParams; Querystring: ListQuery }>(
     '/api/v1/repositories/:id/commits',
-    { schema: { params: idParamsSchema, querystring: listQuerySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(commitSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       // §5.2: "newest first (`order=desc` default here)" — the one resource-level exception to
@@ -105,7 +113,12 @@ export function registerCommitRoutes(app: FastifyInstance, options: CommitRoutes
 
   app.get<{ Params: IdParams }>(
     '/api/v1/commits/:id',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(commitDetailSchema) },
+      },
+    },
     async (request) => dataEnvelope(await commits.get(request.params.id)),
   );
 }

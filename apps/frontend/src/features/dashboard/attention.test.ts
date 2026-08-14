@@ -197,6 +197,26 @@ describe('failed sessions (24 h window)', () => {
     expect(digest.items).toHaveLength(1);
   });
 
+  it('excludes a session the operator cancelled — that is not a condition needing attention', () => {
+    const digest = buildAttention(
+      sources({
+        failedSessions: [
+          makeSession({
+            state: 'failed',
+            failureReason: 'cancelled',
+            completedAt: new Date(NOW - 60_000).toISOString(),
+          }),
+        ],
+      }),
+    );
+
+    // `failed(cancelled)` is F7's only exit for a Session that never launched, so the state alone
+    // cannot tell "it broke" from "you stopped it". Badging the operator's own Stop with
+    // `✕ Session failed` is the widget crying wolf about its user.
+    expect(digest.items).toHaveLength(0);
+    expect(digest.totalCount).toBe(0);
+  });
+
   it('ignores rows that are not in `failed` even if the endpoint returns them', () => {
     const digest = buildAttention(
       sources({

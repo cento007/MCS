@@ -414,6 +414,48 @@ describe('content (PRD §9)', () => {
     expect(await notifications()).toHaveLength(0);
   });
 
+  /**
+   * A Session the operator cancelled is `failed` — F7 gives one that never launched no other exit
+   * — and it emits `session.failed` like any other transition into that state. Paging them about
+   * it would be the product telling them something broke when they are what happened. The
+   * discriminator is the *reason*, and only this one reason is silent: the next case proves
+   * `backend_restart`, which is equally "not a failure of the work", still notifies.
+   */
+  it('stays silent for a session the operator cancelled', async () => {
+    await configureTelegram();
+    const sessionId = await seedSession({
+      projectId,
+      userId,
+      state: 'failed',
+      failureReason: 'cancelled',
+    });
+
+    const produced = await built.notifications.producer?.handleEvent(
+      built.outbox.event('session.failed', { sessionId, reason: 'cancelled' }),
+    );
+
+    expect(produced).toBeNull();
+    expect(await notifications()).toHaveLength(0);
+  });
+
+  it('still reports a session that failed for any other reason', async () => {
+    await configureTelegram();
+    const sessionId = await seedSession({
+      projectId,
+      userId,
+      state: 'failed',
+      failureReason: 'backend_restart',
+    });
+
+    await built.notifications.producer?.handleEvent(
+      built.outbox.event('session.failed', { sessionId, reason: 'backend_restart' }),
+    );
+
+    const row = (await notifications())[0];
+    expect(row?.type).toBe('session_failed');
+    expect(row?.body).toContain('Reason: backend_restart');
+  });
+
   it('ignores events that are not notification-worthy', async () => {
     await configureTelegram();
 

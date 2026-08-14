@@ -343,6 +343,7 @@ describe('message ingest and idempotency (§6.8, TDS 03 §3.11)', () => {
       url: `/api/v1/sessions/${session?.id}/files`,
       headers: { cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
     });
+    if (files.statusCode !== 200) console.log(JSON.stringify(files.json(), null, 2));
     expect(files.statusCode).toBe(200);
     expect(JSON.stringify(files.json())).toContain('router.ts');
   });

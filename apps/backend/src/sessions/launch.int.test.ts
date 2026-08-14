@@ -414,6 +414,155 @@ describe('idempotent consumption of a launch job (F6.3)', () => {
   });
 });
 
+/**
+ * **Revoking a queued launch** — the gap that let a stopped workflow run spawn Claude Code.
+ *
+ * There was no way to cancel a `session.launch` job. A Session sitting in `created` behind a full
+ * semaphore would launch whenever a slot freed, whatever had happened in the meantime, and only a
+ * manual `[End]` cleared the process it started.
+ *
+ * The fix is not a job cancellation, because pg-boss is at-least-once and a job may already be in
+ * flight — chasing it is a race with no winner. It is `SessionService.cancel`, which moves the
+ * Session out of `created`. The guarantee is then F7's: `sessions.state` has one writer, it locks
+ * the row, and there is no edge from `failed` to `running`. These tests pin both halves — the
+ * cheap decline in the consumer, and the authoritative one under the lock.
+ */
+describe('cancelling a queued launch', () => {
+  const ctx = { requestId: 'launch-int-test', ipAddress: null };
+
+  it('never spawns a Session cancelled while its launch was queued', async () => {
+    app = createTestApp({ queue, runtime, maxConcurrentSessions: 1 });
+    await app.sessions.registry.start();
+
+    const occupier = await seedSession({ projectId, userId, state: 'created' });
+    const waiting = await seedSession({ projectId, userId, state: 'created' });
+
+    await app.sessions.registry.launch({
+      session: (await sessionRow(occupier)) as never,
+      action: 'start',
+      requestedBy: userId,
+    });
+    expect(
+      await app.sessions.registry.launch({
+        session: (await sessionRow(waiting)) as never,
+        action: 'start',
+        requestedBy: userId,
+      }),
+    ).toBe('queued');
+
+    const cancelled = await app.sessions.sessions.cancel({ userId }, waiting, ctx);
+    expect(cancelled.state).toBe('failed');
+    expect(cancelled.failureReason).toBe('cancelled');
+
+    // Free the slot. This is the moment the queued job is serviced — and it must decline.
+    await app.sessions.stateMachine.transition({
+      sessionId: occupier,
+      to: 'completed',
+      trigger: 'user',
+      action: 'end',
+    });
+
+    await waitForJobsDrained();
+    // One launch, the occupier's. The cancelled Session was never handed to the runtime, and no
+    // slot was taken to discover that — the consumer's state check runs before `acquire`.
+    expect(runtime.launches).toHaveLength(1);
+    expect(runtime.launches[0]?.sessionId).toBe(occupier);
+    expect(await stateOf(waiting)).toBe('failed');
+    expect(app.sessions.registry.slotsInUse).toBe(0);
+  });
+
+  it('refuses `start` afterwards rather than re-queueing it', async () => {
+    app = createTestApp({ queue, runtime, maxConcurrentSessions: 1 });
+    const sessionId = await seedSession({ projectId, userId, state: 'created' });
+
+    await app.sessions.sessions.cancel({ userId }, sessionId, ctx);
+
+    await expect(app.sessions.sessions.start({ userId }, sessionId, ctx)).rejects.toMatchObject({
+      code: 'INVALID_STATE_TRANSITION',
+    });
+    expect(await launchJobs()).toHaveLength(0);
+    expect(runtime.launches).toHaveLength(0);
+  });
+
+  it('cannot be cancelled twice, and cannot be cancelled once it is running', async () => {
+    app = createTestApp({ queue, runtime, maxConcurrentSessions: 2 });
+    const sessionId = await seedSession({ projectId, userId, state: 'created' });
+
+    await app.sessions.sessions.cancel({ userId }, sessionId, ctx);
+    await expect(app.sessions.sessions.cancel({ userId }, sessionId, ctx)).rejects.toMatchObject({
+      code: 'INVALID_STATE_TRANSITION',
+    });
+
+    const running = await seedSession({ projectId, userId, state: 'created' });
+    await app.sessions.registry.launch({
+      session: (await sessionRow(running)) as never,
+      action: 'start',
+      requestedBy: userId,
+    });
+    await expect(app.sessions.sessions.cancel({ userId }, running, ctx)).rejects.toMatchObject({
+      code: 'INVALID_STATE_TRANSITION',
+    });
+  });
+
+  /**
+   * The interleaving a check alone cannot cover: the cancel commits **after** the consumer's last
+   * read and **during** the spawn. F7 refuses the transition under `FOR UPDATE`, which is what
+   * makes the guarantee structural — and the process that was started in that window is disposed
+   * rather than left holding the working tree.
+   */
+  it('disposes a runtime that spawned inside the cancel window, and does not retry the job', async () => {
+    app = createTestApp({ queue, runtime, maxConcurrentSessions: 1 });
+    await app.sessions.registry.start();
+
+    const occupier = await seedSession({ projectId, userId, state: 'created' });
+    const waiting = await seedSession({ projectId, userId, state: 'created' });
+
+    await app.sessions.registry.launch({
+      session: (await sessionRow(occupier)) as never,
+      action: 'start',
+      requestedBy: userId,
+    });
+    await app.sessions.registry.launch({
+      session: (await sessionRow(waiting)) as never,
+      action: 'start',
+      requestedBy: userId,
+    });
+
+    runtime.duringLaunch(async (request) => {
+      if (request.sessionId !== waiting) return;
+      runtime.duringLaunch(null);
+      await app.sessions.sessions.cancel({ userId }, waiting, ctx);
+    });
+
+    await app.sessions.stateMachine.transition({
+      sessionId: occupier,
+      to: 'paused',
+      trigger: 'user',
+      action: 'pause',
+    });
+
+    await waitForJobsDrained();
+
+    // The spawn really happened — this is the window, not a re-run of the previous test.
+    expect(runtime.launches.map((launch) => launch.sessionId)).toContain(waiting);
+    // …and it did not survive the refusal.
+    expect(runtime.disposals).toContainEqual({ sessionId: waiting, reason: 'failed' });
+    // The cancel stands: F7 has no `failed -> running`, so the launch could not overwrite it.
+    expect(await stateOf(waiting)).toBe('failed');
+    expect(app.sessions.registry.slotsInUse).toBe(0);
+
+    // The job is **done on its first delivery**, not retried. A redelivery would find the state
+    // mismatch and no-op, so nothing would break — but `session.launch` carries `retryLimit: 3`
+    // with backoff, so treating a refusal as an error would spend three delivery cycles and a
+    // dead-letter row on an outcome that is not a failure at all.
+    const attempts = await testDatabase().db.execute<{ retry_count: number }>(
+      sql`SELECT retry_count FROM pgboss.job
+          WHERE name = ${QUEUE_NAMES.SESSION_LAUNCH} AND data->>'sessionId' = ${waiting}`,
+    );
+    expect(attempts.rows.map((row) => row.retry_count)).toEqual([0]);
+  });
+});
+
 describe('maxConcurrentSessions is live-editable (WS1 §4.3)', () => {
   it('growing the limit lets a new launch through without touching running Sessions', async () => {
     app = createTestApp({ queue, runtime, maxConcurrentSessions: 1 });

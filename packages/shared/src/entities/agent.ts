@@ -47,7 +47,12 @@ export function isAgentScope(value: unknown): value is AgentScope {
  * Claude Code — a stored value that contradicts what happens.
  *
  * A one-member vocabulary is the honest shape of "one runtime exists". It widens by CHECK alter
- * the day a second runtime can actually be launched, exactly as `sessions.runtime` says.
+ * the day a second runtime can actually be launched.
+ *
+ * **`sessions.runtime` is now the same list, not a parallel one.** Its CHECK admitted `ollama`
+ * until migration `0010` — a claim nothing could produce and no row ever had — so
+ * `db/schema/sessions.ts` imports this array rather than restating it. One vocabulary, two CHECKs,
+ * and a second runtime widens both from here.
  */
 export const AGENT_RUNTIMES = ['claude_code'] as const;
 export type AgentRuntime = (typeof AGENT_RUNTIMES)[number];

@@ -15,6 +15,17 @@ import { requirePrincipal } from '../../auth/guard.js';
 import { requestContextOf } from '../../http/context.js';
 import { dataEnvelope } from '../../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../../http/pagination.js';
+import {
+  dataEnvelopeSchema,
+  dataWithMetaSchema,
+  listEnvelopeSchema,
+} from '../../http/response-schema.js';
+import {
+  agentWorkflowRunSchema,
+  agentWorkflowSchema,
+  stoppedSessionMetaSchema,
+  workflowCostEstimateSchema,
+} from './response-schemas.js';
 import type { AgentWorkflowRunService } from './runs.js';
 import type { AgentWorkflowService } from './service.js';
 
@@ -213,6 +224,10 @@ interface CreateRunBody {
   maxSessions?: number;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const workflowResponse = dataEnvelopeSchema(agentWorkflowSchema);
+const runResponse = dataEnvelopeSchema(agentWorkflowRunSchema);
+
 export interface AgentWorkflowRoutesOptions {
   readonly workflows: AgentWorkflowService;
   readonly runs: AgentWorkflowRunService;
@@ -228,7 +243,12 @@ export function registerAgentWorkflowRoutes(
 
   app.get<{ Querystring: WorkflowListQuery }>(
     '/api/v1/agent-workflows',
-    { schema: { querystring: workflowListQuerySchema } },
+    {
+      schema: {
+        querystring: workflowListQuerySchema,
+        response: { 200: listEnvelopeSchema(agentWorkflowSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'asc';
@@ -250,7 +270,7 @@ export function registerAgentWorkflowRoutes(
 
   app.post<{ Body: CreateWorkflowBody }>(
     '/api/v1/agent-workflows',
-    { schema: { body: createWorkflowBodySchema } },
+    { schema: { body: createWorkflowBodySchema, response: { 201: workflowResponse } } },
     async (request, reply) => {
       const body = request.body;
       const created = await workflows.create(
@@ -272,13 +292,19 @@ export function registerAgentWorkflowRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/agent-workflows/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 200: workflowResponse } } },
     async (request) => dataEnvelope(await workflows.get(request.params.id)),
   );
 
   app.patch<{ Params: IdParams; Body: UpdateWorkflowBody }>(
     '/api/v1/agent-workflows/:id',
-    { schema: { params: idParamsSchema, body: updateWorkflowBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: updateWorkflowBodySchema,
+        response: { 200: workflowResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await workflows.update(
@@ -299,7 +325,12 @@ export function registerAgentWorkflowRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/agent-workflows/:id/cost-estimate',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(workflowCostEstimateSchema) },
+      },
+    },
     async (request) => dataEnvelope(await workflows.costEstimate(request.params.id)),
   );
 
@@ -307,7 +338,12 @@ export function registerAgentWorkflowRoutes(
 
   app.get<{ Querystring: RunListQuery }>(
     '/api/v1/agent-workflow-runs',
-    { schema: { querystring: runListQuerySchema } },
+    {
+      schema: {
+        querystring: runListQuerySchema,
+        response: { 200: listEnvelopeSchema(agentWorkflowRunSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'desc';
@@ -327,7 +363,7 @@ export function registerAgentWorkflowRoutes(
 
   app.post<{ Body: CreateRunBody }>(
     '/api/v1/agent-workflow-runs',
-    { schema: { body: createRunBodySchema } },
+    { schema: { body: createRunBodySchema, response: { 201: runResponse } } },
     async (request, reply) => {
       const body = request.body;
       const created = await runs.create(
@@ -352,20 +388,27 @@ export function registerAgentWorkflowRoutes(
 
   app.get<{ Params: IdParams }>(
     '/api/v1/agent-workflow-runs/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 200: runResponse } } },
     async (request) => dataEnvelope(await runs.get(request.params.id)),
   );
 
   /**
    * The response carries `meta.stoppedSession` because "the run is stopped" and "the Claude Code
    * session it launched is stopped" are two different facts, and the operator pressing Stop is
-   * asking about the second one. `left_unstarted` is the case worth naming: F7 has no
-   * `created -> completed` edge, so a launch still waiting for a concurrency slot is left where it
-   * is — it can never be prompted, but it is not gone either.
+   * asking about the second one. `cancelled` is the case worth naming: the step's launch was still
+   * waiting for a concurrency slot, so no process ever started and none now will — the Session is
+   * `failed(cancelled)` and its queued launch is dead. It read `left_unstarted` until the launch
+   * became revocable, which was a name for the Stop not covering it.
    */
   app.post<{ Params: IdParams; Body: null }>(
     '/api/v1/agent-workflow-runs/:id/stop',
-    { schema: { params: idParamsSchema, body: emptyBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: emptyBodySchema,
+        response: { 200: dataWithMetaSchema(agentWorkflowRunSchema, stoppedSessionMetaSchema) },
+      },
+    },
     async (request) => {
       const result = await runs.stop(
         requirePrincipal(request),
@@ -378,7 +421,13 @@ export function registerAgentWorkflowRoutes(
 
   app.post<{ Params: IdParams; Body: null }>(
     '/api/v1/agent-workflow-runs/:id/resume',
-    { schema: { params: idParamsSchema, body: emptyBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: emptyBodySchema,
+        response: { 200: runResponse },
+      },
+    },
     async (request) =>
       dataEnvelope(
         await runs.resume(requirePrincipal(request), request.params.id, requestContextOf(request)),

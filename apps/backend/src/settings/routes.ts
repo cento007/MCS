@@ -15,6 +15,14 @@ import { requirePrincipal } from '../auth/guard.js';
 import type { Principal } from '../auth/principal.js';
 import { type RequestContext, requestContextOf } from '../http/context.js';
 import { ApiError, dataEnvelope } from '../http/errors.js';
+import { dataEnvelopeSchema } from '../http/response-schema.js';
+import {
+  integrationSettingsSchema,
+  integrationsSettingsSchema,
+  settingsCategorySchema,
+  settingsDocumentSchema,
+  testConnectionResultSchema,
+} from './response-schemas.js';
 
 /**
  * `/api/v1/settings/*` — TDS 04 §7.3–§7.4, path for path.
@@ -96,18 +104,30 @@ export interface SettingsRoutesOptions {
 export function registerSettingsRoutes(app: FastifyInstance, options: SettingsRoutesOptions): void {
   const { settings, testConnection } = options;
 
-  app.get('/api/v1/settings', async () => dataEnvelope(await settings.readAll()));
+  app.get(
+    '/api/v1/settings',
+    { schema: { response: { 200: dataEnvelopeSchema(settingsDocumentSchema) } } },
+    async () => dataEnvelope(await settings.readAll()),
+  );
 
   // ------------------------------------------------------------------------- integrations
 
-  app.get('/api/v1/settings/integrations', async () =>
-    dataEnvelope(await settings.readIntegrations()),
+  app.get(
+    '/api/v1/settings/integrations',
+    { schema: { response: { 200: dataEnvelopeSchema(integrationsSettingsSchema) } } },
+    async () => dataEnvelope(await settings.readIntegrations()),
   );
 
   for (const slug of INTEGRATION_SLUGS) {
     app.put<{ Body: unknown }>(
       `/api/v1/settings/integrations/${slug}`,
-      { schema: { body: integrationWriteSchema(slug) } },
+      {
+        schema: {
+          body: integrationWriteSchema(slug),
+          // The write answers with the same masked document the read serves (§7.3).
+          response: { 200: dataEnvelopeSchema(integrationSettingsSchema(slug)) },
+        },
+      },
       async (request) =>
         dataEnvelope(
           await settings.replaceIntegration(
@@ -122,8 +142,10 @@ export function registerSettingsRoutes(app: FastifyInstance, options: SettingsRo
     // §7.4: a completed check is a 200 whatever the outcome; only a *refused request*
     // (`INTEGRATION_NOT_CONFIGURED`) is an error envelope. No body — the check reads
     // persisted settings, so testing unsaved input is unrepresentable here.
-    app.post(`/api/v1/settings/integrations/${slug}/test-connection`, async () =>
-      dataEnvelope(await testConnection.run(slug)),
+    app.post(
+      `/api/v1/settings/integrations/${slug}/test-connection`,
+      { schema: { response: { 200: dataEnvelopeSchema(testConnectionResultSchema) } } },
+      async () => dataEnvelope(await testConnection.run(slug)),
     );
   }
 
@@ -132,7 +154,12 @@ export function registerSettingsRoutes(app: FastifyInstance, options: SettingsRo
   for (const category of DOCUMENT_CATEGORIES) {
     app.put<{ Body: unknown }>(
       `/api/v1/settings/${category}`,
-      { schema: { body: categoryWriteSchema(category) } },
+      {
+        schema: {
+          body: categoryWriteSchema(category),
+          response: { 200: dataEnvelopeSchema(settingsCategorySchema(category)) },
+        },
+      },
       async (request) =>
         dataEnvelope(
           await settings.replaceCategory(
@@ -147,6 +174,15 @@ export function registerSettingsRoutes(app: FastifyInstance, options: SettingsRo
 
   // The parametric routes come last and match only what the static ones did not: an unknown
   // category on GET, and any category at all on PUT that has no static route above.
+  /**
+   * **The two parametric routes are the only settings operations with no declared response, and
+   * that is deliberate.** This `GET` serves whichever of the five category documents the path
+   * names, so its honest OpenAPI spelling is a `oneOf` across five schemas — a construct the
+   * response-conformance checker does not implement, and one that would generate a client type
+   * nobody can narrow without re-reading the path. Every category is already fully described by
+   * its own static `PUT` above and by `GET /settings`. The `PUT` below has no success response at
+   * all: it exists to answer `NOT_FOUND` for a category that has no static route.
+   */
   app.get<{ Params: CategoryParams }>(
     '/api/v1/settings/:category',
     { schema: { params: categoryParamsSchema } },

@@ -3,6 +3,8 @@ import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
+import { syncPreviewSchema, syncRunDetailSchema, syncRunSchema } from './response-schemas.js';
 import type { ObsidianService } from './service.js';
 
 /**
@@ -70,15 +72,24 @@ export interface ObsidianRoutesOptions {
 export function registerObsidianRoutes(app: FastifyInstance, options: ObsidianRoutesOptions): void {
   const { obsidian } = options;
 
-  app.post('/api/v1/sync-runs', { schema: { body: triggerBodySchema } }, async (request, reply) => {
-    const run = await obsidian.trigger(requirePrincipal(request), requestContextOf(request));
-    reply.code(202);
-    return dataEnvelope(run);
-  });
+  app.post(
+    '/api/v1/sync-runs',
+    { schema: { body: triggerBodySchema, response: { 202: dataEnvelopeSchema(syncRunSchema) } } },
+    async (request, reply) => {
+      const run = await obsidian.trigger(requirePrincipal(request), requestContextOf(request));
+      reply.code(202);
+      return dataEnvelope(run);
+    },
+  );
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/sync-runs',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(syncRunSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const rows = await obsidian.list({
@@ -90,11 +101,20 @@ export function registerObsidianRoutes(app: FastifyInstance, options: ObsidianRo
   );
 
   // §1.2: a bounded read model returns `{ data: … }` with no `meta`.
-  app.get('/api/v1/sync-runs/preview', async () => dataEnvelope(await obsidian.preview()));
+  app.get(
+    '/api/v1/sync-runs/preview',
+    { schema: { response: { 200: dataEnvelopeSchema(syncPreviewSchema) } } },
+    async () => dataEnvelope(await obsidian.preview()),
+  );
 
   app.get<{ Params: IdParams }>(
     '/api/v1/sync-runs/:id',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(syncRunDetailSchema) },
+      },
+    },
     async (request) => dataEnvelope(await obsidian.get(request.params.id)),
   );
 }

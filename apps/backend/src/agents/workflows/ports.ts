@@ -18,16 +18,21 @@ export interface WorkflowActor {
  *
  * They are narrow on purpose. The runner's whole job is *sequencing*, and the moment it holds a
  * `SessionService` it can do anything a Session can do — including the one thing this slice must
- * never do, which is invent a second way to run Claude Code. Declaring exactly four session
+ * never do, which is invent a second way to run Claude Code. Declaring exactly five session
  * operations, one prompt operation and one hand-off operation makes the boundary reviewable: if a
- * future change needs a fifth, it has to be added here, in front of everyone.
+ * future change needs a sixth, it has to be added here, in front of everyone.
+ *
+ * The fifth arrived that way. `cancel` is here because Stop could not stop a step whose Session
+ * was still queued behind the concurrency semaphore: it reported the Session "left unstarted" and
+ * left the queued launch alive, so the run was `stopped` while its next Claude Code process was
+ * still on its way. See `WorkflowSessionPort.cancel`.
  *
  * All three are satisfied structurally by services that already exist and are already tested —
  * `SessionService`, `PromptService`, `SessionExportService` — so nothing implements them twice in
  * production. The unit tier substitutes fakes; the integration tier passes the real ones.
  */
 
-/** What the runner needs from a Session. Four verbs, and no access to `sessions.state`. */
+/** What the runner needs from a Session. Five verbs, and no access to `sessions.state`. */
 export interface WorkflowSessionPort {
   create(
     actor: WorkflowActor,
@@ -55,6 +60,20 @@ export interface WorkflowSessionPort {
 
   /** `POST /sessions/{id}/end` — what a Stop does to the Session that is spending money. */
   end(actor: WorkflowActor, id: string, ctx: RequestContext): Promise<unknown>;
+
+  /**
+   * `SessionService.cancel` — what a Stop does to the Session that has not spent any *yet*.
+   *
+   * `end` cannot do this job: F7 has no `created -> completed` edge, so a step whose launch was
+   * still sitting in the `session.launch` queue could not be closed at all. Cancelling moves it to
+   * `failed(cancelled)`, and that single fact is what revokes the queued launch — the launch path
+   * asks F7 whether the Session may reach `running`, and after this it may not.
+   *
+   * Legal from `created` only, and it **throws** otherwise rather than succeeding quietly, because
+   * the caller has to be able to tell "I stopped it before it started" from "it started while I
+   * was asking" — those are different outcomes and the operator is shown which one happened.
+   */
+  cancel(actor: WorkflowActor, id: string, ctx: RequestContext): Promise<unknown>;
 
   get(id: string): Promise<{ readonly id: string; readonly state: string }>;
 }

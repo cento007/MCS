@@ -811,3 +811,67 @@ Each claim was checked by reverting the mechanism and watching the test fail:
 - removing the halt-on-failure block → the four halt/resume tests time out, because the run silently re-launches the failed step;
 - removing *both* stop guards (the run-state check and the stopped-attempt check) → the stopped run advances to step 2 and the kill-switch test fails on a second attempt row;
 - the `coalesce` in `ck_agent_workflow_steps_agent_scope` → demonstrated on a scratch database (dropped afterwards): the un-coalesced form **accepts** a `project`-scoped step whose project key is missing, because a CHECK passes when it evaluates to `NULL`. That is the defect `0006` shipped and `0007` had to correct, and it is now a named test.
+
+---
+
+## 2026-08-14 — Three honesty fixes: a launch you can revoke, a setting that stopped lying, two stale claims
+
+Migrations `0010` and `0011`. Three defects that share one shape — **the system said something that was not true** — and the fixes are as different as the lies were.
+
+### 1. "Stop" did not stop, and it cost money
+
+Stopping a workflow run whose step was still `created` reported `left_unstarted` and left the Session exactly where it was. That name was accurate about what the endpoint did, and that was the defect: the Session still had a live durable `session.launch` job behind it, so the moment a concurrency slot freed, a run the operator had stopped **spawned Claude Code, took a `maxConcurrentSessions` slot, and held it until someone pressed End by hand.**
+
+Underneath it was a Session-domain gap, not a workflow one: **there was no way to cancel a queued launch at all.** `POST /sessions/{id}/start` at capacity enqueues a job and leaves the Session `created` (§6.2.1); F7 has no `created -> completed` edge, so `end` could not close it either. Nothing in the product could revoke a launch.
+
+**Two shapes were available and only one of them has a guarantee.** Cancelling the pg-boss job is a race with no winner — delivery is at-least-once, and a job may already be in flight or already have been handed to a handler. So the durable fact is the **Session**, not the job: `SessionService.cancel` performs `created -> failed` with `failure_reason = 'cancelled'`, and every launch path already asks F7 whether that Session may reach `running`.
+
+**Why that is structural rather than a check in a convenient place.** `sessions.state` has exactly one writer, it takes `FOR UPDATE` on the row, and it validates against F7's table — which has no edge from `failed` into `running`. Once the cancel commits, no path can launch that Session: not the queued job, not a redelivery, not a concurrent `POST /start`. The launch consumer's own state check is what makes it *cheap* (no slot taken, no process spawned); it is not what makes it *true*. The distinction is the whole design: a guarantee that depended on the check would be best-effort.
+
+The residual window — the cancel committing after the consumer's last read and during the spawn — is closed for consequences rather than for existence: the refused transition **disposes the runtime it briefly held** before re-raising, and the job completes instead of retrying (`session.launch` carries `retryLimit: 3` with backoff, so treating a refusal as an error would spend three delivery cycles on an outcome that is not a failure).
+
+**`failed` and not a seventh state.** F7 is the Foundation Contract and `created` has two exits: `running` and `failed`. A `cancelled` state would amend a binding contract, migrate two CHECKs and touch every consumer of `SessionState`, for a distinction `failure_reason` already carries — as it does for `backend_restart`, which is a deploy rather than a failure of the work. Two consequences follow from reusing `failed`, and both are handled rather than tolerated: the notification producer **stays silent for `cancelled` and for no other reason** (an operator who cancelled a Session does not need their phone to tell them it failed), and the Dashboard's Needs Attention widget excludes it (badging the operator's own Stop `✕ Session failed` is the widget crying wolf about its user).
+
+`WorkflowSessionPort` gained a fifth verb, in front of everyone, as its own docstring demanded. `meta.stoppedSession.outcome` is now `ended | cancelled | already_terminal`, and the close loop re-reads once so a launch that wins the race is *ended* rather than mis-reported.
+
+### 2. `integrations.ollama.enabled` — removed, along with the key beside it
+
+It had been read by nothing since the day it was declared, and had become this codebase's standing example of an inert setting, cited in `memory/policy.ts`, `memory/retrieval.ts`, `entities/agent.ts`, `entities/agent-team.ts`, `workflows/handoff.ts` and two frontend modules. Citing a defect while shipping it is its own contradiction.
+
+**Wiring it was considered and there is nothing to wire.** Its stated intent was Ollama as an *agent* runtime (PRD §5.4), and `AGENT_RUNTIMES` has one member because one runtime is launchable — Phase 4 slice 1 declined `agents.defaultRuntime` for exactly that reason. Redefining it as "is Ollama in use at all" was the other candidate and is worse: that question is already answered by `integrations.qdrant.embeddingModel`, and a second answer to one question is the same defect in a fresh costume.
+
+**`integrations.ollama.defaultModel` went with it**, and that is a deliberate widening of the brief rather than an oversight. It was equally unread and described "the model offered to agents that run on Ollama" — no agent can. Removing the switch and keeping the field would have left a strictly more confusing card: a model setting for a runtime with no on-position. The Ollama card is now host + port, both of which are read on every embedding call.
+
+**What happened to the operator's row.** The live database held `ollama_enabled = true` and `ollama_default_model = 'llama3.1'`. Settings documents are built from the key registry rather than from the table, so simply undeclaring the keys would have left two rows nothing can read, nothing can edit and nothing can delete — and which a future multi-runtime slice would silently inherit as a decision made years earlier. Migration `0011` deletes exactly those two keys and leaves `ollama_host` untouched, with the values recorded in the migration's own comment so the deletion is not silent. Neither value affected any behaviour, so nothing an operator can observe changes.
+
+### 3a. `GET /schedule` now has a `memory_retention` row
+
+Phase 3's expiry sweep is a real self-rescheduling chain — the same species as `github.poll`, `obsidian.schedule` and `notification.schedule`, all three of which this endpoint already reported — and it was the only one of the four that was invisible. **A recurring job that deletes an operator's memory on a timer they cannot see is a setting-nothing-reads pointed the other way.**
+
+`enabled` is the policy (at least one tier of `memory.retentionDays` is non-zero), which is exactly when the chain keeps a tick queued, and deliberately **not** conditioned on the memory runtime being reachable: a tick that finds Ollama down postpones rather than skips, so the sweep is still scheduled and still due. It is the one row whose `nextRunAt` comes **from the queue** rather than from an interval setting, because a sweep that deletes nothing writes nothing and its interval is a constant rather than a knob. Both reads are best-effort against pg-boss's vendored table, isolated exactly as `readOldestReadyJobAge` is. `lastRunAt` is honestly weaker than the other three rows' — it is bounded by pg-boss's retention of completed jobs, because nothing else records that a sweep happened.
+
+The widget's per-row "enable in Settings" link is now kind-aware: retention is configured at Settings → **Memory**, and sending an operator to Integrations to look for a control that is not there is a small, specific lie.
+
+### 3b. `sessions.runtime` was narrowed, after checking
+
+**Checked first, as the task required.** `SELECT runtime, count(*) FROM sessions GROUP BY 1` against the live database returns one row: `claude_code`, five sessions. No `ollama` row has ever existed, and none could — `ck_agents_runtime` admits one value, the agent binding copies it onto the Session, `insertSession` defaults to `claude_code`, and `ManagedRuntime` drives the Claude Agent SDK unconditionally.
+
+So the narrowing is safe and it is the same decision as §2 expressed in the database. `SESSION_RUNTIMES` is now **derived from `AGENT_RUNTIMES`** rather than restated, using the pattern `agents.ts` already uses, so the two CHECKs cannot drift apart a second time; widening for a real second runtime is one edit to one array plus a CHECK alter on both tables. Migration `0010` is not `NOT VALID` — a constraint that has never been checked is one nobody can rely on.
+
+Proven on a scratch database (created, exercised, dropped): at `0009` the old CHECK **accepts** `runtime = 'ollama'`; `0010` against a table containing such a row is **refused and the whole file rolls back**, leaving `ck_sessions_runtime` in place — so this cannot silently lose data on an install unlike the operator's; with no such row it applies cleanly, and the same insert is then refused by `ck_sessions_runtime` by name. `0011` removes exactly `ollama_enabled` and `ollama_default_model` and leaves `ollama_host`.
+
+### Verified against the old behaviour
+
+Every claim was falsified before it was believed. Each mechanism was reverted, the test run, and the file restored:
+
+- **the workflow stop fix** → the new test does not merely fail, it fails with *"Timed out waiting for the slot to come back"*. The decoy Session was ended, the freed slot was immediately taken by the stopped run's queued launch, and it was never given back. That is the defect, reproduced: a stopped run holding a concurrency slot with a live Claude Code process;
+- **the dispose on a refused transition** → `runtime.disposals` is empty while `runtime.launches` contains the cancelled Session: a spawned process with no row, no controller and no way to be reached;
+- **the no-retry branch** → `pgboss.job.retry_count` goes from `0` to `1`; the redelivery is harmless (the pre-check catches it) but it is a delivery cycle spent on a non-failure, which is what the assertion now pins;
+- **the notification suppression** → a `session_failed` Notification is produced and queued for Telegram delivery for a Session the operator cancelled;
+- **the Needs Attention exclusion** → the cancelled Session appears as `✕ Session failed`;
+- **the schedule row** → the `memory_retention` enabled and next-tick assertions fail.
+
+### Left standing, and stated rather than shipped
+
+- **`SessionService.cancel` has no route.** The capability is reachable only from the workflow Stop path, so an operator still cannot cancel a queued launch they started themselves. Adding `POST /api/v1/sessions/{id}/cancel` was declined *in this slice only* to stay out of a repo-wide response-schema change landing in parallel; it is recorded in TDS 04 §6.2.1 as a gap with its spelling already chosen, not as a decision.
+- **`meta.stoppedSession.outcome` changed value.** A client that has not been updated falls through to the existing "this build does not recognise" branch rather than mis-describing it — which is the reason that branch was written.

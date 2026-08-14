@@ -4,6 +4,8 @@ import { requirePrincipal } from '../auth/guard.js';
 import { requestContextOf } from '../http/context.js';
 import { dataEnvelope } from '../http/errors.js';
 import { clampLimit, decodeIdCursor, paginate } from '../http/pagination.js';
+import { dataEnvelopeSchema, listEnvelopeSchema } from '../http/response-schema.js';
+import { adrSchema, jobAcceptedSchema } from './response-schemas.js';
 import type { AdrService } from './service.js';
 import { MAX_ADR_SECTION_LENGTH, MAX_ADR_TITLE_LENGTH } from './validation.js';
 
@@ -105,6 +107,9 @@ interface UpdateBody {
   supersededByAdrId?: string | null;
 }
 
+/** See `sessions/routes.ts` for what a `response` block is and is not (it never strips). */
+const adrResponse = dataEnvelopeSchema(adrSchema);
+
 export interface AdrRoutesOptions {
   readonly adrs: AdrService;
 }
@@ -114,7 +119,12 @@ export function registerAdrRoutes(app: FastifyInstance, options: AdrRoutesOption
 
   app.get<{ Querystring: ListQuery }>(
     '/api/v1/adrs',
-    { schema: { querystring: listQuerySchema } },
+    {
+      schema: {
+        querystring: listQuerySchema,
+        response: { 200: listEnvelopeSchema(adrSchema) },
+      },
+    },
     async (request) => {
       const limit = clampLimit(request.query.limit);
       const order = request.query.order ?? 'asc';
@@ -133,7 +143,7 @@ export function registerAdrRoutes(app: FastifyInstance, options: AdrRoutesOption
 
   app.post<{ Body: CreateBody }>(
     '/api/v1/adrs',
-    { schema: { body: createBodySchema } },
+    { schema: { body: createBodySchema, response: { 201: adrResponse } } },
     async (request, reply) => {
       const created = await adrs.create(
         requirePrincipal(request),
@@ -156,13 +166,19 @@ export function registerAdrRoutes(app: FastifyInstance, options: AdrRoutesOption
 
   app.get<{ Params: IdParams }>(
     '/api/v1/adrs/:id',
-    { schema: { params: idParamsSchema } },
+    { schema: { params: idParamsSchema, response: { 200: adrResponse } } },
     async (request) => dataEnvelope(await adrs.get(request.params.id)),
   );
 
   app.patch<{ Params: IdParams; Body: UpdateBody }>(
     '/api/v1/adrs/:id',
-    { schema: { params: idParamsSchema, body: updateBodySchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        body: updateBodySchema,
+        response: { 200: adrResponse },
+      },
+    },
     async (request) => {
       const body = request.body;
       const updated = await adrs.update(
@@ -188,7 +204,12 @@ export function registerAdrRoutes(app: FastifyInstance, options: AdrRoutesOption
 
   app.post<{ Params: IdParams }>(
     '/api/v1/sessions/:id/generate-adr',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 202: dataEnvelopeSchema(jobAcceptedSchema) },
+      },
+    },
     async (request, reply) => {
       const result = await adrs.generateFromSession(
         requirePrincipal(request),

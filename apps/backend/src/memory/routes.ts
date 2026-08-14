@@ -1,7 +1,14 @@
 import { MEMORY_SOURCE_TYPES, PRODUCIBLE_MEMORY_TIERS } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import { dataEnvelope } from '../http/errors.js';
+import { dataEnvelopeSchema } from '../http/response-schema.js';
 import type { MemoryIndexService } from './indexing.js';
+import {
+  memoryBackfillAcceptedSchema,
+  memoryBackfillStatusSchema,
+  memoryItemSchema,
+  memorySearchResponseSchema,
+} from './response-schemas.js';
 import {
   MAX_MEMORY_QUERY_LENGTH,
   MAX_MEMORY_SEARCH_LIMIT,
@@ -131,7 +138,12 @@ export interface MemoryRoutesOptions {
 export function registerMemoryRoutes(app: FastifyInstance, options: MemoryRoutesOptions): void {
   app.post<{ Body: SearchBody }>(
     '/api/v1/memory-items/search',
-    { schema: { body: searchBodySchema } },
+    {
+      schema: {
+        body: searchBodySchema,
+        response: { 200: dataEnvelopeSchema(memorySearchResponseSchema) },
+      },
+    },
     async (request) => {
       const body = request.body;
       return dataEnvelope(
@@ -157,7 +169,12 @@ export function registerMemoryRoutes(app: FastifyInstance, options: MemoryRoutes
   // validator to do a router's job.
   app.post<{ Body: BackfillBody }>(
     '/api/v1/memory-items/backfill',
-    { schema: { body: backfillBodySchema } },
+    {
+      schema: {
+        body: backfillBodySchema,
+        response: { 202: dataEnvelopeSchema(memoryBackfillAcceptedSchema) },
+      },
+    },
     async (request, reply) => {
       const run = await options.indexing.trigger({ mode: request.body?.mode ?? 'incremental' });
       reply.code(202);
@@ -170,13 +187,20 @@ export function registerMemoryRoutes(app: FastifyInstance, options: MemoryRoutes
     },
   );
 
-  app.get('/api/v1/memory-items/backfill', async () =>
-    dataEnvelope(await options.indexing.status()),
+  app.get(
+    '/api/v1/memory-items/backfill',
+    { schema: { response: { 200: dataEnvelopeSchema(memoryBackfillStatusSchema) } } },
+    async () => dataEnvelope(await options.indexing.status()),
   );
 
   app.get<{ Params: IdParams }>(
     '/api/v1/memory-items/:id',
-    { schema: { params: idParamsSchema } },
+    {
+      schema: {
+        params: idParamsSchema,
+        response: { 200: dataEnvelopeSchema(memoryItemSchema) },
+      },
+    },
     async (request) => dataEnvelope(await options.search.get(request.params.id)),
   );
 }

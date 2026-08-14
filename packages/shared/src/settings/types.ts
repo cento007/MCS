@@ -133,12 +133,16 @@ export interface QdrantSettings {
   readonly embeddingModel: string;
 }
 
-/** Phase 3+ — same. */
+/**
+ * Phase 3 — where the embedder lives, and nothing else.
+ *
+ * `enabled` and `defaultModel` were withdrawn: both described Ollama as an *agent runtime*, which
+ * no part of this build can select, so neither was ever read. `OLLAMA_KEYS` carries the full
+ * reasoning. Host and port are read on every embedding call.
+ */
 export interface OllamaSettings {
   readonly host: string;
   readonly port: number;
-  readonly defaultModel: string;
-  readonly enabled: boolean;
 }
 
 export interface IntegrationsSettings {

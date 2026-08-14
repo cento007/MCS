@@ -72,6 +72,24 @@ export function UpcomingTasksWidget() {
   );
 }
 
+/**
+ * Where a row's own "enable in Settings" link goes.
+ *
+ * Keyed by `string`, not by `ScheduleKind`, on purpose: the Backend serves the authoritative list
+ * and `lib/api/types.ts` is hand-written (there are still no response schemas in `openapi.yaml`),
+ * so a kind this build has never heard of is a real possibility. It falls back to Integrations,
+ * which is where three of the four are configured — never to a page that would be wrong for a
+ * *known* kind. `memory_retention` is set in Settings → Memory, and sending an operator to
+ * Integrations to find a control that is not there is the small, specific lie this map exists to
+ * avoid.
+ */
+const SETTINGS_LINKS: Readonly<Record<string, string>> = { memory_retention: '/settings/memory' };
+const DEFAULT_SETTINGS_LINK = '/settings/integrations';
+
+function settingsLinkFor(kind: string): string {
+  return SETTINGS_LINKS[kind] ?? DEFAULT_SETTINGS_LINK;
+}
+
 /** Soonest first; rows with no next run sink to the bottom without disappearing. */
 function compareSchedule(a: ScheduleEntry, b: ScheduleEntry): number {
   const left = a.nextRunAt === null ? Number.POSITIVE_INFINITY : Date.parse(a.nextRunAt);
@@ -105,7 +123,10 @@ function ScheduleRow({ entry, clock }: { entry: ScheduleEntry; clock: LiveClock 
             // Honest, and actionable: the row stays, and it says where to turn it on.
             <>
               Not scheduled —{' '}
-              <Link to="/settings/integrations" className="rounded-xs underline decoration-dotted">
+              <Link
+                to={settingsLinkFor(entry.kind)}
+                className="rounded-xs underline decoration-dotted"
+              >
                 enable in Settings
               </Link>
             </>

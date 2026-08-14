@@ -50,6 +50,20 @@ export interface AttentionDigest {
 /** §5.2: "Sessions that entered `failed` in the last 24 h". */
 export const ATTENTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The one `failureReason` that is not a condition needing attention.
+ *
+ * A Session the operator cancelled before it launched is `failed` because F7 gives a Session that
+ * never ran no other exit — not because anything went wrong. Listing it here would put `✕ Session
+ * failed` in front of the operator for the thing they just did, most often by stopping a workflow
+ * run, which is the widget crying wolf about its own user. Every other reason (`spawn_error`,
+ * `process_crash`, `backend_restart`, `resume_target_lost`) is news and still appears.
+ *
+ * Matched verbatim against the Backend's vocabulary (TDS 03 §3.9), like `failedSecondaryLine`
+ * below: a reason this build does not recognise is shown, never suppressed.
+ */
+export const CANCELLED_FAILURE_REASON = 'cancelled';
+
 /** §5.2: "newest first, max 8 rows". */
 export const MAX_ATTENTION_ROWS = 8;
 
@@ -91,6 +105,7 @@ export function failedAt(session: Session): string {
 function sessionItems(sources: AttentionSources): readonly AttentionItem[] {
   return sources.failedSessions
     .filter((session) => session.state === 'failed')
+    .filter((session) => session.failureReason?.trim() !== CANCELLED_FAILURE_REASON)
     .filter((session) => withinWindow(failedAt(session), sources.now))
     .sort((a, b) => Date.parse(failedAt(b)) - Date.parse(failedAt(a)))
     .map((session) => ({
