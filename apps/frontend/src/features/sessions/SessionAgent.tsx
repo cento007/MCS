@@ -213,7 +213,13 @@ function BindAgentModal({
   onBind: (agentId: string | null) => void;
 }) {
   const [agentId, setAgentId] = useState(session.agentId ?? '');
-  const agents = useAgentAvailability(session.projectId, true);
+  // Asked *about this Session*, which is what lets a `session`-scoped agent be offered here at
+  // all — it is the one surface where such an agent is bindable, and the create-time question
+  // cannot express it.
+  // Asked *about this Session*, which is what lets a `session`-scoped agent be offered here at
+  // all — it is the one surface where such an agent is bindable, and the create-time question
+  // cannot express it.
+  const agents = useAgentAvailability(session.projectId, true, session.id);
 
   // A refetch that lands while the dialog is open must not leave a selection the API would refuse
   // — but only once the read has actually answered, or an in-flight request would silently clear

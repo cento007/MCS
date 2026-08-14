@@ -64,7 +64,23 @@ export const queryKeys = {
      * routing it through `['agents']` instead would refetch every agent list on every assignment,
      * and still not reach this key.
      */
-    availableAgents: (id: string) => ['projects', id, 'available-agents'] as const,
+    /**
+     * Every availability answer for one Project, whatever Session it was asked about.
+     *
+     * **This is what invalidation must target.** TanStack matches by prefix, so this reaches both
+     * the create-time entry and every per-Session one; targeting a single entry would refresh the
+     * launch modal on `agent.assigned` and leave the bind surface serving a roster the operator
+     * has just changed.
+     */
+    availableAgentsRoot: (id: string) => ['projects', id, 'available-agents'] as const,
+    /**
+     * `sessionId` is part of the key, not a detail of the request: asked about a Session, the
+     * answer differs — a `session`-scoped agent becomes offerable, and `session_not_yet` becomes
+     * `session_elsewhere`. Sharing one entry would let the create-time answer be served to the
+     * bind surface, which is exactly the refusal that surface exists to lift.
+     */
+    availableAgents: (id: string, sessionId?: string) =>
+      ['projects', id, 'available-agents', sessionId ?? null] as const,
   },
   repositories: {
     root: () => ['repositories'] as const,

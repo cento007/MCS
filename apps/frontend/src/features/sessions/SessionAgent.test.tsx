@@ -10,6 +10,7 @@ import {
   makeSession,
   mockApi,
   renderWithProviders,
+  SESSION_ID,
 } from './test-support.js';
 
 /**
@@ -146,13 +147,17 @@ describe('the session detail header states its agent', () => {
   });
 
   /**
-   * The one place the server's answer was computed for a different moment.
+   * Defensive, and no longer the ordinary case.
    *
-   * `GET /projects/{id}/available-agents` evaluates the rule with `sessionId: null` — "which agent
-   * may a *new* session here be launched as" — so a session-scoped agent always comes back as
-   * `session_not_yet`, including the one that names this very Session. Reprinting "that session
-   * does not exist yet" next to a Session the operator is looking at would be a confident
-   * falsehood; this screen states the gap instead, and does not re-derive a rule to close it.
+   * This surface now asks `GET /projects/{id}/available-agents?sessionId=…` (see the test below),
+   * so the Backend evaluates the rule against a Session that *exists*: an agent scoped to this one
+   * is offered, and one scoped elsewhere comes back as `session_elsewhere`. A `session_not_yet`
+   * arriving here therefore means the answer was computed for a different moment — an older
+   * Backend, or a cache entry from the create-time question.
+   *
+   * The screen still refuses to reprint "that session does not exist yet" beside a Session the
+   * operator is looking at, because that would be a confident falsehood. It states the gap and
+   * does not re-derive a rule to close it.
    */
   it('does not reprint a create-time refusal at a session that exists', async () => {
     const user = userEvent.setup();
@@ -187,6 +192,36 @@ describe('the session detail header states its agent', () => {
     expect(row).toHaveTextContent('Release Manager');
     expect(row).toHaveTextContent('cannot say whether this agent belongs to');
     expect(row).not.toHaveTextContent('does not exist yet');
+  });
+
+  /**
+   * The parameter is the whole reason a session-scoped agent is bindable anywhere.
+   *
+   * Without `?sessionId=` the Backend answers the create-time question — "which agent may a *new*
+   * session here be launched as" — and every session-scoped agent comes back `session_not_yet`,
+   * including the one that names this very Session. That is a capability loss, not a cosmetic
+   * one: this is the only surface where such an agent can be bound at all.
+   *
+   * Pinned as a request assertion rather than a rendering one because a dropped parameter is
+   * invisible in the output — the screen would simply offer one agent fewer, which looks like an
+   * answer rather than a question that was never asked.
+   */
+  it('asks about this session, not about a hypothetical new one', async () => {
+    const user = userEvent.setup();
+    seedAvailability({});
+
+    renderWithProviders(
+      <SessionAgentLine
+        session={makeSession({ state: 'created', agentId: null })}
+        onBind={() => {}}
+        saving={false}
+      />,
+    );
+    await user.click(screen.getByTestId('session-agent-bind'));
+
+    await waitFor(() => expect(api.callsTo('available-agents').length).toBeGreaterThan(0));
+    const asked = api.callsTo('available-agents').at(-1);
+    expect(asked?.url).toContain(`sessionId=${SESSION_ID}`);
   });
 
   it('refuses to offer a binding on an observed session', () => {

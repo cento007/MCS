@@ -194,7 +194,7 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
       const projectId = payloadString(event, 'projectId');
       return projectId === null
         ? [queryKeys.agentTeams.root()]
-        : [queryKeys.projects.availableAgents(projectId), queryKeys.agentTeams.root()];
+        : [queryKeys.projects.availableAgentsRoot(projectId), queryKeys.agentTeams.root()];
     }
 
     /**

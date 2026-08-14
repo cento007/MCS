@@ -26,7 +26,20 @@ export const endpoints = {
      * it is the read that makes a team mean something: without it a team is a named list nothing
      * consults.
      */
-    availableAgents: (id: string) => `/projects/${id}/available-agents`,
+    /**
+     * `sessionId` asks the same question about a Session that **exists**, which is the only way a
+     * `session`-scoped agent can be offered at all: without it the Backend answers
+     * `session_not_yet` for every one, including the Session that owns it. Omitted for the
+     * create-time question, where there is no Session to name yet.
+     *
+     * Sent only because the Backend accepts it — unknown query parameter *names* are a 400 here
+     * (`registerQueryStrictness`), not a silent drop, so a speculative parameter would fail loudly
+     * rather than quietly do nothing.
+     */
+    availableAgents: (id: string, sessionId?: string) =>
+      sessionId === undefined
+        ? `/projects/${id}/available-agents`
+        : `/projects/${id}/available-agents?sessionId=${encodeURIComponent(sessionId)}`,
   },
   repositories: {
     list: '/repositories',

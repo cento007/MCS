@@ -80,16 +80,26 @@ export function isRouteMissing(error: unknown): boolean {
 export function useAgentAvailability(
   projectId: string | null,
   enabled: boolean,
+  /**
+   * The Session the question is about, when one exists.
+   *
+   * Omitted at create time, and that is not a detail: without it the Backend answers
+   * `session_not_yet` for every `session`-scoped agent — including the Session that owns one — so
+   * the bind surface must pass it or that agent can never be offered anywhere.
+   */
+  sessionId?: string,
 ): AgentAvailabilityRead {
   const asked = enabled && projectId !== null;
 
   const query = useQuery<unknown, ApiError>({
-    queryKey: queryKeys.projects.availableAgents(projectId ?? 'none'),
+    queryKey: queryKeys.projects.availableAgents(projectId ?? 'none', sessionId),
     enabled: asked,
     retry: false,
     staleTime: AGENTS_STALE_MS,
     queryFn: ({ signal }) =>
-      apiGet<unknown>(endpoints.projects.availableAgents(projectId as string), { signal }),
+      apiGet<unknown>(endpoints.projects.availableAgents(projectId as string, sessionId), {
+        signal,
+      }),
   });
 
   const availability = useMemo(
