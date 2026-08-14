@@ -252,6 +252,26 @@ Complements Qdrant's episodic memory (sessions, decisions, ADRs) with structural
 
 Adoption path: trial as a per-repository Claude Code skill first; if proven, integrate into repository onboarding with graph refresh handled by the Sync Worker.
 
+> **Trialled 2026-08-14 — not adopted.** The trial ran as specified above. The claims in this
+> section held: Apache 2.0, tree-sitter, genuinely local (no telemetry framework, no HTTP client
+> in the base install), and Docker is not an install path. It indexed this monorepo natively on
+> Windows in 56 seconds.
+>
+> It was rejected on **this architecture specifically**. Concrete adapter method bodies are not
+> minted as call sites, so the graph resolves to the *interface* — leaving it blind at the
+> `QueuePort` / `EmbeddingPort` / `VectorStorePort` boundaries the Foundation Contract mandates.
+> And string literals are not indexed, so `session.completed` and the whole F6 event backbone are
+> invisible. The claimed token saving also does not survive measurement: ~4x on the one probe it
+> answered well, not the advertised 18x (which compares against reading the entire corpus).
+> Its cold build is non-deterministic, losing nodes on exactly the first run that repository
+> onboarding would perform.
+>
+> Adoption would additionally put Python and ~90MB of tree-sitter wheels on the Ubuntu box,
+> against F1's "TypeScript throughout", and install PreToolUse hooks that collide with Mission
+> Control's own observed-session hooks. **Worth revisiting after 1.0** — `explain` and `affected`
+> are genuinely good — but not on the evidence available now. Full findings in
+> `docs/progress-log.md`.
+
 ### 6.3 Memory Sources
 
 - Sessions

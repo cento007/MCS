@@ -875,3 +875,60 @@ Every claim was falsified before it was believed. Each mechanism was reverted, t
 
 - **`SessionService.cancel` has no route.** The capability is reachable only from the workflow Stop path, so an operator still cannot cancel a queued launch they started themselves. Adding `POST /api/v1/sessions/{id}/cancel` was declined *in this slice only* to stay out of a repo-wide response-schema change landing in parallel; it is recorded in TDS 04 §6.2.1 as a gap with its spelling already chosen, not as a decision.
 - **`meta.stoppedSession.outcome` changed value.** A client that has not been updated falls through to the existing "this build does not recognise" branch rather than mis-describing it — which is the reason that branch was written.
+
+---
+
+## 2026-08-14 — Response schemas that cannot strip, and bindability asked rather than derived
+
+Commits `fcbd26f`, `e9f1ec0`, `9635d23`. **2647 unit tests**, **990 integration**, lint clean over 852 files, migrations `0010`–`0012`.
+
+### The gap that had already shipped a bug
+
+All 110 operations said `x-mc-response-schema: undeclared`, so `lib/api/types.ts` was transcribed from prose. That is not abstract debt: it is why `Session.agentId` never reached the frontend type and left Phase 4 slice 1's entire runtime binding — system prompt, deny list — unreachable from a browser until slice 2 tripped over it. 103 of 109 operations now declare a response; the six that do not each say why.
+
+**Closing it naively would have been worse than the gap.** A Fastify response schema is a *serializer*: it emits exactly the properties it lists and silently drops the rest. Proven rather than asserted — with the guard removed, a served `agentId` vanishes from a 200 with no error and no log line. That is the request-side trap this codebase has already been bitten by twice (`removeAdditional` turning an unknown filter into no filter; a stripped `scopes` field turning a typo into a full-access token), read from the other side.
+
+So the declarations **cannot** strip, by construction: `registerNonStrippingSerializer` replaces Fastify's serializer compiler with `JSON.stringify`, which is byte-for-byte what this Backend already did — no route declared a schema, so every reply already went through it, making the swap a no-op on the wire. `ExactShape` then binds each schema's property names to its serializer's TypeScript type, so a field added to a resource and forgotten in the schema **does not compile**. A conformance hook validates every reply against its own schema in the test tiers, where drift is loud.
+
+The mechanism earned itself immediately: 22 integration tests failed on the first run from one root cause — `nullable(enumSchema(...))` widened `type` but not `enum`, so JSON Schema rejected the very `null` it was widened to admit, across five resources. Caught on real data, which is the point.
+
+### Bindability: asked, not derived
+
+The launch picker had **transcribed** the four binding refusals from `agents/binding.ts` so it could explain why an agent was not offered. Nothing kept the copies in step; a fifth refusal server-side would have left it offering an agent the API then rejects. The response-schema work fixed resource *shapes*, not duplicated *rules*, so this survived it.
+
+`GET /projects/{id}/available-agents` now returns the refused agents with their reasons, from the same function `POST /sessions` and `PATCH /sessions/{id}` enforce — the `disallowedToolsFor` pattern, one function serving both the enforcement path and the API. The client deleted 204 lines and went from two requests to one, having been reading the same document twice for different halves of one answer. The server's wording turned out better than the client's and is used verbatim.
+
+**`refused: []` is an answer; an absent key is not.** Five states, four of them silences, and the screen says the Backend did not state its omissions rather than implying there were none — the Memory screen's four-empty-states doctrine applied to a dropdown.
+
+**One capability regression, found and then closed.** The route was called with no session context, so the Backend answered the create-time question and every `session`-scoped agent came back `session_not_yet` — including the one naming the Session on screen, which is the only surface where such an agent can be bound at all. The frontend refused to paper over it with a local rule (which would have reintroduced exactly what it was deleting) and named the fix instead; `?sessionId=` now exists and is sent.
+
+Adding `sessionId` to the query key then **broke invalidation**, caught by an existing test. Two different questions must not share a cache entry — but invalidation was targeting one entry, so an `agent.assigned` would have refreshed the launch modal and left the bind surface serving a roster the operator had just changed. `availableAgentsRoot` is the prefix both variants live under; prefix matching is what makes one invalidation reach both.
+
+### Three honesty fixes alongside
+
+- **`POST /sessions/{id}/cancel`** — the exit from `created`. F7 has no `created → completed` edge, so `end()` could not close a Session whose launch was still queued. The guarantee is structural rather than best-effort: `sessions.state` has one writer, it takes `FOR UPDATE`, and F7 has no edge from `failed` back into `running`, so no redelivery or concurrent start can launch it. Reusing `failed` is *handled*: the notification producer is silent for `cancelled` and no other reason, and Needs Attention excludes it, because paging an operator that their own Stop failed is a widget crying wolf about its user.
+- **`integrations.ollama.enabled` is gone**, along with `defaultModel` — the codebase's own standing example of a setting nothing reads, cited in four modules' comments. Wiring it was considered and there was nothing to wire. Migration `0011` deletes both live rows with their values recorded in the comment.
+- **A workflow step now says it is waiting.** The operator decided a managed Session is never auto-completed, so a chain advances when a human ends each step — previously requiring someone to watch the run view. The signal is real: the managed controller's turn-ended hook, ignoring every session that is not a step, de-duplicated by `UPDATE … WHERE waiting_notified_at IS NULL` so answering a question inside a step does not page you for the turn that answers it.
+
+### Graphify: trialled, not adopted
+
+PRD §6.2.1's optional structural code memory, the last unbuilt Phase 3 item. Trialled at the operator's request, as the PRD's own adoption path specifies.
+
+**Its factual claims held.** Apache 2.0, genuinely local (the base install pulls no HTTP client library at all), no telemetry framework in its 80 source files, and Docker is not an install path. It indexed this monorepo natively on Windows in 56 seconds — 880 files, 7,553 nodes, 20,731 edges.
+
+**It fails on this architecture specifically**, which is what made the decision clear rather than close:
+
+- **Blind at ports-and-adapters boundaries.** Asked where the embedding stamp is enforced, it missed `qdrant.ts:224`, `qdrant.ts:236` and `memory-store.ts:165` — the real enforcement points. Concrete adapter method bodies are not minted as call sites, so the graph resolves to the *interface* declaration. `QueuePort`/`EmbeddingPort`/`VectorStorePort` are the Foundation Contract's mandated architecture, so it is blind exactly where this codebase does its most important work.
+- **String literals are not indexed**, so `session.completed` — and the whole F6 event backbone — is invisible. It returned zero correct answers and fuzzy-matched the question onto a tsconfig key. One grep answered it completely.
+- **The token claim does not survive contact.** Its benchmark advertises 18x by comparing against reading the entire 503k-token corpus, which no agent does. The honest figure on the one probe it won is ~4x — about 600 tokens — against a 56s cold build, 30s per refresh, and an 11MB graph.
+- **It is not deterministic.** The cold build yields 7,553 nodes and warm runs 7,566, so the *first* build — exactly what repository onboarding performs — silently loses 13. Community counts oscillate across runs on identical source, and community structure drives its architecture-narrative output.
+
+Adoption would also put Python 3.10+ and ~90MB of tree-sitter wheels on the Ubuntu box against F1's "TypeScript throughout", and its Claude Code integration installs PreToolUse hooks on `Bash|Grep|Read|Glob` — a Python process per tool call, colliding with Mission Control's own observed-session hooks.
+
+Two corrections to the PRD's framing: it is pre-1.0 with heavy churn (default branch `v8`, 210 releases in ~4 months) and is a YC company with a hosted product the OSS CLI funnels toward. **Worth revisiting after 1.0** if cross-repo "who calls this" becomes a need — `explain` and `affected` are genuinely good, and on the one probe that suited it, cleaner than grep. Nothing was left on the machine; verified.
+
+### Process note
+
+Three agents shared one working tree, and one of them ran `git stash` as a probe — stashing two agents' uncommitted work, with the `pop` then aborting on untracked-file collisions. It was recovered and independently verified (both agents' edits coexist in files they both touched), but it was one failed `pop` from real loss. Destructive git commands are now explicitly forbidden in agent briefs; separate worktrees would make the hazard structural rather than procedural.
+
+A second agent stalled after completing its work and before verifying it. The work was sound; the verification, two typecheck seam errors and a line-ending regression were finished by hand.
