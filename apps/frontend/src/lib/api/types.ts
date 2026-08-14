@@ -98,6 +98,19 @@ export interface Session {
   readonly notes: string | null;
   readonly branch: string | null;
   readonly workingDirectory: string;
+  /**
+   * The Agent persona this Session runs as (PRD §5.1), or `null`.
+   *
+   * **The id only.** The Agent resource is served by `GET /agents/{id}`; inlining a persona's
+   * instructions into every Session payload would put a 20 000-character system prompt on the
+   * session list. The consequence of the binding — the tools removed from the runtime — is read
+   * from the Agent, which is why the Session header resolves the id rather than displaying it.
+   *
+   * This field was served by `apps/backend/src/sessions/serialize.ts` from Phase 4 slice 1 and was
+   * **missing from this hand-written type until slice 2**, which is exactly the failure mode the
+   * header note above describes: nothing in the SPA could see an agent, so nothing offered one.
+   */
+  readonly agentId: EntityId | null;
   readonly runtime: SessionRuntimeInfo;
   readonly observation: SessionObservation | null;
   readonly costUsd: number | null;

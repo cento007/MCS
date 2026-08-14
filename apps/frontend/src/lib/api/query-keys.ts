@@ -56,6 +56,15 @@ export const queryKeys = {
     root: () => ['projects'] as const,
     list: (filters: ListFilters = {}) => ['projects', 'list', filters] as const,
     detail: (id: string) => ['projects', id] as const,
+    /**
+     * `GET /projects/{id}/available-agents`.
+     *
+     * Nested under the Project's detail slot, not under `['agents']`, because it is a *Project*
+     * read model. `agent.assigned` names a `projectId` and invalidates this slot specifically —
+     * routing it through `['agents']` instead would refetch every agent list on every assignment,
+     * and still not reach this key.
+     */
+    availableAgents: (id: string) => ['projects', id, 'available-agents'] as const,
   },
   repositories: {
     root: () => ['repositories'] as const,
@@ -140,6 +149,19 @@ export const queryKeys = {
     root: () => ['agents'] as const,
     list: (filters: ListFilters = {}) => ['agents', 'list', filters] as const,
     detail: (id: string) => ['agents', id] as const,
+  },
+  /**
+   * PRD §5.7 agent teams.
+   *
+   * A **sibling** of `agents`, not a child, even though the screens share a tab bar: the `agents`
+   * WebSocket channel invalidates `['agents']` wholesale on `agent.created`/`agent.updated`, and
+   * nesting teams under that prefix would refetch every team list on every agent edit. A team's
+   * membership can reference an agent, but the team document does not change when the agent does.
+   */
+  agentTeams: {
+    root: () => ['agent-teams'] as const,
+    list: (filters: ListFilters = {}) => ['agent-teams', 'list', filters] as const,
+    detail: (id: string) => ['agent-teams', id] as const,
   },
 } as const;
 

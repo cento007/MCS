@@ -289,6 +289,12 @@ export async function truncateAll(): Promise<void> {
     // Before `sessions` and `projects`: `memory_items` holds FKs into both. The cascade would
     // handle it, but naming it keeps the list an honest inventory of the app's tables.
     'memory_items',
+    // The team tables would fall to the `agents` / `projects` cascades below, but a **global**
+    // team with no members and no assignments is reachable from neither — so it has to be named
+    // or it survives into the next test case.
+    'agent_team_assignments',
+    'agent_team_members',
+    'agent_teams',
     // `agents` and `sessions` reference each other (`sessions.agent_id`, `agents.session_id`),
     // so no ordering of the two is "correct" — TRUNCATE takes them together via CASCADE. Named
     // for the same reason as `memory_items`: the list is the inventory.

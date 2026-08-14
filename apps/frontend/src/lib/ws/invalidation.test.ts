@@ -89,16 +89,37 @@ describe('queryKeysForEvent', () => {
   });
 
   it('refetches the agents group on an agent write, and ignores execution events', () => {
-    // Phase 4 graduated `agent.created`/`agent.updated`/`agent.assigned` from reserved to
-    // produced when the Agents screen shipped. The blunt prefix is right here where it was wrong
-    // for memory: `GET /agents` is one cheap read with no embedding call behind it, and these
-    // fire when a person presses Save rather than hundreds of times inside a backfill.
-    for (const type of ['agent.created', 'agent.updated', 'agent.assigned']) {
+    // Phase 4 graduated `agent.created`/`agent.updated` from reserved to produced when the Agents
+    // screen shipped. The blunt prefix is right here where it was wrong for memory: `GET /agents`
+    // is one cheap read with no embedding call behind it, and these fire when a person presses
+    // Save rather than hundreds of times inside a backfill.
+    for (const type of ['agent.created', 'agent.updated']) {
       expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual(['["agents"]']);
     }
     // Executions stay ignored: nothing in the SPA renders one, so a refetch would redraw nothing.
     expect(queryKeysForEvent(event('agent.execution_started', {}))).toEqual([]);
     expect(queryKeysForEvent(event('agent.execution_failed', {}))).toEqual([]);
+  });
+
+  it('separates team writes from agent writes', () => {
+    // `agent_team.*` must NOT reach `["agents"]`: an agent document does not change when a team's
+    // roster does, and `["agents"]` is what the Agent Builder measures its dirty baseline against —
+    // refetching it on every team edit would move that baseline for no reason.
+    for (const type of ['agent_team.created', 'agent_team.updated', 'agent_team.deleted']) {
+      expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual(['["agent-teams"]']);
+    }
+  });
+
+  it('targets one Project’s availability read on `agent.assigned`', () => {
+    // The reserved §15.4 name, produced for the first time by the team slice. The fact a consumer
+    // acts on is "project P's available-agent set changed" — so the Project's own read model is
+    // what goes stale, not every agent list in the cache.
+    expect(keyStrings(queryKeysForEvent(event('agent.assigned', { projectId: 'p1' })))).toEqual([
+      '["projects","p1","available-agents"]',
+      '["agent-teams"]',
+    ]);
+    // Without the id there is nothing to target, and the team group is the honest fallback.
+    expect(keyStrings(queryKeysForEvent(event('agent.assigned', {})))).toEqual(['["agent-teams"]']);
   });
 
   it('refetches the memory INDEX STATE on a memory event, and never a cached search', () => {
@@ -145,8 +166,14 @@ describe('queryKeysForChannel (reconnect gap healing)', () => {
     // unknown gap in what is *indexed*, not re-asking a question the operator asked once.
     expect(keyStrings(queryKeysForChannel('memory'))).toEqual(['["memory-items","backfill"]']);
     // Agents is the opposite trade: the gap is cheap to close and a stale agent list is a list of
-    // permissions that are no longer what it says they are.
-    expect(keyStrings(queryKeysForChannel('agents'))).toEqual(['["agents"]']);
+    // permissions that are no longer what it says they are. Teams and every Project's availability
+    // read ride the same channel, so the heal covers them — an `agent.assigned` missed inside the
+    // window is exactly what leaves a launch picker leading with the wrong team.
+    expect(keyStrings(queryKeysForChannel('agents'))).toEqual([
+      '["agents"]',
+      '["agent-teams"]',
+      '["projects"]',
+    ]);
   });
 
   it('always refetches notifications and service health on reconnect', () => {

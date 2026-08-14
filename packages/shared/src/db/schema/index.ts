@@ -3,9 +3,13 @@
  *
  * `docs/tds/03-database-schema.md` (WS3) is the contract; the definitions re-exported below
  * express it, and `packages/shared/drizzle/*.sql` is what actually runs. 20 Phase 1–2 tables
- * (TDS 03 §9 inventory) plus `memory_items` (designed in Phase 3) and `agents` (designed in
- * Phase 4) — each the phase TDS 03 §6 deferred it to — and the one remaining skeleton,
- * `agent_teams`.
+ * (TDS 03 §9 inventory) plus `memory_items` (designed in Phase 3) and the Phase 4 agent
+ * framework — `agents`, then `agent_teams` with `agent_team_members` and
+ * `agent_team_assignments`. Each graduated in the phase TDS 03 §6 deferred its design to.
+ *
+ * **There is no `skeletons.ts` any more, and its absence is the point.** It held the tables that
+ * reserved a name and nothing else; `memory_items` left in Phase 3, `agents` in Phase 4's first
+ * slice, and `agent_teams` in the second. Every table below is now a designed one.
  *
  * Rules that bind every module here (TDS 03 §1, F4.2):
  *   - snake_case, plural table names, FKs as `<entity>_id`
@@ -23,6 +27,7 @@
  *      (TDS 03 §3.15, §4.4) — no table storage parameter support.
  */
 
+export * from './agent-teams.js';
 export * from './agents.js';
 export * from './audit.js';
 export * from './auth.js';
@@ -35,5 +40,4 @@ export * from './ops.js';
 export * from './projects.js';
 export * from './sessions.js';
 export * from './settings.js';
-export * from './skeletons.js';
 export * from './sync.js';

@@ -198,5 +198,25 @@ export const agents = pgTable(
     /** The list route's two filters, and the FK indexes they double as. */
     index('ix_agents_scope_project').on(table.scope, table.projectId),
     index('ix_agents_session').on(table.sessionId),
+
+    /**
+     * **Two unique indexes that exist only to be pointed at**, added by Phase 4's second slice.
+     *
+     * `id` is already the primary key, so neither adds a uniqueness rule the table did not have.
+     * What they add is a *referenceable* key: PostgreSQL will only accept a composite FOREIGN KEY
+     * whose target columns are covered by a unique index, and `agent_team_members` needs exactly
+     * those two composites — `(agent_id, agent_scope) -> (id, scope)` and
+     * `(agent_id, agent_project_id) -> (id, project_id)`.
+     *
+     * That pair is what makes "this membership row's copy of the agent's scope is the truth" a
+     * database fact rather than an application habit. Written as two indexes rather than one over
+     * `(id, scope, project_id)` deliberately: a composite FK is skipped entirely when any of its
+     * referencing columns is NULL (MATCH SIMPLE), and `project_id` is NULL for every global
+     * agent — so the three-column form would stop checking the scope for exactly the rows whose
+     * scope claim matters most. Split, the `(id, scope)` half is never NULL and therefore never
+     * skipped.
+     */
+    uniqueIndex('ux_agents_id_scope').on(table.id, table.scope),
+    uniqueIndex('ux_agents_id_project').on(table.id, table.projectId),
   ],
 );

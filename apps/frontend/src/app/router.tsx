@@ -36,11 +36,16 @@ export const routes: RouteObject[] = [
           { path: 'memory', lazy: () => import('../routes/memory.js') },
           { path: 'agents', lazy: () => import('../routes/agents.js') },
           /*
-           * `agents/new` is registered before `agents/:agentId` and as its own entry, so create
-           * mode is a route rather than a reserved id — `useParams().agentId` is `undefined`
-           * there, and no future UUIDv7 can collide with the word.
+           * `agents/new` and `agents/teams` are registered before `agents/:agentId` and as their
+           * own entries, so create mode and the Teams tab are routes rather than reserved ids —
+           * `useParams().agentId` is `undefined` there, and no future UUIDv7 can collide with
+           * either word. (React Router ranks a static segment above a dynamic one regardless of
+           * order; the order is kept anyway so the intent survives a refactor that changes the
+           * matcher.)
            */
           { path: 'agents/new', lazy: () => import('../routes/agent-builder.js') },
+          { path: 'agents/teams', lazy: () => import('../routes/agent-teams.js') },
+          { path: 'agents/teams/:teamId', lazy: () => import('../routes/agent-team-detail.js') },
           { path: 'agents/:agentId', lazy: () => import('../routes/agent-builder.js') },
           { path: 'settings', element: <Navigate to="/settings/general" replace /> },
           { path: 'settings/:category', lazy: () => import('../routes/settings.js') },

@@ -68,18 +68,46 @@ export const PHASE_3_EVENT_TYPES = [
 ] as const;
 
 /**
- * Phase 4 event types — **two** of the six names TDS 04 §15.4 reserved, and only two.
+ * Phase 4 event types — **three** of the six names TDS 04 §15.4 reserved, plus three the team
+ * slice added.
  *
- *   `agent.created` — an Agent was defined
- *   `agent.updated` — its fields, permissions or archived state changed
+ *   `agent.created`      — an Agent was defined
+ *   `agent.updated`      — its fields, permissions or archived state changed
+ *   `agent.assigned`     — agents became available in a Project, because the team holding them
+ *                          was assigned to it (or gained them while already assigned)
+ *   `agent_team.created` — a team was defined
+ *   `agent_team.updated` — its name, roster or project assignments changed
+ *   `agent_team.deleted` — a team was deleted (teams are deleted, not archived — see
+ *                          `db/schema/agent-teams.ts` for why that differs from agents)
  *
- * `agent.assigned` and the three `agent.execution_*` names stay in `RESERVED_EVENT_TYPES.phase4`
- * below because nothing produces them: assignment (`POST /agents/{id}/assignments`) and execution
- * (`POST /agents/{id}/executions`) are later slices. Listing an event name in the live registry
- * makes it subscribable and documentable — and a subscriber that waits forever for
+ * **`agent.assigned` graduates here** now that assignment exists. §13.2 reserved it alongside
+ * `POST /agents/{id}/assignments`, i.e. as "an agent became available somewhere new"; that is
+ * exactly what a team assignment does, so the reserved name is used for the fact it was reserved
+ * for rather than a parallel one being invented. Its payload names the team and the project and
+ * lists the agents that became available there — one event per (team, project) pair, not one per
+ * agent, because the fact a consumer acts on is "project P's available-agent set changed".
+ *
+ * **`agent_team.*` is a new domain in the F6.1 grammar** (`<domain>[.<sub-entity>].<verb-past>`)
+ * and is deliberately not spelled `agent.team.*`: the sub-entity form is for something owned by
+ * its parent the way a Message is owned by a Session, and a team is not owned by an agent — it
+ * contains agents. §15.4's reserved Phase-4 list predates the team design and reserved *agent*
+ * names only, so these three are recorded as an addition in TDS 04 §13.2 rather than pretending
+ * they were foreseen. They ride the reserved `agents` WebSocket channel (§14.3).
+ *
+ * The three `agent.execution_*` names stay in `RESERVED_EVENT_TYPES.phase4` below because nothing
+ * produces them: `POST /agents/{id}/executions` is a later slice, and a workflow (PRD §5.6) is a
+ * chain of executions, so neither exists yet. Listing an event name in the live registry makes it
+ * subscribable and documentable — and a subscriber that waits forever for
  * `agent.execution_completed` is a worse outcome than a name that is honestly still reserved.
  */
-export const PHASE_4_EVENT_TYPES = ['agent.created', 'agent.updated'] as const;
+export const PHASE_4_EVENT_TYPES = [
+  'agent.created',
+  'agent.updated',
+  'agent.assigned',
+  'agent_team.created',
+  'agent_team.updated',
+  'agent_team.deleted',
+] as const;
 
 export const EVENT_TYPES = [
   ...PHASE_1_EVENT_TYPES,
@@ -113,8 +141,10 @@ export function isEventType(value: unknown): value is EventType {
  * > TDS scope per the project-plan scope guard.
  *
  * The lists are kept whole after a name graduates into the live registry, so this stays the
- * record of where each one came from. `phase3` is entirely produced; `phase4` is half produced —
- * `agent.created` and `agent.updated` are live, the other four are not.
+ * record of where each one came from. `phase3` is entirely produced; of `phase4`, the three
+ * `agent.*` names are live and the three `agent.execution_*` names are not. The three
+ * `agent_team.*` types are absent here on purpose — they were never reserved, they were added
+ * by the team slice, and back-filling them into a reservation list would erase that fact.
  */
 export const RESERVED_EVENT_TYPES = Object.freeze({
   phase3: Object.freeze(['memory.item_stored', 'memory.item_deleted', 'memory.reindexed'] as const),

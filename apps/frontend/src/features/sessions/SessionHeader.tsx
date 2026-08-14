@@ -5,6 +5,7 @@ import { formatCostUsd, formatTokenCount, sessionLabel } from '../../lib/format/
 import { useDurationLabel, useIsLive, useLastUpdatedLabel } from '../../lib/liveness.js';
 import { toast } from '../../stores/toast-store.js';
 import { headerActions, overflowActions, type SessionActionDescriptor } from './actions.js';
+import { SessionAgentLine } from './SessionAgent.js';
 
 /**
  * The Session detail header (TDS 06 §5.5 "Header, three lines").
@@ -22,6 +23,9 @@ export interface SessionHeaderProps {
   readonly onAction: (action: SessionActionDescriptor) => void;
   readonly pendingActionId: string | null;
   readonly onRename: (title: string) => void;
+  /** Bind (`agentId`) or unbind (`null`) the Agent this Session runs as — `created` only. */
+  readonly onBindAgent: (agentId: string | null) => void;
+  readonly bindingAgent: boolean;
 }
 
 export function SessionHeader({
@@ -30,6 +34,8 @@ export function SessionHeader({
   onAction,
   pendingActionId,
   onRename,
+  onBindAgent,
+  bindingAgent,
 }: SessionHeaderProps) {
   const isLive = useIsLive();
   const lastUpdated = useLastUpdatedLabel();
@@ -57,6 +63,11 @@ export function SessionHeader({
       </p>
 
       <CopyableId id={session.id} />
+
+      {/* §5.1's `Runtime → Agent → Task`. Stated on the identity block rather than filed in a
+          panel tab: a bound agent removed tools from this session, and a denied tool leaves no
+          trace in the transcript — it is a step the model simply did not take. */}
+      <SessionAgentLine session={session} onBind={onBindAgent} saving={bindingAgent} />
 
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <StatusBadge state={session.state} muted={!isLive} />

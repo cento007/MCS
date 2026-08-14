@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router';
 import { ErrorPanel } from '../../components/ErrorPanel.js';
 import { Modal } from '../../components/Modal.js';
 import { Skeleton } from '../../components/Skeleton.js';
+import { type AgentBindingExclusion, agentBindingRefusal } from '../../lib/agents/index.js';
 import { useUiStore } from '../../stores/ui-store.js';
+import { AgentField } from './AgentField.js';
+import { useBindableAgents, useProjectTeam } from './agents.js';
 import { useCreateSession } from './mutations.js';
 import { useProjects, useRepositories } from './queries.js';
 
@@ -110,11 +113,24 @@ export function LaunchSessionModal({
   const [repositoryId, setRepositoryId] = useState('');
   const [branch, setBranch] = useState('');
   const [model, setModel] = useState('');
+  const [agentId, setAgentId] = useState('');
+  const [withdrawnAgent, setWithdrawnAgent] = useState<AgentBindingExclusion | null>(null);
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
 
   const projects = useProjects(open);
   const repositories = useRepositories(projectId === '' ? null : projectId, open);
+  /**
+   * `sessionId: null` is what makes every **session-scoped** agent unofferable here, and it is a
+   * fact rather than a placeholder: such an agent names the Session it belongs to, and this Session
+   * does not exist yet. The exclusion list says so, and points at the surface that can bind one.
+   */
+  const agents = useBindableAgents(
+    { projectId: projectId === '' ? null : projectId, sessionId: null },
+    open,
+  );
+  /** PRD §5.7 emphasis only — the Project's team leads the picker. Fails soft in every direction. */
+  const team = useProjectTeam(projectId === '' ? null : projectId, open);
   const create = useCreateSession();
 
   const repository =
@@ -132,6 +148,28 @@ export function LaunchSessionModal({
     if (open) return;
     setAcknowledged(false);
   }, [open]);
+
+  /**
+   * A chosen agent that the *new* Project would not accept is withdrawn, and named.
+   *
+   * This is the one way this dialog can hold a value the API will reject: an operator picks the
+   * ERP Architect, then realises they meant a different project. Leaving the selection in place
+   * would turn `[Create]` into a `400 VALIDATION_FAILED` about a field three rows up; clearing it
+   * silently would drop a deliberate choice with no event. So it is cleared *and* stated, with the
+   * same sentence the exclusion list uses.
+   */
+  useEffect(() => {
+    if (agentId === '') return;
+    const agent = agents.all.find((candidate) => candidate.id === agentId);
+    if (agent === undefined) return;
+    const refusal = agentBindingRefusal(agent, {
+      projectId: projectId === '' ? null : projectId,
+      sessionId: null,
+    });
+    if (refusal === null) return;
+    setAgentId('');
+    setWithdrawnAgent(refusal);
+  }, [agentId, agents.all, projectId]);
 
   // Opening the dialog adopts the caller's Project. Applied on open rather than only at mount
   // because this component stays mounted between openings on the Sessions list.
@@ -163,6 +201,10 @@ export function LaunchSessionModal({
         ...(repositoryId === '' ? {} : { repositoryId }),
         ...(branch.trim() === '' ? {} : { branch: branch.trim() }),
         ...(model.trim() === '' ? {} : { model: model.trim() }),
+        // Omitted entirely when no agent is chosen. `POST /sessions` is `additionalProperties:
+        // false` with a UUID pattern on `agentId`, so sending `''` would be a `400` for the most
+        // common case in the product.
+        ...(agentId === '' ? {} : { agentId }),
       },
       {
         onSuccess: (session) => {
@@ -282,6 +324,27 @@ export function LaunchSessionModal({
               style={{ height: 'var(--mc-control-md)', borderColor: 'var(--color-border-control)' }}
             />
           </Field>
+
+          {/*
+           * PRD §5.1's `Runtime → Agent → Task`. Placed after Model because it is the layer above
+           * it — the persona that runs on the runtime — and before the working directory because
+           * the disclosure below is the dialog's conclusion and nothing should come after it.
+           */}
+          <AgentField
+            read={agents}
+            team={team}
+            value={agentId}
+            onChange={(next) => {
+              setAgentId(next);
+              setWithdrawnAgent(null);
+            }}
+            withdrawn={withdrawnAgent}
+            disabledReason={
+              projectId === ''
+                ? 'Choose a project first. A project-scoped agent is only offered to its own project, so there is nothing to match against until then.'
+                : null
+            }
+          />
 
           <Field label="Working directory">
             <input

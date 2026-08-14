@@ -416,6 +416,11 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
         onAction={onAction}
         pendingActionId={pendingActionId}
         onRename={(title) => updateMutation.mutate({ title })}
+        // `null` unbinds. Not optimistic, like every other Session write: the Backend refuses the
+        // change outright once the Session has left `created`, and painting the new persona first
+        // would show a binding the server rejected.
+        onBindAgent={(agentId) => updateMutation.mutate({ agentId })}
+        bindingAgent={updateMutation.isPending}
       />
 
       <div className="flex min-h-0 flex-1">

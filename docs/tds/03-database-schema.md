@@ -173,7 +173,7 @@ erDiagram
     }
 ```
 
-*(Skeleton tables `agents`, `agent_teams`, `memory_items` — §6 — are omitted from the diagram; they have no Phase 1–2 relationships. `sync_runs` (§4.5) is shown standalone: it holds no FK — a run's per-file detail is joined from `obsidian_sync_states` at read time. `search_tsv` (§4.6) appears on `sessions` as a representative; the same generated column exists on `adrs`, `commits`, `pull_requests`, and `messages`.)*
+*(Skeleton tables `agents`, `agent_teams`, `memory_items` — §6 — are omitted from the diagram; they have no Phase 1–2 relationships. All three are now real: see the superseded notice at the end of §6. `sync_runs` (§4.5) is shown standalone: it holds no FK — a run's per-file detail is joined from `obsidian_sync_states` at read time. `search_tsv` (§4.6) appears on `sessions` as a representative; the same generated column exists on `adrs`, `commits`, `pull_requests`, and `messages`.)*
 
 ---
 
@@ -1001,6 +1001,16 @@ CREATE TABLE agent_teams (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ```
+
+> **Superseded — this section is now history.** Every table it reserved has graduated in the phase it was deferred to, and the DDL above is no longer what the database holds:
+>
+> | skeleton | graduated | real definition |
+> |---|---|---|
+> | `memory_items` | Phase 3 (migration 0004) | `packages/shared/src/db/schema/memory.ts` |
+> | `agents` | Phase 4 slice 1 (0006, corrected by 0007) | `.../schema/agents.ts`; `sessions.agent_id` landed with it, exactly as promised above |
+> | `agent_teams` | Phase 4 slice 2 (0008) | `.../schema/agent-teams.ts`, together with the reserved `agent_team_members` and a third table this section did not foresee, `agent_team_assignments` (PRD §5.7's "assigned per project" is a relationship, not a column) |
+>
+> `packages/shared/src/db/schema/skeletons.ts` no longer exists. The design rationale for each table lives in its module header; the API contract for teams is TDS 04 §13.2.1.
 
 ---
 

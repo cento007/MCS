@@ -113,6 +113,16 @@ const STATIC_ROUTES: Readonly<Record<string, readonly StaticChannel[]>> = Object
   // `sessions` — creating an agent is not a Session event.
   'agent.created': ['agents'],
   'agent.updated': ['agents'],
+  // Teams and assignment (slice 2). Same channel, and deliberately not a `teams` channel of
+  // their own: a client that cares about one cares about the other (a team's roster is agents,
+  // and an assignment changes which agents a project is offered), and §14.3 caps a connection at
+  // 64 subscriptions — spending a second one to split a feed nobody wants split is pure cost.
+  // `agent.assigned` carries `projectId`, but there is no `project:{id}` channel to route it to
+  // and inventing one for a single event type would be a channel with one subscriber shape.
+  'agent.assigned': ['agents'],
+  'agent_team.created': ['agents'],
+  'agent_team.updated': ['agents'],
+  'agent_team.deleted': ['agents'],
 });
 
 const SESSIONS_CHANNEL_SET: ReadonlySet<string> = new Set(SESSIONS_CHANNEL_EVENTS);

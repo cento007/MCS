@@ -155,15 +155,38 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
      * Save rather than hundreds of times during a backfill, and the Agent Builder is a form that
      * must not keep showing a stale baseline after another tab saved over it.
      *
-     * `agent.assigned` is included — an assignment does not change the agent document itself, but
-     * it changes where the agent is offered, which is what the scope column reports. The three
-     * `agent.execution_*` names are deliberately absent: nothing in the SPA renders an execution,
-     * so invalidating on them would refetch a list to redraw nothing.
+     * The three `agent.execution_*` names are deliberately absent: nothing in the SPA renders an
+     * execution, so invalidating on them would refetch a list to redraw nothing.
      */
     case 'agent.created':
     case 'agent.updated':
-    case 'agent.assigned':
       return [queryKeys.agents.root()];
+
+    /**
+     * PRD §5.7 teams, on the same `agents` channel (TDS 04 §14.3).
+     *
+     * `agent_team.*` reaches `['agent-teams']` and **not** `['agents']`: an agent document does not
+     * change when a team's roster does, and the agents group is what the Agent Builder measures its
+     * dirty baseline against — refetching it on every team edit would move that baseline for no
+     * reason.
+     */
+    case 'agent_team.created':
+    case 'agent_team.updated':
+    case 'agent_team.deleted':
+      return [queryKeys.agentTeams.root()];
+
+    /**
+     * `agent.assigned` — "project P's available-agent set changed", one event per (team, project)
+     * pair. It invalidates that Project's availability read **specifically**, because that is the
+     * only thing it changes: the agents themselves are untouched, and the team document is covered
+     * by the `agent_team.updated` that accompanies it.
+     */
+    case 'agent.assigned': {
+      const projectId = payloadString(event, 'projectId');
+      return projectId === null
+        ? [queryKeys.agentTeams.root()]
+        : [queryKeys.projects.availableAgents(projectId), queryKeys.agentTeams.root()];
+    }
 
     default:
       return [];
@@ -216,9 +239,15 @@ export function queryKeysForChannel(channel: string): readonly QueryKey[] {
      * Phase 4. This channel was "subscribable and silent" (§14.4) until the Agents screen
      * shipped; a reconnect now heals the whole agents group, because the gap is of unknown
      * content and an agent list is cheap to re-read.
+     *
+     * Teams ride the same channel, so the heal covers them too — plus every Project's availability
+     * read, because an `agent.assigned` inside the loss window is exactly the kind of change that
+     * leaves a launch picker leading with the wrong team. `['projects']` is the blunt instrument
+     * here, and the right one: it is the only prefix that reaches every cached
+     * `['projects', id, 'available-agents']` without enumerating the ids the client happens to hold.
      */
     case 'agents':
-      return [queryKeys.agents.root()];
+      return [queryKeys.agents.root(), queryKeys.agentTeams.root(), queryKeys.projects.root()];
     default:
       return [];
   }

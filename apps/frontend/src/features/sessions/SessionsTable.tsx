@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ConfirmDialog } from '../../components/Modal.js';
 import { StatusBadge } from '../../components/StatusBadge.js';
+import type { AgentView } from '../../lib/agents/index.js';
 import type { Session } from '../../lib/api/index.js';
 import {
   formatCostUsd,
@@ -11,9 +12,11 @@ import {
 } from '../../lib/format/index.js';
 import { useIsLive } from '../../lib/liveness.js';
 import { allSessionActions, isDocumentAction, type SessionActionDescriptor } from './actions.js';
+import { useAgentNames } from './agents.js';
 import { ContextPackageDialog } from './ContextPackageDialog.js';
 import { useSessionDocuments } from './documents.js';
 import { useSessionActionMutation } from './mutations.js';
+import { SessionAgentTag } from './SessionAgent.js';
 
 /**
  * The Sessions table (TDS 06 §5.4), extracted so it has exactly one implementation.
@@ -36,12 +39,26 @@ export interface SessionsTableProps {
 export function SessionsTable({ sessions, mobile, onOpen }: SessionsTableProps) {
   const isLive = useIsLive();
 
+  /**
+   * The agent lookup is fetched **only when some row is actually bound to one**, so a list on an
+   * instance that has never used an agent issues no request at all. One request serves every row;
+   * see `useAgentNames`.
+   */
+  const anyBound = sessions.some((session) => session.agentId !== null);
+  const agents = useAgentNames(anyBound);
+
   if (mobile) {
     return (
       <ul className="flex flex-col gap-2">
         {sessions.map((session) => (
           <li key={session.id}>
-            <MobileCard session={session} muted={!isLive} onOpen={() => onOpen(session)} />
+            <MobileCard
+              session={session}
+              muted={!isLive}
+              agent={session.agentId === null ? null : agents.lookup(session.agentId)}
+              agentsSettled={agents.settled}
+              onOpen={() => onOpen(session)}
+            />
           </li>
         ))}
       </ul>
@@ -81,6 +98,8 @@ export function SessionsTable({ sessions, mobile, onOpen }: SessionsTableProps) 
             key={session.id}
             session={session}
             muted={!isLive}
+            agent={session.agentId === null ? null : agents.lookup(session.agentId)}
+            agentsSettled={agents.settled}
             onOpen={() => onOpen(session)}
           />
         ))}
@@ -92,10 +111,14 @@ export function SessionsTable({ sessions, mobile, onOpen }: SessionsTableProps) 
 function SessionRow({
   session,
   muted,
+  agent,
+  agentsSettled,
   onOpen,
 }: {
   session: Session;
   muted: boolean;
+  agent: AgentView | null;
+  agentsSettled: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -117,6 +140,18 @@ function SessionRow({
             <span className="font-mono">{session.branch ?? 'no branch'}</span>
           </span>
         </button>
+        {/* The persona this row ran as. It belongs with the identity, not in a column of its own:
+            most rows have none, and an empty column would cost width on every list to report an
+            absence that is already the default reading. */}
+        {session.agentId === null ? null : (
+          <span className="mt-05 block">
+            <SessionAgentTag
+              agentId={session.agentId}
+              agent={agent}
+              unreadable={agentsSettled && agent === null}
+            />
+          </span>
+        )}
       </td>
       <td className="py-2 pr-3 text-text-secondary text-xs">{session.sessionType}</td>
       <td className="py-2 pr-3 font-mono text-text-secondary text-xs">
@@ -150,10 +185,14 @@ function SessionRow({
 function MobileCard({
   session,
   muted,
+  agent,
+  agentsSettled,
   onOpen,
 }: {
   session: Session;
   muted: boolean;
+  agent: AgentView | null;
+  agentsSettled: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -174,6 +213,15 @@ function MobileCard({
         <span className="font-mono">{formatDuration(session.durationSeconds)}</span> ·{' '}
         <span className="font-mono">{formatCostUsd(session.costUsd)}</span>
       </span>
+      {session.agentId === null ? null : (
+        <span className="mt-1 block">
+          <SessionAgentTag
+            agentId={session.agentId}
+            agent={agent}
+            unreadable={agentsSettled && agent === null}
+          />
+        </span>
+      )}
     </button>
   );
 }

@@ -33,6 +33,9 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     notes: null,
     branch: 'DEV',
     workingDirectory: 'D:\\Repos\\MCS',
+    // `null` is the common case and the honest default: most sessions run with no persona. The
+    // agent suites pass an id explicitly.
+    agentId: null,
     runtime: {
       kind: 'claude_code',
       runtimeSessionId: 'c0ffee00-0000-4000-8000-000000000000',

@@ -209,6 +209,207 @@ paths:
       x-mc-strictness:
         query: strict
         body: strict
+  /agent-teams:
+    get:
+      operationId: getAgentTeams
+      summary: 'GET /agent-teams'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - global
+              - project
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postAgentTeams
+      summary: 'POST /agent-teams'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - scope
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 2000
+                scope:
+                  type: string
+                  enum:
+                    - global
+                    - project
+                projectId:
+                  type:
+                    - string
+                    - 'null'
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                agentIds:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: string
+                    pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                projectIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-teams/{id}':
+    get:
+      operationId: getAgentTeamsById
+      summary: 'GET /agent-teams/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchAgentTeamsById
+      summary: 'PATCH /agent-teams/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 2000
+                agentIds:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: string
+                    pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                projectIds:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: string
+                    pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    delete:
+      operationId: deleteAgentTeamsById
+      summary: 'DELETE /agent-teams/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
   /agents:
     get:
       operationId: getAgents
@@ -1195,6 +1396,28 @@ paths:
     delete:
       operationId: deleteProjectsById
       summary: 'DELETE /projects/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/projects/{id}/available-agents':
+    get:
+      operationId: getProjectsByIdAvailableAgents
+      summary: 'GET /projects/{id}/available-agents'
       parameters:
         - name: id
           in: path

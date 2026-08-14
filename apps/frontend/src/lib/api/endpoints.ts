@@ -18,6 +18,15 @@ export const endpoints = {
   projects: {
     list: '/projects',
     detail: (id: string) => `/projects/${id}`,
+    /**
+     * Which agents a Session in this Project may be launched as, and which of them are on the
+     * Project's team (PRD §5.7, `apps/backend/src/agents/teams/availability.ts`).
+     *
+     * It hangs off the Project because the question is the Project's — *who can work here?* — and
+     * it is the read that makes a team mean something: without it a team is a named list nothing
+     * consults.
+     */
+    availableAgents: (id: string) => `/projects/${id}/available-agents`,
   },
   repositories: {
     list: '/repositories',
@@ -113,16 +122,31 @@ export const endpoints = {
   /**
    * Phase 4 agents (TDS 04 §13.2, PRD §5).
    *
-   * Only the two CRUD routes the Agents screen calls. §13.2 also reserves
-   * `POST /agents/{id}/assignments` and `POST /agents/{id}/executions`, and **they are
-   * deliberately absent** for the same reason two of §13.1's memory routes are: nothing in the
-   * SPA can execute an agent or assign one yet, and a path listed here is a path a screen may be
-   * written against. `agent-teams` is likewise omitted — PRD §5.7 teams are not being built this
-   * round, and a reserved path is how a Teams tab gets added to a screen that cannot serve it.
+   * The Agent CRUD routes the Agents screen calls, plus §13.2's `agent-teams` pair (PRD §5.7),
+   * which slice 2 builds against.
+   *
+   * `POST /agents/{id}/assignments` and `POST /agents/{id}/executions` remain **deliberately
+   * absent**, for the same reason two of §13.1's memory routes are: nothing in the SPA can execute
+   * an agent, and a path listed here is a path a screen may be written against. Binding an agent
+   * to a Session is not an assignment — it happens on the Session's own resource (`agentId` on
+   * `POST /sessions` and `PATCH /sessions/{id}`), because the rule that governs it is a Session
+   * lifecycle rule.
    */
   agents: {
     list: '/agents',
     detail: (id: string) => `/agents/${id}`,
+  },
+  /**
+   * PRD §5.7 agent teams (TDS 04 §13.2).
+   *
+   * Two routes, and only two: `GET|POST /agent-teams` and `GET|PATCH /agent-teams/{id}`. There is
+   * no `DELETE` here for the same reason there is none on `/agents` — a team is referenced by
+   * whatever assigns it, and retirement is archival. No membership sub-route is listed, because
+   * the shape of a member is still the Backend's decision and the screens do not edit one.
+   */
+  agentTeams: {
+    list: '/agent-teams',
+    detail: (id: string) => `/agent-teams/${id}`,
   },
 } as const;
 

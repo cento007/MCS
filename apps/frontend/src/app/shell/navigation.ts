@@ -29,7 +29,17 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/sessions', label: 'Sessions', glyph: '▶', mobilePrimary: true, sequence: 'g s' },
   { to: '/adrs', label: 'ADRs', glyph: '▣', sequence: 'g r' },
   { to: '/memory', label: 'Memory', glyph: '◌', phase: 3, sequence: 'g m' },
-  { to: '/agents', label: 'Agents', glyph: '◌', phase: 4, sequence: 'g e' },
+  /*
+   * **No `phase: 4` any more.** The badge means "this destination is a placeholder shell for a
+   * phase that has not arrived" (see `NavItem.phase`), and `/agents` stopped being one when Phase 4
+   * slice 1 shipped the list and the Builder; slice 2 added the Teams tab behind it. A badge that
+   * says "coming later" over a working screen is the same species of lie as an inert toggle, one
+   * direction over — it tells the operator not to bother looking.
+   *
+   * `Memory` keeps its `P3` badge in this commit only because Phase 3 is not this slice's to
+   * re-audit; it is very likely stale for the same reason and is flagged rather than changed here.
+   */
+  { to: '/agents', label: 'Agents', glyph: '◌', sequence: 'g e' },
   { to: '/settings/general', label: 'Settings', glyph: '⚙', sequence: 'g ,' },
 ];
 

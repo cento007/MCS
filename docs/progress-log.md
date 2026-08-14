@@ -650,6 +650,52 @@ The dirty-form kit moved out of `features/settings/` into `lib/forms/` + `compon
 
 `agent_teams` remains a two-column skeleton, `agent_team_members` does not exist, and `/agent-teams`, `POST /agents/{id}/assignments` and `POST /agents/{id}/executions` are unbuilt. `agent.assigned` and the three `agent.execution_*` names stay **reserved and unproduced** — a name in the live registry is subscribable, and a client waiting forever for `agent.execution_completed` is worse than a name that is honestly still reserved.
 
+> *(Slice 2, later the same day, built the teams half and produced `agent.assigned`. `POST /agents/{id}/executions` and the three `agent.execution_*` names are still unproduced — see the entry at the end of this log.)*
+
 **Noted, out of scope:** `sessions.runtime` still admits `'ollama'` while `agents.runtime` admits only `'claude_code'`. Nothing can launch an Ollama session — `ManagedRuntime` always drives the Claude SDK — so the wider CHECK is the dishonest one. Narrowing it is a migration against a column with live rows and belongs to a multi-runtime slice.
 
 Three residual enforcement gaps, recorded rather than hidden: `permissionMode` is untouched, so a *granted* tool's approval still follows the process default and the operator's own settings (Mission Control narrows, never widens); subagent propagation of a session-level deny list is unproven, hence the blanket `Task`/`Agent` denial; and `disallowedTools` is a Claude Code control surface, so its strength is the SDK's, not a sandbox's.
+
+---
+
+## 2026-08-14 — Phase 4 slice 2: teams, assignment, and a read that makes them mean something
+
+**Backend and `packages/shared` only** (the SPA was landing in parallel, under a different pair of hands). Migration **0008**; `packages/shared/src/db/schema/skeletons.ts` is deleted, because `agent_teams` was the last skeleton in it.
+
+### Three tables, and a rule the database keeps
+
+`agent_teams` (name, description, scope, project), `agent_team_members`, and one TDS 03 §6 did not foresee: `agent_team_assignments`. PRD §5.7's "Teams can be assigned per project" is a *relationship*, and putting it on `projects.agent_team_id` would have moved a Phase 4 concept into a Phase 1 table **and** put the two halves of the scope agreement in different rows, where no CHECK can see them.
+
+**Can a team mix scopes? No, and it is unrepresentable rather than merely refused.** A `global` team holds only `global` agents; a `project` team holds `global` agents and *its own* project's; a `session` agent can never hold a standing seat, because it belongs to one conversation. A global team holding project X's "ERP Architect" and then being assigned to project Y is exactly the leak `ck_memory_items_tier_scope` exists to prevent for memory tiers — the roster would offer an agent the binding path refuses.
+
+A CHECK sees one row, so the facts it needs are brought into that row: the membership carries pinned copies of `team_scope`, `team_project_id`, `agent_scope`, `agent_project_id`, each held to its source by a **composite foreign key** (`(agent_id, agent_scope) -> agents (id, scope)`, and three more). The copies are therefore not trusted — relabelling a project agent as global fails `agent_team_members_agent_scope_fk`, not a validation function. Two redundant unique indexes exist on `agents` purely to be referenced (`ux_agents_id_scope`, `ux_agents_id_project`); split rather than one three-column index, because a composite FK is skipped entirely when any referencing column is NULL, and `project_id` is NULL for every global agent — the three-column form would stop checking scope for exactly the rows whose scope claim matters most.
+
+**Every comparison is `coalesce`d, and the missing-key case is tested by itself.** A CHECK passes when it evaluates to `NULL` — the defect 0007 had to correct on `agents`. `agent_project_id = team_project_id` is NULL, not false, when either side is missing. Proven by mutation on a throwaway database clone: with the `coalesce` removed, the row the test expects to be refused is **ACCEPTED**; the same run showed the foreign-project case is still caught either way, so the `coalesce` buys precisely the NULL case and nothing else.
+
+### The decisions, each argued rather than defaulted
+
+- **One team per Project, many Projects per team** (`ux_agent_team_assignments_project`). The many half is what makes a team worth defining at all — §5.7's roster is the same on every project. The one half is what makes the consumer read answerable: with two teams assigned, "your team" has no referent and "whose roster shows first" has no answer. It is also the reversible direction.
+- **No ordinal on membership.** A team is a set; §5.6's workflows are the ordered thing — and even when workflows land the order belongs to the *workflow*, since the same five agents can run in two orders in two chains. An ordinal here would be in the wrong table even then. Members sort by agent name, which is stable and needs no column.
+- **No `role`.** §5.7 names members by role — "Product Owner", "Architect" — and those *are* agent names, because an Agent's `instructions` define exactly one persona. A `role` column would duplicate `agents.name` wherever it agreed and contradict it wherever it did not.
+- **Archived agents keep their seat; the picker drops them.** Archive is reversible, so deleting the membership row would make un-archiving unable to restore the roster. The team resource shows the member with `archivedAt` set — hiding it turns a five-seat team into a four-seat team with no explanation — while `GET /projects/{id}/available-agents` omits it and reports `memberCount: 5, archivedMemberCount: 1`, which is the whole explanation for four rows flagged `onTeam`.
+- **Teams are deleted, not archived, and that is not a copy of the agent rule.** An Agent is referenced as history by `sessions.agent_id`, `audit_log_entries.actor_id` and `memory_items.agent_id`. Nothing references a team that way: it never acts, no Session records one, no memory is scoped to one. Archiving would preserve a name pointing at nothing and would raise a question archive cannot answer — *is an archived team still the project's team?* What archive bought is bought instead by refusing the delete while any Project is assigned, and `agent_team_assignments`' FK back is `NO ACTION` so **PostgreSQL refuses it too**. (`NO ACTION` rather than `RESTRICT` on purpose: deleting a *Project* removes the assignment and the project-scoped team in one statement, and an immediate check would refuse it over a row that same statement is already deleting.) The audit row's `before` carries the whole roster, so the deletion is reconstructible.
+
+### The consumer, without which a team is a named list
+
+`GET /api/v1/projects/{id}/available-agents` — the agents a Session in this Project may be launched as, plus the assigned team and an `onTeam` flag per agent. That rule already existed, but only as a *refusal* buried in `AgentBindingResolver.resolveForSession`, which is how a UI ends up offering choices that then fail. An integration test binds every agent the read offers and requires all of them to succeed, with three ineligible agents seeded so the test cannot pass against a read that filters nothing.
+
+### Events
+
+**`agent.assigned` graduates from §15.4's reserved list** — one event per (team, project) pair that *actually gained* agents, payload `{ teamId, projectId, agentIds }`. Re-sending an unchanged `projectIds` emits nothing: an event that fires when nothing changed is indistinguishable from one that matters. Not one event per agent — the fact a consumer acts on is "project P's available-agent set changed".
+
+Three names §15.4 never reserved were added, and are recorded as additions in TDS 04 §13.2.1 rather than back-filled into the reservation list: `agent_team.created`, `agent_team.updated` (also what an *un*assignment produces — §15.4 reserved no `agent.unassigned`) and `agent_team.deleted`. `agent_team.*` and not `agent.team.*`: the sub-entity grammar is for something owned by its parent the way a Message is owned by a Session, and a team is not owned by an agent — it contains agents.
+
+### What was deliberately not built
+
+**Workflows (PRD §5.6) and `POST /agents/{id}/executions`.** A workflow is an ordered chain of executions and no execution primitive exists, so workflow tables now would be a drawing of something nothing can run. `agent.execution_*` stay reserved and unproduced.
+
+**`POST /agents/{id}/assignments` — now permanently.** Assignment turned out to be a *team* relationship. Making an Agent available to a Project is `PATCH /agent-teams/{id} { projectIds }`; binding one to a Session stays a Session-lifecycle rule on the Session resource. A third spelling would be a second way to write the same rows.
+
+### Verification
+
+`pnpm typecheck` clean. 2 431 unit tests (3 pre-existing frontend failures belong to the parallel SPA work). 841 backend + 12 shared integration tests, all green. `openapi.yaml` regenerated. Every new claim was falsified before it was believed: six DDL mutations on a throwaway clone (each turning a refused row into an accepted one) and four code reverts, each failing exactly the tests that assert the behaviour and no others.

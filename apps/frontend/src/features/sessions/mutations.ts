@@ -180,6 +180,16 @@ export function useSubmitPrompt(
 export interface SessionPatch {
   readonly title?: string | null;
   readonly notes?: string | null;
+  /**
+   * Bind — or, with `null`, unbind — the Agent this Session runs as (PRD §5.1).
+   *
+   * Unlike `title` and `notes`, this is **not** legal in every state. The Backend accepts it only
+   * while the Session is `created` and only for a `managed` one, because the agent's instructions
+   * become the runtime's system prompt at spawn and the runtime offers no way to replace it
+   * mid-conversation. `lib/agents/binding.ts` carries the same rule, so the control is absent
+   * rather than present-and-failing.
+   */
+  readonly agentId?: string | null;
 }
 
 /** `PATCH /sessions/{id}` — the operator title override (§6.11.4) and Notes (§6.1). */
@@ -207,6 +217,15 @@ export interface CreateSessionVariables {
   readonly repositoryId?: string;
   readonly branch?: string;
   readonly model?: string;
+  /**
+   * The Agent persona to run as (PRD §5.1). Omitted, never `''` — the route schema patterns it as
+   * a UUID, so an empty string is a `400` rather than "no agent".
+   *
+   * A `global` or `project`-scoped agent only: a `session`-scoped one names a Session that does not
+   * exist at create time, which is why the picker excludes them here rather than letting the
+   * Backend explain it afterwards.
+   */
+  readonly agentId?: string;
 }
 
 /** `POST /sessions` — creates in `created`; starting is a separate, later gesture (§5.4.1). */

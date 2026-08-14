@@ -99,7 +99,7 @@ All routes require authentication except `POST /api/v1/auth/login`. There is no 
 | Search | `/api/v1/search` | 2 | §11 |
 | MemoryItems | `/api/v1/memory-items` | 3 — stub | §13.1 |
 | Agents | `/api/v1/agents` | 4 | §13.2 |
-| AgentTeams | `/api/v1/agent-teams` | 4 — stub (teams are a later slice) | §13.2 |
+| AgentTeams | `/api/v1/agent-teams` | 4 | §13.2.1 |
 | WebSocket | `/api/v1/ws` | 1 | §14 |
 
 ---
@@ -1252,13 +1252,63 @@ Reserved routes (PRD §12: Create / Update / Assign / Execute):
 
 What was built: `GET|POST /api/v1/agents` and `GET|PATCH /api/v1/agents/{id}`, F5 conventions throughout (cursor pagination, `{error:{code,message,details,requestId}}`). The `Agent` resource follows PRD §5.3 minus two fields and plus one derived one — see the table below. `agent.created` and `agent.updated` are produced through the outbox and relayed on the `agents` channel (§14.3).
 
-**Three of this section's items are deliberately still unbuilt**, and each omission is a decision rather than a backlog entry:
+**Phase 4's second slice landed 2026-08-14: teams, project assignment, and the read that consumes them.** `agent_teams` graduated out of TDS 03 §6's skeleton set (it was the last one), `agent_team_members` was created, and `agent_team_assignments` was added — see the updated status table below.
+
+**Two of this section's items are still unbuilt**, and each omission is a decision rather than a backlog entry:
 
 | Reserved | Status | Why |
 |---|---|---|
-| `POST /agents/{id}/assignments` | not built | Binding an Agent to a Session is done on the Session resource — `agentId` on `POST /sessions` and `PATCH /sessions/{id}` — because the rule that governs it is a Session lifecycle rule (an Agent may only be bound while the Session is `created`; its instructions become the runtime's system prompt at spawn). A general assignment surface, and `agent.assigned` with it, waits for project/team assignment. |
-| `POST /agents/{id}/executions` | not built | An agent that *runs a task on its own* is a later slice. Its three `agent.execution_*` names stay unproduced; the event registry lists only the two that exist. |
-| `/agent-teams` | not built | PRD §5.6/§5.7 presuppose agents that exist and run. `agent_teams` is still a skeleton and `agent_team_members` still does not exist. |
+| `POST /agents/{id}/assignments` | **not built, and now permanently** | Assignment turned out to be a *team* relationship, not a per-agent one. Making an Agent available to a Project is `PATCH /agent-teams/{id} { projectIds }`; binding an Agent to a Session stays on the Session resource, because that rule is a Session lifecycle rule (an Agent may only be bound while the Session is `created`). A third spelling would be a second way to write the same rows. `agent.assigned` is now produced — by the team path. |
+| `POST /agents/{id}/executions` | not built | An agent that *runs a task on its own* is a later slice. Its three `agent.execution_*` names stay unproduced. **PRD §5.6 workflows depend on this**: a workflow is an ordered chain of executions, so building workflow tables now would describe something nothing can run. |
+| `/agent-teams` | **built** (slice 2) | All four reserved routes, plus `DELETE` and one availability read — see below. |
+
+### 13.2.1 AgentTeam (PRD §5.7) — built 2026-08-14
+
+**Routes.** The four reserved ones, plus two this section did not reserve. Both additions are recorded here rather than smuggled in, the same way §13.1 records the two backfill routes Phase 3 added.
+
+- `GET|POST /api/v1/agent-teams`, `GET|PATCH /api/v1/agent-teams/{id}` — the reserved set.
+- **`DELETE /api/v1/agent-teams/{id}`** — `204`; `409 CONFLICT` while any Project is assigned. *Addition.*
+- **`GET /api/v1/projects/{id}/available-agents`** — *addition.* Without a consumer a team is a named list nothing reads.
+
+**Teams are deleted, Agents are archived, and the difference is argued rather than inherited.** An Agent is referenced as *history* by `sessions.agent_id`, `audit_log_entries.actor_id` and `memory_items.agent_id`, so erasing one rewrites the past. Nothing references a team that way — it never acts, so it is never an audit actor; no Session records one; no memory is scoped to one. Archiving would preserve a name that points at nothing and would raise a question archive cannot answer (*is an archived team still the project's team?*). What archive bought — no invisible blast radius — is bought instead by refusing the delete while the team is assigned; `agent_team_assignments`' FK back to `agent_teams` is `NO ACTION`, so **PostgreSQL refuses it too** and the `409` is only the message. The roster cascades, and the audit row's `before` carries the whole member list so the deletion is reconstructible.
+
+**Cardinality: one team per Project, many Projects per team** (`ux_agent_team_assignments_project` is unique on `project_id` alone). The many-per-team half is what makes a team worth defining — PRD §5.7's example roster is the same roster on every project. The one-per-project half is what makes the availability read answerable: with two teams assigned, "your team" has no referent and "which roster is shown first" has no answer. It is also the reversible direction — dropping a unique index later is a migration.
+
+**A team carries a scope, and mixing is unrepresentable.** `global` teams hold only `global` agents; a `project` team holds `global` agents **and its own project's** agents; `session` agents can never be members. This is enforced in the database, not in the service: the membership row carries pinned copies of both sides' `scope`/`project_id` (composite FKs to `agents (id, scope)` / `(id, project_id)` and the same pair on `agent_teams`), and `ck_agent_team_members_agent_scope` compares them in one row with `ELSE false` and `coalesce`. Without it a global team could hold project X's agent and then be assigned to project Y — the same class of leak `ck_memory_items_tier_scope` prevents for memory tiers.
+
+**No `role` on membership, and no ordinal.** §5.7 names members by role ("Product Owner", "Architect") — those *are* agent names, because an Agent's `instructions` define exactly one persona, so a `role` column would duplicate `agents.name` where it agreed and contradict it where it did not. A team is a **set**; §5.6's workflows are the ordered thing, and even then the order will belong to the workflow (the same agents can run in two orders in two chains), so an ordinal would be in the wrong table. Members are returned sorted by agent name.
+
+**`AgentTeam` resource:**
+
+| field | type | note |
+|---|---|---|
+| `id`, `name`, `description` | uuid, string, string\|null | |
+| `scope` | `'global' \| 'project'` | Two values, not three. `ck_agent_teams_scope_target` mirrors `ck_agents_scope_target` |
+| `projectId` | uuid\|null | The team's **own** project, not the projects it is assigned to |
+| `members[]` | `{ agentId, name, scope, projectId, runtime, archivedAt, addedAt }` | A **summary**, not an `Agent`: `instructions` is capped at 20 000 characters and a five-member team would carry 100 KB of persona text no roster screen shows. Sorted by name. **Archived members are included**, flagged by `archivedAt` — hiding them turns a five-seat team into a four-seat team with no explanation |
+| `projectIds[]` | uuid[] | Assigned Projects, ascending |
+| `createdAt`, `updatedAt` | timestamp | A roster or assignment change moves `updatedAt` |
+
+`POST` and `PATCH` accept `agentIds` and `projectIds` as **replace-the-set** arrays: omitted means "leave this set alone", `[]` means "empty it". Repeats are collapsed, not rejected. Adding a Project another team already holds is a `409` naming the incumbent rather than a silent transfer — moving a project between teams is two visible acts, because the consequence (a different roster offered there) is invisible at the call site. Adding an **archived** Agent is a `409`; an Agent archived *while* on a team keeps its seat, because archive is reversible and dropping the row would make un-archiving unable to restore the roster.
+
+**`GET /api/v1/projects/{id}/available-agents`** answers *which Agents may be launched in this Project*, which until now existed only as a refusal inside the session-binding path — so a picker could offer a choice that then failed. `404` for an unknown Project (distinct from "no agents"). Not paginated: it is a composite document like `GET /services/health`, and a picker that silently omitted a row would be the defect it exists to prevent.
+
+```jsonc
+{ "data": {
+  "projectId": "0192…",
+  "team": {                      // null when no team is assigned
+    "id": "0192…", "name": "Delivery", "description": null,
+    "scope": "global", "projectId": null,
+    "memberCount": 5, "archivedMemberCount": 1,   // 5 seats, 1 retired -> 4 flagged onTeam below
+    "assignedAt": "2026-08-14T…Z"
+  },
+  "agents": [ { /* Agent resource */ "onTeam": true } ]   // live, in-scope agents only
+} }
+```
+
+`agents` is every **live** agent whose scope reaches this Project (`global`, plus this project's own) — archived and session-scoped agents are excluded because neither can be bound. `archivedMemberCount` is why the counts are there: it is the whole explanation for a five-member team showing four rows.
+
+**Events.** `agent.assigned` graduates from §15.4's reserved list — one event per **(team, project) pair that gained agents**, payload `{ teamId, projectId, agentIds }`, and nothing when availability did not actually change. Not one event per agent: the fact a consumer acts on is "project P's available-agent set changed". Three names §15.4 did **not** reserve are added, because a team is a sibling aggregate of Agent rather than a sub-entity of one (so `agent.team.*` would be the wrong grammar): **`agent_team.created`**, **`agent_team.updated`** (payload `{ teamId, changedFields }`; this is also what an *unassignment* produces, since §15.4 reserved no `agent.unassigned`) and **`agent_team.deleted`**. All four ride the reserved `agents` channel (§14.3) — a second channel would spend one of the 64 per-connection subscriptions to split a feed nobody wants split.
 
 **There is no `DELETE /agents/{id}`, and §13.2 was right not to list one.** An Agent is referenced by `sessions.agent_id`, by `audit_log_entries.actor_id` (polymorphic, deliberately not an FK so audit outlives its actor) and by `memory_items.agent_id`. Retirement is `PATCH { "archived": true }` — reversible, idempotent, and inside the reserved route set. `sessions.agent_id` is `ON DELETE RESTRICT`, so the rule is structural rather than a missing route.
 
@@ -1329,7 +1379,7 @@ Matching is exact string comparison of normalized origins (scheme + host + port)
 | `sync` | `sync.*` | 2 |
 | `adrs` | `adr.created`, `adr.updated` | 2 |
 | `memory` | reserved | 3 — stub |
-| `agents` | `agent.created`, `agent.updated` (§15.4). Execution events are a later slice | 4 |
+| `agents` | `agent.created`, `agent.updated`, `agent.assigned` (§15.4), plus `agent_team.created` / `agent_team.updated` / `agent_team.deleted` (§13.2.1 additions). Execution events are a later slice | 4 |
 
 Single-user system: any authenticated `full` principal may subscribe to any channel. Limit: 64 concurrent channel subscriptions per connection (`ack { ok: false, error: { code: 'VALIDATION_FAILED' } }` beyond).
 

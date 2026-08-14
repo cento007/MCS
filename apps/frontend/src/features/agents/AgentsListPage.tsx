@@ -9,6 +9,7 @@ import { formatRelativePast } from '../../lib/format/relative.js';
 import { useLiveClock } from '../../lib/liveness.js';
 import { PANEL_BREAKPOINTS, useMediaQuery } from '../../lib/media.js';
 import { useChannel } from '../../lib/ws/context.js';
+import { AgentsTabs } from './AgentsTabs.js';
 import { type PermissionSummary, summarisePermissions } from './permissions.js';
 import { projectName, useAgentProjects, useAgentsList } from './queries.js';
 import type { AgentView } from './shape.js';
@@ -17,13 +18,17 @@ import { agentRuntimeLabel, agentScopeLabel } from './types.js';
 /**
  * `/agents` — the Agents screen (PRD §8.5, TDS 06 §6.2).
  *
- * §8.5 is one line — *"Manage: global agents, project agents, teams, permissions"* — and this
- * screen deliberately delivers three of those four. **Teams are not here.** PRD §5.7 describes
- * agent teams and TDS 06 §6.2 reserves a `[Teams]` tab in the shell, but nothing behind it is
- * being built this round: `agent_teams` is still the two-column skeleton in
- * `packages/shared/src/db/schema/skeletons.ts` and no route serves it. A third tab that opened
- * onto "coming later" is a promise the product cannot keep, and this screen has enough of those
- * to manage already — the whole Permissions section is about not making one.
+ * §8.5 is one line — *"Manage: global agents, project agents, teams, permissions"* — and all four
+ * are now reachable: global and project agents are this list (they are one collection with a
+ * column, so they are filter chips rather than tabs), permissions are the Builder's fifth section,
+ * and **Teams** are the second tab, added in slice 2 against TDS 04 §13.2's reserved
+ * `/agent-teams` routes.
+ *
+ * **Workflows (PRD §5.6) are still not here, and there is no tab for them.** A chain
+ * `Developer → QA → Security → Architect` needs an execution primitive, and
+ * `POST /agents/{id}/executions` is unbuilt with its three `agent.execution_*` events reserved and
+ * unproduced. A builder for a sequence nothing can run is the most elaborate inert control this
+ * codebase could ship, and the whole Permissions section is an argument against shipping one.
  *
  * The rest of the screen is mostly about being honest when there is nothing to show, because on
  * a fresh install that is every install:
@@ -103,9 +108,13 @@ export function AgentsListPage() {
         </Link>
       </div>
 
-      <p className="mt-2 max-w-3xl text-sm text-text-secondary leading-150">
+      <AgentsTabs active="agents" />
+
+      <p className="mt-3 max-w-3xl text-sm text-text-secondary leading-150">
         Agents are specialised personas operating through runtimes, not models (PRD §5.1). A global
-        agent is offered to every project; a project agent to exactly one.
+        agent is offered to every project; a project agent to exactly one. An agent is bound to a
+        session when the session is created, and its permissions{' '}
+        <strong>remove tools from that session</strong> — the Launch dialog names which.
       </p>
 
       {query.unavailable ? null : (
