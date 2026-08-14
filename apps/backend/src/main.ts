@@ -1,7 +1,9 @@
 import process from 'node:process';
 import {
+  checkSchemaVersion,
   createLoggerFromConfig,
   createShutdownController,
+  describeSchemaVersion,
   loadConfigOrExit,
   readMemoryPolicy,
 } from '@mc/shared';
@@ -32,6 +34,37 @@ async function main(): Promise<void> {
   const log = createLoggerFromConfig('backend', config);
 
   const database = createDatabase({ connectionString: config.databaseUrl });
+
+  /**
+   * **Before anything queries an application table.**
+   *
+   * Migration `0012` was committed and not applied, so the first query that touched
+   * `agent_workflow_run_steps.waiting_notified_at` threw — during `workflows.runs.start()`, well
+   * past this point and *before the port was bound*. The operator got a raw `DrizzleQueryError`
+   * in a log they were not watching and, in the browser, "Mission Control returned a response
+   * this client could not read", because Vite was proxying to a process that had died. The one
+   * fact that mattered — run `pnpm db:migrate` — was three layers away.
+   *
+   * Fatal on `behind`, deliberately. A Backend serving against a schema it was not compiled for
+   * is the worse outcome: it answers some requests and corrupts others, which is harder to
+   * diagnose than a refusal that names the command. `ahead` and `unknown` only warn — an older
+   * build against a newer database usually works (migrations here are additive), and an
+   * unreadable journal is a gap in *this check*, not evidence about the database.
+   */
+  const schemaVersion = await checkSchemaVersion(database.db);
+  const schemaMessage = describeSchemaVersion(schemaVersion);
+  if (schemaVersion.state === 'behind') {
+    log.fatal(
+      { pending: schemaVersion.pending, applied: schemaVersion.appliedCount },
+      schemaMessage ?? 'the database is behind this build',
+    );
+    await database.close();
+    process.exit(1);
+  }
+  if (schemaMessage !== null) {
+    log.warn({ state: schemaVersion.state }, schemaMessage);
+  }
+
   const shutdown = createShutdownController({ logger: log });
 
   const queue = createBackendQueue({

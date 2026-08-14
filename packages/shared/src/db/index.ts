@@ -16,6 +16,19 @@ export type Db = NodePgDatabase<typeof schema>;
 export type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 /**
+ * "Is this database the one this build was compiled against?" — asked once at startup, because a
+ * missing migration is otherwise a raw driver error thrown before the port is bound.
+ */
+export {
+  checkSchemaVersion,
+  compareMigrations,
+  describeSchemaVersion,
+  type MigrationJournalEntry,
+  readMigrationJournal,
+  type SchemaVersionReport,
+  type SchemaVersionState,
+} from './migrations.js';
+/**
  * Row-shaped types that are part of the *contract* rather than of the table definition, and are
  * therefore importable without reaching through the `schema` namespace.
  *
