@@ -598,3 +598,58 @@ The first attempt at the guard's regression test was **not good enough and was r
 `TopBar.resilience.test.tsx` exists for a separate reason: `ShellBoundary.test.tsx` proves the boundary contains a throw, and nothing there proved the boundary was actually *wrapped around anything*. Removing the `<ShellBoundary>` from `TopBar` left every other suite in the directory green. All three of its tests fail with the boundary removed — the same gap that file's own header warns about for chips ("a chip with a perfect unit suite and no call site").
 
 The fallback's utilities were checked against the **built CSS** rather than the class names, per the `.inset-0` lesson.
+
+---
+
+## 2026-08-14 — Phase 4 slice 1: agents that actually run, permissions that actually subtract
+
+Commit `185f9cf`. **2407 unit tests** (178 files), **856 integration**, lint clean over 754 files, `openapi.yaml` current, migrations `0006` and `0007` applied.
+
+### The slice, and why it was drawn here
+
+Phase 4 is "agent framework, agent builder, agent teams, agent workflows". Teams are assigned per project and workflows are chains (`Developer → QA → Security → Architect`) — both presuppose agents that already exist and run. So slice 1 is the vertical: **define an agent → start a session as that agent → its instructions and permissions apply.**
+
+`agents` had been a two-column skeleton (`id`, `name`) carrying the comment *"DO NOT EXTEND before the corresponding phase's design document exists"*. This is that phase. `LaunchRequest` had no system-prompt or permission seam at all, which is precisely why stopping at CRUD would have shipped furniture: an Agent you can create, name and grant ten permissions to, that never reaches a runtime. PRD §5.1 is `Runtime → Agent → Task`.
+
+### Permissions subtract, and never grant
+
+There is no `allowedTools` and no `canUseTool` handler, because **both auto-approve — a permission model that grants is not one**. `repository.{read,write,shell}` map onto the SDK's `disallowedTools` plus `strictMcpConfig`, per launch. Granting changes nothing relative to a Session with no agent; denying removes tools.
+
+**Bash is denied under all three**, which is the non-obvious part: a shell defeats a read denial (`cat`) and a write denial (`>`) equally. So `shell: true` requires `read` and `write` — refused at the API boundary *and* by `ck_agents_permissions_shell_subsumes`, because a rule enforced only in application code is a rule with a hole in it.
+
+**Six of PRD §5.5's permissions were deliberately not shipped**, and the reasons are recorded rather than papered over:
+
+- **Commit / Create PR / Merge / Delete** are not separate tools. All four are `git`/`gh` through Bash, and splitting them means parsing shell command strings — which `sh -c 'git merge'` defeats in one move. They collapse into `repository.shell`, whose documentation states plainly that granting it grants all four. An operator who reads "Merge: off" and believes it is worse off than one who reads the truth.
+- **Memory (Read/Write/Delete)** and **Documentation (Create ADR / Create Notes / Edit Notes)** have no control surface a Claude Code session can reach — they are routes the *operator* calls, and no MCP server exposes them. They become expressible when an execution surface exists that an agent can reach.
+
+`disallowedTools` is returned on the Agent resource, derived by **the same function the launch path calls** (`disallowedToolsFor`, at `agents/binding.ts:90` and `agents/serialize.ts:54`). A permission model the operator has to take on trust cannot be audited; this makes enforcement visible in the runtime's own vocabulary. The Builder renders it verbatim and, when the field is absent, degrades every row to *"enforcement not stated"* rather than assuming.
+
+### A CHECK that was unsound in exactly the case it existed to catch
+
+**A CHECK constraint passes when it evaluates to `NULL`.** `jsonb_typeof(permissions #> '{repository,write}')` is NULL precisely when `write` is missing — so the first version accepted `{"repository":{"read":true}}`, a half-written document that `disallowedToolsFor` reads as a *smaller* deny list: **a more capable agent than the row describes**. Every subexpression is now `coalesce`d. Kept as its own migration (`0007`) rather than folded into `0006`, because `0006` had already been applied.
+
+Verified independently against the live database inside a rolled-back transaction: missing keys and non-boolean values are rejected by `ck_agents_permissions_shape`, `shell` without `write` by `ck_agents_permissions_shell_subsumes`, and the scope invariant (`ck_agents_scope_target`, modelled on `ck_memory_items_tier_scope` including its `ELSE false`) rejects both a global agent naming a project and a project agent naming none.
+
+### Archive, not delete
+
+An Agent is referenced by `sessions.agent_id`, by `audit_log_entries.actor_id` (polymorphic, deliberately not an FK so audit outlives its actor) and by `memory_items.agent_id`. Erasing one rewrites history that is append-only by design. Retirement is `PATCH { archived: true }`; `ON DELETE RESTRICT` makes the rule structural rather than conventional, proven by an integration test that issues the `DELETE` by hand and watches PostgreSQL refuse it by name. Unique indexes are partial on `archived_at IS NULL`, so retiring an "Architect" frees the name.
+
+### What was declined
+
+- **`knowledge` and `memory` from §5.3 are not columns** — nothing reads either. The `agent` memory tier *still* has no producer, `PRODUCIBLE_MEMORY_TIERS` is unchanged, and its comment now says so instead of promising Phase 4 would fill it.
+- **`agents.defaultRuntime`** (reserved in TDS 04 §7.2) was declined outright: `AGENT_RUNTIMES` has one member because one runtime is launchable, and a single-valued enum is a control with one position — the same species of lie as an inert toggle. Only `defaultPermissionTemplate` shipped, and `POST /agents` reads it.
+- Binding an agent is legal **only while `created`**, because the system prompt is fixed at spawn and the runtime cannot be handed another mid-session.
+
+### Found on the way
+
+**The shared unsaved-changes guard blocked navigations it had no business blocking.** `useBlocker` re-registers its predicate from an *effect*, so a navigation fired from a sibling's effect in the same commit is judged against the previous render. The Agent Builder saved a new agent, navigated to it, and was blocked — offered the chance to save what it had just saved. The guard now states the invariant it actually means: there is nothing to guard when nothing is dirty. That guard also protects Settings, so the fix was verified by reverting it and watching the URL stay at `/agents/new`.
+
+The dirty-form kit moved out of `features/settings/` into `lib/forms/` + `components/UnsavedChangesGuard.tsx` (24 import sites), because TDS 05 §2.1 forbids cross-feature imports — "reuse the pattern rather than a second implementation" required the move.
+
+### Left standing
+
+`agent_teams` remains a two-column skeleton, `agent_team_members` does not exist, and `/agent-teams`, `POST /agents/{id}/assignments` and `POST /agents/{id}/executions` are unbuilt. `agent.assigned` and the three `agent.execution_*` names stay **reserved and unproduced** — a name in the live registry is subscribable, and a client waiting forever for `agent.execution_completed` is worse than a name that is honestly still reserved.
+
+**Noted, out of scope:** `sessions.runtime` still admits `'ollama'` while `agents.runtime` admits only `'claude_code'`. Nothing can launch an Ollama session — `ManagedRuntime` always drives the Claude SDK — so the wider CHECK is the dishonest one. Narrowing it is a migration against a column with live rows and belongs to a multi-runtime slice.
+
+Three residual enforcement gaps, recorded rather than hidden: `permissionMode` is untouched, so a *granted* tool's approval still follows the process default and the operator's own settings (Mission Control narrows, never widens); subagent propagation of a session-level deny list is unproven, hence the blanket `Task`/`Agent` denial; and `disallowedTools` is a Claude Code control surface, so its strength is the SDK's, not a sandbox's.
