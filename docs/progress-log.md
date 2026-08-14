@@ -699,3 +699,57 @@ Three names §15.4 never reserved were added, and are recorded as additions in T
 ### Verification
 
 `pnpm typecheck` clean. 2 431 unit tests (3 pre-existing frontend failures belong to the parallel SPA work). 841 backend + 12 shared integration tests, all green. `openapi.yaml` regenerated. Every new claim was falsified before it was believed: six DDL mutations on a throwaway clone (each turning a refused row into an accepted one) and four code reverts, each failing exactly the tests that assert the behaviour and no others.
+
+---
+
+## 2026-08-14 — Phase 4 slice 2: agent teams, and an agent you can finally choose
+
+Commit `761feee`. **2461 unit tests** (183 files), **914 integration**, lint clean over 786 files, `openapi.yaml` current, migration `0008`.
+
+### The half that mattered most was not teams
+
+Slice 1 made an agent's `instructions` the Claude Agent SDK's system prompt and its permissions `disallowedTools`. `POST /sessions` and `PATCH /sessions/{id}` both accepted `agentId`, and the Session resource returned it.
+
+**None of it was reachable.** `grep` found `agentId` nowhere in `features/sessions/`, and the hand-written `Session` type did not carry the field at all. You could build an agent and never run one — the same furniture problem slice 1 was drawn to avoid, one layer up. That single missing field is also the clearest argument yet about `openapi.yaml` declaring no response schemas: the frontend types are hand-written, so a backend addition reaches the client only when someone remembers.
+
+The picker's design rule: **an agent the API would refuse is not silently filtered out.** Every omission is named with its reason — *"Scoped to a different project"*, *"Archived — un-archive it on the Agents screen"*, *"Scoped to one session, and this session does not exist yet. Create it first, then bind this agent from the session itself."* And an agent whose `scope` this build does not recognise is **offered anyway**, because the Backend checks only the scopes it knows and would accept it; refusing would be the client inventing a rule the server does not have.
+
+Selecting an agent states the consequence before it is felt: binding **removes tools**, listed verbatim from the server-derived `disallowedTools` and never re-derived client-side. Three distinct readings — removes N / removes nothing / *not stated* — and a Backend without the field is never upgraded to "enforced".
+
+### Mixing scopes is unrepresentable, not merely refused
+
+A `global` team holds only global agents; a `project` team holds global agents **and its own project's**; `session` agents can never be members. The interesting part is the mechanism: a CHECK sees one row, so both sides' `scope` and `project_id` are copied onto the membership row and each copy is pinned by a **composite FK** back to its source table.
+
+That is what closes the obvious defeat. Verified independently against the live database inside a rolled-back transaction:
+
+| attempt | result |
+|---|---|
+| global team + global agent | accepted |
+| project team + its own project's agent | accepted |
+| project team + global agent | accepted |
+| **global team + a project agent** (the visibility leak) | rejected — `ck_agent_team_members_agent_scope` |
+| **project agent relabelled `global` on the way in** (the lie) | rejected — `agent_team_members_agent_scope_fk` |
+
+Two split unique indexes rather than one three-column key, because **a composite FK is skipped when any referencing column is NULL** — and `project_id` is NULL for every global agent, so the three-column form would stop checking scope for precisely the rows whose scope claim matters most. Every comparison is `coalesce`d, for the reason `0007` had to be written: a CHECK passes when it evaluates to `NULL`.
+
+### Decisions argued rather than deferred
+
+- **One team per Project, many Projects per team.** The many half is what makes a team worth defining at all (§5.7's roster is the same on every project); the one half is what makes the availability read answerable — with two teams, "your team" has no referent.
+- **No ordinal.** Order belongs to the *workflow*: the same five agents can run in two orders in two chains, so an ordinal on membership would be in the wrong table permanently, not merely prematurely.
+- **No role column.** §5.7's "Product Owner" and "Architect" *are* agent names, and an Agent's `instructions` define exactly one persona. A `role` field would duplicate `agents.name` where it agreed and contradict it where it did not.
+- **Teams are deleted, not archived — and the agent rule was deliberately not copied.** An Agent is referenced as history (`sessions.agent_id`, `audit_log_entries.actor_id`, `memory_items.agent_id`); nothing references a team that way, because a team never acts. Archiving would preserve a name pointing at nothing and raise a question it cannot answer — *is an archived team still the project's team?* PostgreSQL refuses the delete while any Project is assigned.
+- **An archived member keeps its seat.** Archive is reversible, so deleting the membership row would make un-archiving unable to restore the roster. The team shows the member with `archivedAt` set; `available-agents` omits it and reports `archivedMemberCount`, which is the whole explanation for a roster of five showing four.
+
+`GET /projects/{id}/available-agents` is the consumer that makes a team more than a named list — and it is the **positive form of a rule that previously existed only as a refusal** inside the session-binding path.
+
+`skeletons.ts` is gone; `agent_teams` was the last skeleton in it. `agent.assigned` is now produced, one per (team, project) pair that *actually gained* agents — a re-sent `projectIds` emits nothing.
+
+### Found on the way
+
+- **A status line read "unreadable" for every bound session row while the agent lookup was merely in flight.** "Still loading" and "could not be read" are different claims, and only one of them is about the operator's data. Same doctrine as the Memory screen's four empty states, two layers down.
+- **The nav rail still badged Agents `P4`** — advertising as unbuilt the screen it was sitting on. (`Memory P3` is almost certainly stale for the same reason and was left alone.)
+- The read half of the agent domain moved to `lib/agents/` so `features/sessions/` could consume it without a cross-feature import (TDS 05 §2.1), following the precedent set when the dirty-form kit moved to `lib/forms/`.
+
+### A duplication worth watching
+
+The session-binding refusals now exist twice: authoritatively in `apps/backend/src/agents/binding.ts`, and transcribed into `apps/frontend/src/lib/agents/binding.ts` so the picker can explain an absence. They were verified to match on landing, and nothing ties them together — a fifth refusal added server-side would silently not reach the UI. That is the same root cause as the missing `Session.agentId`: `openapi.yaml` declares no response schemas, so every client-side shape is hand-maintained.
