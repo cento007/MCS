@@ -18,6 +18,16 @@ export const NOTIFICATION_TYPES = [
   'repository_problem',
   'daily_report',
   'cost_budget_alert',
+  /**
+   * An agent-workflow step's Session has finished its turn and is waiting for the operator to end
+   * it (PRD §5.6 + F7: a managed Session is never auto-completed, so the chain advances when a
+   * human ends each step).
+   *
+   * Like `daily_report` and `cost_budget_alert`, it has **no originating F6 event** — the fact it
+   * reports is the runtime going idle, which is not a Session state change and therefore not
+   * something F7 emits. That is exactly why `notifications.type` is its own enum (arbitration A8).
+   */
+  'workflow_step_waiting',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

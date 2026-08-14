@@ -1019,4 +1019,191 @@ describe('GET /api/v1/projects/{id}/available-agents', () => {
     const response = await get(`/api/v1/projects/${newId()}/available-agents`);
     expect(response.statusCode).toBe(404);
   });
+
+  // ------------------------------------------------------------------- the refusals, reported
+
+  it('names every agent it does not offer, with the reason it does not', async () => {
+    const other = await seedProject('Other');
+    const sessionId = await seedSession({ projectId, userId });
+
+    const theirs = await seedAgent({
+      name: 'Their Architect',
+      scope: 'project',
+      projectId: other.projectId,
+    });
+    const ephemeral = await seedAgent({ name: 'Release', scope: 'session', sessionId });
+    const retired = await seedAgent({ name: 'Retired', archivedAt: new Date() });
+
+    const response = await get(`/api/v1/projects/${projectId}/available-agents`);
+    const refused = response.json().data.refused as {
+      agentId: string;
+      reason: string;
+      explanation: string;
+    }[];
+
+    const byId = Object.fromEntries(refused.map((entry) => [entry.agentId, entry]));
+    expect(byId[theirs]).toMatchObject({ reason: 'other_project' });
+    expect(byId[retired]).toMatchObject({ reason: 'archived' });
+    // The one temporary refusal: bindable, but only after the Session exists. Flattening it into
+    // "unavailable" would leave the picker unable to explain the difference.
+    expect(byId[ephemeral]).toMatchObject({ reason: 'session_not_yet' });
+    for (const entry of refused) expect(entry.explanation.length).toBeGreaterThan(40);
+  });
+
+  it('accounts for every agent in the install: offered ∪ refused, with no overlap', async () => {
+    // The property that makes this read usable as the picker's whole source. An agent that is in
+    // neither list is an absence the screen cannot explain, which is the defect the frontend was
+    // reading the entire `/agents` table to avoid.
+    const other = await seedProject('Other');
+    const all = [
+      await seedAgent({ name: 'Architect' }),
+      await seedAgent({ name: 'ERP Architect', scope: 'project', projectId }),
+      await seedAgent({ name: 'Foreign', scope: 'project', projectId: other.projectId }),
+      await seedAgent({ name: 'Retired', archivedAt: new Date() }),
+      await seedAgent({
+        name: 'Ephemeral',
+        scope: 'session',
+        sessionId: await seedSession({ projectId, userId }),
+      }),
+    ];
+
+    const body = (await get(`/api/v1/projects/${projectId}/available-agents`)).json().data;
+    const offered = (body.agents as { id: string }[]).map((agent) => agent.id);
+    const refused = (body.refused as { agentId: string }[]).map((entry) => entry.agentId);
+
+    expect([...offered, ...refused].sort()).toEqual([...all].sort());
+    expect(offered.filter((id) => refused.includes(id))).toEqual([]);
+  });
+
+  // --------------------------------------------------- the same question, about a real Session
+
+  it('offers a session-scoped agent to the Session it names when ?sessionId= is given', async () => {
+    // The capability the create-time answer cannot express: a session agent exists for exactly one
+    // conversation, and against a context with no Session it is `session_not_yet` — including for
+    // its own. Supplying the missing half of the context is what makes the PATCH surface usable.
+    const sessionId = await seedSession({ projectId, userId });
+    const mine = await seedAgent({ name: 'Release', scope: 'session', sessionId });
+
+    const withoutSession = (await get(`/api/v1/projects/${projectId}/available-agents`)).json()
+      .data;
+    expect(withoutSession.sessionId).toBeNull();
+    expect(withoutSession.agents.map((agent: { id: string }) => agent.id)).not.toContain(mine);
+    expect(
+      withoutSession.refused.find((entry: { agentId: string }) => entry.agentId === mine).reason,
+    ).toBe('session_not_yet');
+
+    const withSession = (
+      await get(`/api/v1/projects/${projectId}/available-agents?sessionId=${sessionId}`)
+    ).json().data;
+
+    expect(withSession.sessionId).toBe(sessionId);
+    expect(withSession.agents.map((agent: { id: string }) => agent.id)).toContain(mine);
+    expect(withSession.refused.map((entry: { agentId: string }) => entry.agentId)).not.toContain(
+      mine,
+    );
+  });
+
+  it('reports another Session’s agent as session_elsewhere, not session_not_yet', async () => {
+    const mine = await seedSession({ projectId, userId });
+    const theirs = await seedSession({ projectId, userId });
+    const stranger = await seedAgent({ name: 'Stranger', scope: 'session', sessionId: theirs });
+
+    const body = (
+      await get(`/api/v1/projects/${projectId}/available-agents?sessionId=${mine}`)
+    ).json().data;
+
+    const entry = body.refused.find((row: { agentId: string }) => row.agentId === stranger);
+    expect(entry.reason).toBe('session_elsewhere');
+    // Permanent rather than "not yet", and the sentence says so.
+    expect(entry.explanation).toContain('exactly one conversation');
+  });
+
+  it('holds the ?sessionId= answer to what PATCH /sessions/{id} enforces', async () => {
+    const created = await post('/api/v1/sessions', {
+      projectId,
+      workingDirectory: testWorkingDirectory(),
+    });
+    const sessionId = created.json().data.id as string;
+    const mine = await seedAgent({ name: 'Release', scope: 'session', sessionId });
+    const theirs = await seedAgent({
+      name: 'Stranger',
+      scope: 'session',
+      sessionId: await seedSession({ projectId, userId }),
+    });
+
+    const body = (
+      await get(`/api/v1/projects/${projectId}/available-agents?sessionId=${sessionId}`)
+    ).json().data;
+    expect(body.agents.map((agent: { id: string }) => agent.id)).toContain(mine);
+
+    // Offered here, accepted there.
+    const bound = await patch(`/api/v1/sessions/${sessionId}`, { agentId: mine });
+    expect(bound.statusCode).toBe(200);
+    expect(bound.json().data.agentId).toBe(mine);
+
+    // Refused here, refused there — with the identical sentence, from the one function.
+    const refusal = body.refused.find((row: { agentId: string }) => row.agentId === theirs);
+    const rejected = await patch(`/api/v1/sessions/${sessionId}`, { agentId: theirs });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error.message).toBe(refusal.explanation);
+  });
+
+  it('refuses a sessionId that does not exist, or belongs to another project', async () => {
+    const unknown = await get(
+      `/api/v1/projects/${projectId}/available-agents?sessionId=${newId()}`,
+    );
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error.details).toMatchObject({ field: 'sessionId' });
+
+    const other = await seedProject('Other');
+    const elsewhere = await seedSession({ projectId: other.projectId, userId });
+    const mismatched = await get(
+      `/api/v1/projects/${projectId}/available-agents?sessionId=${elsewhere}`,
+    );
+    expect(mismatched.statusCode).toBe(400);
+    expect(mismatched.json().error.details).toMatchObject({
+      field: 'sessionId',
+      sessionProjectId: other.projectId,
+    });
+  });
+
+  it('rejects an unknown query parameter rather than answering the wrong question', async () => {
+    // `registerQueryStrictness` — a mistyped `?sesionId=` must not read as "no session", which is
+    // a different answer with the same shape.
+    const response = await get(
+      `/api/v1/projects/${projectId}/available-agents?sesionId=${newId()}`,
+    );
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('VALIDATION_FAILED');
+  });
+
+  it('holds the refusal it reports to the one POST /sessions enforces — same reason, same words', async () => {
+    // The whole point of the change: one function answers both. A refusal the read invented, or a
+    // rejection the read did not predict, fails here.
+    const other = await seedProject('Other');
+    await seedAgent({ name: 'Their Architect', scope: 'project', projectId: other.projectId });
+    await seedAgent({ name: 'Retired', archivedAt: new Date() });
+    await seedAgent({
+      name: 'Release',
+      scope: 'session',
+      sessionId: await seedSession({ projectId, userId }),
+    });
+
+    const refused = (await get(`/api/v1/projects/${projectId}/available-agents`)).json().data
+      .refused as { agentId: string; reason: string; explanation: string }[];
+    expect(refused.length).toBe(3);
+
+    for (const entry of refused) {
+      const attempt = await post('/api/v1/sessions', {
+        projectId,
+        workingDirectory: testWorkingDirectory(),
+        agentId: entry.agentId,
+      });
+
+      expect(attempt.statusCode).toBe(entry.reason === 'archived' ? 409 : 400);
+      // Not "an error mentioning something similar": the identical string, because both come
+      // from `agentBindingRefusal`.
+      expect(attempt.json().error.message).toBe(entry.explanation);
+    }
+  });
 });

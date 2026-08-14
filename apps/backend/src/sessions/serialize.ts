@@ -1,4 +1,5 @@
 import type { MessageRole, SessionState, SessionType } from '@mc/shared';
+import { type SessionAgentRefusalReason, sessionAgentRefusal } from './agent-binding.js';
 import type {
   MessageRow,
   SessionEventRow,
@@ -60,6 +61,25 @@ export interface SessionResource {
    * on the session list.
    */
   readonly agentId: string | null;
+  /**
+   * Why `PATCH /sessions/{id} { agentId }` would be refused for **this Session**, or `null` when
+   * it would be accepted.
+   *
+   * Two refusals, neither of them about the agent: an `observed` Session (Mission Control did not
+   * launch the process) and a Session past `created` (its system prompt is fixed at spawn). Served
+   * because the alternative is a client that predicts them — which is what a Session header must
+   * do to decide whether to render the agent as a control or as a fact, and which had to be
+   * written a second time in the browser to do it. `sessionAgentRefusal` produces this and the
+   * `409` alike (`agent-binding.ts`).
+   *
+   * The *agent* half of the same question — which agents fit this Project and Session — is
+   * `GET /projects/{id}/available-agents`, which cannot live here: it is a set, not a property of
+   * one Session.
+   */
+  readonly agentBindingRefusal: {
+    readonly reason: SessionAgentRefusalReason;
+    readonly explanation: string;
+  } | null;
   readonly runtime: {
     readonly kind: string;
     readonly runtimeSessionId: string | null;
@@ -146,6 +166,10 @@ export function serializeSession(
     branch: row.branch,
     workingDirectory: row.workingDir ?? '',
     agentId: row.agentId,
+    // Derived, never stored, and by the same function `PATCH` raises — so this cannot describe a
+    // rule the write path does not apply. Only the two operator-facing halves are published: the
+    // `code` and `details` belong to the error envelope.
+    agentBindingRefusal: refusalOf(row),
     runtime: {
       kind: row.runtime,
       runtimeSessionId: row.runtimeSessionId,
@@ -169,6 +193,11 @@ export function serializeSession(
     archivedAt: row.archivedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+function refusalOf(row: SessionRow): SessionResource['agentBindingRefusal'] {
+  const refusal = sessionAgentRefusal(row);
+  return refusal === null ? null : { reason: refusal.reason, explanation: refusal.explanation };
 }
 
 function serializeTokenUsage(row: SessionRow): SessionResource['tokenUsage'] {

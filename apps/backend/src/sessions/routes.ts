@@ -34,6 +34,7 @@ import { MAX_TITLE_LENGTH } from './title.js';
  *   GET    /api/v1/sessions/{id}
  *   PATCH  /api/v1/sessions/{id}               title / notes / projectId / agentId (PRD §5.1)
  *   POST   /api/v1/sessions/{id}/start         200 { data, meta: { launch } } — never 409 on capacity
+ *   POST   /api/v1/sessions/{id}/cancel        200 — `created -> failed(cancelled)` (§6.2.1)
  *   POST   /api/v1/sessions/{id}/pause         200
  *   POST   /api/v1/sessions/{id}/resume        200 in place from `paused`; 201 new Session otherwise
  *   POST   /api/v1/sessions/{id}/end           200
@@ -299,6 +300,29 @@ export function registerSessionRoutes(app: FastifyInstance, options: SessionRout
       // §6.2.1: saturation is reported, never rejected.
       return { data: result.session, meta: { launch: result.launch } };
     },
+  );
+
+  /**
+   * `POST /api/v1/sessions/{id}/cancel` — **the exit from `created`**, and the only way to revoke
+   * a queued launch (§6.2.1).
+   *
+   * TDS 04 §6.2.1 recorded this as a gap in as many words: `SessionService.cancel` existed and was
+   * reachable *only* from a workflow Stop, so an operator who started a Session at capacity,
+   * watched it sit `created` behind a queued `session.launch` job and changed their mind had
+   * nothing to call — `end` cannot help, because F7 has no `created -> completed` edge. This is
+   * the spelling that section named.
+   *
+   * `200` with the Session, like every other lifecycle action; `409 INVALID_STATE_TRANSITION`
+   * from anything but `created`, and `409 OPERATION_NOT_SUPPORTED` for an observed Session, both
+   * raised by the service. It takes no body: there is nothing to say beyond "not this one".
+   */
+  app.post<{ Params: SessionIdParams }>(
+    '/api/v1/sessions/:id/cancel',
+    { schema: { params: sessionIdParamsSchema, response: { 200: sessionResponse } } },
+    async (request) =>
+      dataEnvelope(
+        await sessions.cancel(requirePrincipal(request), request.params.id, contextOf(request)),
+      ),
   );
 
   app.post<{ Params: SessionIdParams }>(

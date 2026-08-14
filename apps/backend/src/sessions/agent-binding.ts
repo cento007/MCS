@@ -63,6 +63,72 @@ export interface ResolveSessionAgentInput {
   readonly sessionId: string | null;
 }
 
+/**
+ * The two refusals that are about the **Session**, not the Agent — the other half of "may this
+ * binding change", and the half `agents/binding.ts` deliberately cannot answer.
+ *
+ * `agentBindingRefusal` decides whether an *Agent* fits a Project and a Session. These two decide
+ * whether the Session will accept a change at all, and neither depends on which agent is named:
+ *
+ *  - **`observed`** — Mission Control did not launch the process, so it could never apply a persona
+ *    to it (`OPERATION_NOT_SUPPORTED`);
+ *  - **`already_launched`** — the Agent's instructions become the runtime's system prompt at spawn
+ *    and the runtime offers no way to replace it mid-conversation, so a later binding would be a
+ *    stored value that contradicts what is actually running (`CONFLICT`).
+ *
+ * They live here, beside the port they belong to, and are consumed twice: `SessionService.update`
+ * raises them, and `serializeSession` publishes the answer as `Session.agentBindingRefusal`. That
+ * second consumer is the point — the rule was previously reachable only by attempting the write, so
+ * the Session header had to transcribe it to know whether to render a control or a fact.
+ */
+export const SESSION_AGENT_REFUSALS = ['observed', 'already_launched'] as const;
+
+export type SessionAgentRefusalReason = (typeof SESSION_AGENT_REFUSALS)[number];
+
+export interface SessionAgentRefusal {
+  readonly reason: SessionAgentRefusalReason;
+  /** The rule and why it exists, in one operator-facing sentence. */
+  readonly explanation: string;
+  readonly code: 'OPERATION_NOT_SUPPORTED' | 'CONFLICT';
+  readonly details: Record<string, unknown>;
+}
+
+/**
+ * Why this Session will not accept a change to `agentId`, or `null` when it will.
+ *
+ * Ordered: the session **type** is checked before the state, so an observed Session that is also
+ * `running` reports the fact the operator can act on (there is nothing to steer) rather than a
+ * state rule that is beside the point. Same ordering, for the same reason, as the state machine's
+ * `assertApplicable`.
+ */
+export function sessionAgentRefusal(session: {
+  readonly sessionType: string;
+  readonly state: string;
+}): SessionAgentRefusal | null {
+  if (session.sessionType === 'observed') {
+    return {
+      reason: 'observed',
+      explanation:
+        'Mission Control does not launch an observed session, so an agent cannot steer one.',
+      code: 'OPERATION_NOT_SUPPORTED',
+      details: { sessionType: session.sessionType, field: 'agentId' },
+    };
+  }
+
+  if (session.state !== 'created') {
+    return {
+      reason: 'already_launched',
+      explanation:
+        `An agent is bound before launch: this session is '${session.state}', so its system ` +
+        'prompt is already fixed.',
+      code: 'CONFLICT',
+      details: { state: session.state, field: 'agentId' },
+    };
+  }
+
+  return null;
+}
+
 export interface SessionAgentPort {
   /**
    * Check that this Agent may be bound to this Session, and return what the binding settles.

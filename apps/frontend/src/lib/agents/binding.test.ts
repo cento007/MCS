@@ -1,27 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import {
-  agentBindingRefusal,
-  bindingConsequence,
-  partitionAgentsForBinding,
-  sessionBindability,
-} from './binding.js';
+import * as bindingModule from './binding.js';
+import { bindingConsequence, sessionBindability } from './binding.js';
 import type { AgentView } from './shape.js';
 import { readAgent } from './shape.js';
 
 /**
- * Which agents a Session may be bound to, asserted with no DOM.
+ * What is left of `binding.ts` once bindability became a server answer.
  *
- * What is under test is not whether the Backend's rules hold — they are enforced in
- * `apps/backend/src/agents/binding.ts` and in the database. It is whether this client **refuses the
- * same things the server does, and can say why**. A picker that offers a choice the API rejects
- * turns a design rule into a `400` the operator has to reverse-engineer; a picker that silently
- * drops an agent turns it into a mystery.
+ * The refusal rules this file used to assert — archived, other project, session-not-yet — are gone
+ * from the client entirely. They are now `GET /projects/{id}/available-agents`'s answer, produced
+ * by the same `agentBindingRefusal` the write path enforces, and read by
+ * `availability.test.ts`. The guard against them coming back is the first test below.
  */
-
-const PROJECT_A = '0198a2f3-9c41-7bd2-a10e-000000000001';
-const PROJECT_B = '0198a2f3-9c41-7bd2-a10e-000000000002';
-const SESSION_A = '0198a2f3-9c41-7bd2-a10e-0000000000s1';
-const SESSION_B = '0198a2f3-9c41-7bd2-a10e-0000000000s2';
 
 function agent(overrides: Record<string, unknown> = {}): AgentView {
   const view = readAgent({
@@ -44,97 +34,32 @@ function agent(overrides: Record<string, unknown> = {}): AgentView {
   return view;
 }
 
-describe('agentBindingRefusal — the four refusals, transcribed from the Backend', () => {
-  it('offers a global agent at create time', () => {
-    expect(agentBindingRefusal(agent(), { projectId: PROJECT_A, sessionId: null })).toBeNull();
-  });
-
-  it('refuses an archived agent, and names the way back', () => {
-    const refusal = agentBindingRefusal(agent({ archivedAt: '2026-08-10T00:00:00.000Z' }), {
-      projectId: PROJECT_A,
-      sessionId: null,
-    });
-    expect(refusal?.reason).toBe('archived');
-    expect(refusal?.explanation).toContain('Un-archive it');
-  });
-
-  it('offers a project agent to its own project and refuses it to another', () => {
-    const projectAgent = agent({ scope: 'project', projectId: PROJECT_A });
-
-    expect(agentBindingRefusal(projectAgent, { projectId: PROJECT_A, sessionId: null })).toBeNull();
-
-    const refusal = agentBindingRefusal(projectAgent, { projectId: PROJECT_B, sessionId: null });
-    expect(refusal?.reason).toBe('other_project');
-    expect(refusal?.explanation).toContain('different project');
-  });
-
-  it('distinguishes "no project chosen yet" from "wrong project"', () => {
-    const refusal = agentBindingRefusal(agent({ scope: 'project', projectId: PROJECT_A }), {
-      projectId: null,
-      sessionId: null,
-    });
-    // Two different instructions: one says pick a project, the other says pick another agent.
-    expect(refusal?.reason).toBe('project_unknown');
-    expect(refusal?.explanation).toContain('Choose the session’s project first');
-  });
-
-  it('refuses a session agent at create time, and points at the surface that can bind it', () => {
-    const refusal = agentBindingRefusal(agent({ scope: 'session', sessionId: SESSION_A }), {
-      projectId: PROJECT_A,
-      sessionId: null,
-    });
-    expect(refusal?.reason).toBe('session_not_yet');
-    expect(refusal?.explanation).toContain('does not exist yet');
-  });
-
-  it('offers a session agent to its own session and refuses it to another', () => {
-    const sessionAgent = agent({ scope: 'session', sessionId: SESSION_A });
-
-    expect(
-      agentBindingRefusal(sessionAgent, { projectId: PROJECT_A, sessionId: SESSION_A }),
-    ).toBeNull();
-    expect(
-      agentBindingRefusal(sessionAgent, { projectId: PROJECT_A, sessionId: SESSION_B })?.reason,
-    ).toBe('session_elsewhere');
-  });
-
-  it('offers an agent whose scope this build does not recognise, with a caveat', () => {
-    // The Backend checks only `project` and `session`, so it would accept this binding. Hiding an
-    // option the API accepts is the same category of lie as offering one it refuses.
-    const { offerable } = partitionAgentsForBinding([agent({ scope: 'workspace' })], {
-      projectId: PROJECT_A,
-      sessionId: null,
-    });
-    expect(offerable).toHaveLength(1);
-    expect(offerable[0]?.caveat).toContain('workspace');
-  });
-});
-
-describe('partitionAgentsForBinding', () => {
-  it('accounts for every agent — nothing disappears without a reason', () => {
-    const agents = [
-      agent({ name: 'Global' }),
-      agent({ name: 'Mine', scope: 'project', projectId: PROJECT_A }),
-      agent({ name: 'Theirs', scope: 'project', projectId: PROJECT_B }),
-      agent({ name: 'Retired', archivedAt: '2026-08-10T00:00:00.000Z' }),
-      agent({ name: 'Ephemeral', scope: 'session', sessionId: SESSION_A }),
-    ];
-
-    const { offerable, excluded } = partitionAgentsForBinding(agents, {
-      projectId: PROJECT_A,
-      sessionId: null,
-    });
-
-    expect(offerable).toHaveLength(2);
-    expect(excluded).toHaveLength(3);
-    expect(offerable.length + excluded.length).toBe(agents.length);
-    expect(excluded.map((entry) => entry.reason)).toEqual([
-      'other_project',
-      'archived',
-      'session_not_yet',
+describe('no client-side rule decides bindability any more', () => {
+  /**
+   * A named assertion rather than a comment, because the failure it guards against is a *re-add*:
+   * the cheapest way to make a picker behave is to filter it locally, and the whole point of this
+   * change is that the local filter is what silently offered agents `POST /sessions` rejected.
+   */
+  it('exports no agent-refusal engine', () => {
+    const surface = Object.keys(bindingModule);
+    expect(surface).not.toContain('agentBindingRefusal');
+    expect(surface).not.toContain('partitionAgentsForBinding');
+    expect(surface.sort()).toEqual([
+      'agentOptionLabel',
+      'bindingConsequence',
+      'sessionBindability',
     ]);
-    // Every exclusion carries a sentence, not just a code.
-    for (const entry of excluded) expect(entry.explanation.length).toBeGreaterThan(20);
+  });
+
+  it('does not decide anything from an agent’s scope, project or archived state', () => {
+    // Every input the deleted rules keyed on, on one agent. Nothing in this module reads them:
+    // the only per-agent answer left is what the *Backend* said this agent removes.
+    const retiredForeignSessionAgent = agent({
+      scope: 'session',
+      sessionId: 'some-other-session',
+      archivedAt: '2026-08-10T00:00:00.000Z',
+    });
+    expect(bindingConsequence(retiredForeignSessionAgent).kind).toBe('removes');
   });
 });
 

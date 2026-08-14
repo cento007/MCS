@@ -100,6 +100,24 @@ describe('serializeSession', () => {
     expect(serializeSession(row({ totalCostUsd: null }), null).costUsd).toBeNull();
   });
 
+  it('states whether the Session still accepts an agent, and why not', () => {
+    // The rule `PATCH /sessions/{id}` enforces, published so nothing has to predict it. It is
+    // derived from the row, so it cannot describe a Session other than this one.
+    expect(serializeSession(row({ state: 'created' }), null).agentBindingRefusal).toBeNull();
+
+    const running = serializeSession(row({ state: 'running' }), null).agentBindingRefusal;
+    expect(running?.reason).toBe('already_launched');
+    expect(running?.explanation).toContain("this session is 'running'");
+
+    // Type before state: an observed Session that is also past `created` reports the fact the
+    // operator can act on, not the one that is beside the point.
+    const observed = serializeSession(
+      row({ sessionType: 'observed', state: 'running' }),
+      null,
+    ).agentBindingRefusal;
+    expect(observed?.reason).toBe('observed');
+  });
+
   it('serializes every timestamp as ISO 8601 UTC with a Z suffix (F4.2)', () => {
     const resource = serializeSession(row(), null);
     expect(resource.createdAt).toBe('2026-08-12T13:59:00.000Z');

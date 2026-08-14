@@ -468,6 +468,24 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
+  // The Notification producer subscribes to the same in-process bus the outbox publishes to
+  // after commit, so `session.completed` becomes a Notification (and its Telegram delivery
+  // job) only once the Session's own transaction is durable (TDS 04 §8, §15.2).
+  //
+  // **Before the workflow runner, and that ordering is now load-bearing**: the runner is handed
+  // this producer as its `WorkflowNotifierPort` so a step waiting for its operator can page them.
+  // Nothing else moved with it — the producer depends on the db handle, the outbox, the queue and
+  // the bus, all of which exist well before this point.
+  const notifications = registerNotifications(app, {
+    db: options.db,
+    outbox,
+    queue,
+    bus,
+  });
+  app.addHook('onClose', async () => {
+    notifications.stop();
+  });
+
   // Agent workflows (PRD §5.6) — Phase 4, slice 3. Registered *here* rather than inside
   // `registerAgents` because it needs three things that exist only now: the `SessionService`
   // (a workflow step **is** a Session), the managed `PromptService` (which is `null` on a Backend
@@ -483,6 +501,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     sessions: sessions.sessions,
     prompts: options.workflowPrompts ?? sessions.managed?.prompts ?? null,
     handoff: sessionExport.service,
+    notifier: notifications.producer ?? null,
     ...(options.now === undefined ? {} : { now: options.now }),
     onError: (error, context) => {
       app.log.error({ err: error, context }, 'agent workflow error');
@@ -493,6 +512,17 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
         'general.timezone was rejected by PostgreSQL — the workflow cost estimate fell back to UTC',
       );
     },
+  });
+
+  // "A turn ended and this session is idle" — the one signal that says a workflow step is waiting
+  // for its operator (PRD §5.6 + F7: a managed Session is never auto-completed, so a chain
+  // advances when a human ends each step). A late attach for the same reason `deltas` is one: the
+  // runner is built after the Session domain, because a step **is** a Session.
+  //
+  // The runner ignores every session that is not a step, which is every interactive chat. Nothing
+  // on this path ends, completes or advances anything — it produces a Notification.
+  sessions.managed?.turns.attach((sessionId) => {
+    void workflows.runs.noteTurnEnded(sessionId);
   });
 
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
@@ -531,19 +561,6 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
         'general.timezone was rejected by PostgreSQL — spend fell back to UTC',
       );
     },
-  });
-
-  // The Notification producer subscribes to the same in-process bus the outbox publishes to
-  // after commit, so `session.completed` becomes a Notification (and its Telegram delivery
-  // job) only once the Session's own transaction is durable (TDS 04 §8, §15.2).
-  const notifications = registerNotifications(app, {
-    db: options.db,
-    outbox,
-    queue,
-    bus,
-  });
-  app.addHook('onClose', async () => {
-    notifications.stop();
   });
 
   // Settings (§7.1–§7.4) and the audit-log read (§12). Registered after the read models

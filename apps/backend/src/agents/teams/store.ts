@@ -1,5 +1,5 @@
 import { type AgentTeamScope, type DbTransaction, type EntityId, newId, schema } from '@mc/shared';
-import { and, asc, desc, eq, gt, inArray, isNull, lt, not, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, not } from 'drizzle-orm';
 import type { AgentRow, DbLike } from '../store.js';
 
 /**
@@ -325,6 +325,23 @@ export async function findAgentsByIds(db: DbLike, ids: readonly string[]): Promi
     .where(inArray(schema.agents.id, [...ids]));
 }
 
+/**
+ * The Project a Session belongs to, or `null` when there is no such Session.
+ *
+ * Both answers are needed by `?sessionId=` on the availability read: an unknown id is a `400` that
+ * names the field, and a Session in *another* Project is a question with no sensible answer — the
+ * project-scoped agents would be judged against one project and the session-scoped ones against a
+ * Session in a different one.
+ */
+export async function findSessionProjectId(db: DbLike, sessionId: string): Promise<string | null> {
+  const rows = await db
+    .select({ projectId: schema.sessions.projectId })
+    .from(schema.sessions)
+    .where(eq(schema.sessions.id, sessionId))
+    .limit(1);
+  return rows[0]?.projectId ?? null;
+}
+
 /** Which of these Project ids exist. Used to turn an unknown id into a 400 that names it. */
 export async function findExistingProjectIds(
   db: DbLike,
@@ -339,34 +356,20 @@ export async function findExistingProjectIds(
 }
 
 /**
- * The agents a Session in this Project may be launched as.
+ * **Every** Agent, ordered by name — the candidate set the availability read decides over.
  *
- * This is the availability rule stated once, as a query: **live agents whose scope reaches this
- * project** — `global` (available everywhere, PRD §5.2) plus this project's own `project` agents.
+ * This query used to *be* the availability rule: `archived_at IS NULL AND (scope = 'global' OR
+ * (scope = 'project' AND project_id = $1))` was a third copy of what `agentBindingRefusal` and the
+ * launch picker each stated in their own dialect. The rule now lives in one function
+ * (`agents/binding.ts`), so this read's only job is to hand it every row it must decide about —
+ * including the archived and out-of-project ones, because a picker that cannot name the agent an
+ * operator can see on the Agents screen is a picker with an absence it cannot account for.
  *
- * Two exclusions, both of them refusals `AgentBindingResolver` already makes at bind time:
- *   - **archived agents**, because binding one answers `409 CONFLICT`;
- *   - **session-scoped agents**, because they name the single conversation they belong to and can
- *     only ever be bound to that one, by `PATCH /sessions/{id}` after it exists.
- *
- * Offering either in a picker would be offering a choice that then fails, which is the same
- * reason `GET /agents` hides archived agents by default.
+ * Unpaginated, deliberately, and for the reason `availability.ts` gives: this serves a composite
+ * document bounded by how many Agents one operator has defined. The frontend already reads the
+ * whole table (`?limit=200&includeArchived=true`) to do this partition locally; the point of the
+ * change is that it no longer has to.
  */
-export async function listAgentsAvailableToProject(
-  db: DbLike,
-  projectId: string,
-): Promise<AgentRow[]> {
-  return db
-    .select()
-    .from(schema.agents)
-    .where(
-      and(
-        isNull(schema.agents.archivedAt),
-        or(
-          eq(schema.agents.scope, 'global'),
-          and(eq(schema.agents.scope, 'project'), eq(schema.agents.projectId, projectId)),
-        ),
-      ),
-    )
-    .orderBy(asc(schema.agents.name), asc(schema.agents.id));
+export async function listAgentsForBinding(db: DbLike): Promise<AgentRow[]> {
+  return db.select().from(schema.agents).orderBy(asc(schema.agents.name), asc(schema.agents.id));
 }

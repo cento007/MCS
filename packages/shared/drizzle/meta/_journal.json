@@ -85,6 +85,13 @@
       "when": 1786700194739,
       "tag": "0011_retire_ollama_agent_runtime_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786717861684,
+      "tag": "0012_workflow_step_waiting_notification",
+      "breakpoints": true
     }
   ]
 }

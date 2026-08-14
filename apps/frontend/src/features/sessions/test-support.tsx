@@ -36,6 +36,10 @@ export function makeSession(overrides: Partial<Session> = {}): Session {
     // `null` is the common case and the honest default: most sessions run with no persona. The
     // agent suites pass an id explicitly.
     agentId: null,
+    // `null` means "an agent may be bound here", not "unknown": the Backend computes this from
+    // the same rule `PATCH /sessions/{id}` enforces, so a fixture that omitted it would be
+    // asserting a refusal the server never made.
+    agentBindingRefusal: null,
     runtime: {
       kind: 'claude_code',
       runtimeSessionId: 'c0ffee00-0000-4000-8000-000000000000',

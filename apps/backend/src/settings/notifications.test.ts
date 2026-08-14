@@ -24,6 +24,7 @@ describe('parseNotificationsSettings (§7.2)', () => {
       syncFailed: true,
       repositoryProblem: true,
       costBudgetAlert: true,
+      workflowStepWaiting: true,
     });
     expect(settings.dailyReport).toEqual({ enabled: true, time: DEFAULT_DAILY_REPORT_TIME });
   });

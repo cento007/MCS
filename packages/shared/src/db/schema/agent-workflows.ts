@@ -485,6 +485,24 @@ export const agentWorkflowRunSteps = pgTable(
     /** When it was actually submitted; NULL while the launch is still waiting for a slot. */
     promptSentAt: timestamptz('prompt_sent_at'),
 
+    /**
+     * When the operator was told this step is waiting for them, and **the dedupe anchor for that
+     * notification** (`workflow_step_waiting`).
+     *
+     * A step's Session goes idle every time a turn ends, and after the first notification the
+     * operator either acts or is deliberately ignoring it — so this column is claimed by a
+     * conditional `UPDATE … WHERE waiting_notified_at IS NULL` before the Notification is
+     * produced, exactly as `prompt_sent_at` is claimed before the prompt is sent. Two turns
+     * ending in one attempt therefore produce one page, and a Backend that crashes inside the
+     * window loses the page rather than sending a second one: a duplicate alert is not
+     * recoverable, and a missing one is — the run view still shows the step waiting.
+     *
+     * On the attempt row rather than on the Session because the *attempt* is what waits: a resume
+     * re-runs the position in a new Session with a new row, and that step genuinely is a new thing
+     * to be told about.
+     */
+    waitingNotifiedAt: timestamptz('waiting_notified_at'),
+
     /** The Session's failure reason, copied at halt so the run explains itself without a join. */
     error: text('error'),
 

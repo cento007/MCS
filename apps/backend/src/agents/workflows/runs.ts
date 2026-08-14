@@ -19,8 +19,10 @@ import { buildHandoff, type PreviousStep } from './handoff.js';
 import type {
   WorkflowActor,
   WorkflowHandoffPort,
+  WorkflowNotifierPort,
   WorkflowPromptPort,
   WorkflowSessionPort,
+  WorkflowStepWaiting,
 } from './ports.js';
 import { type AgentWorkflowRunResource, serializeRun } from './serialize.js';
 import type { AgentWorkflowService } from './service.js';
@@ -29,11 +31,13 @@ import {
   type AgentWorkflowRunRow,
   type AgentWorkflowRunStepRow,
   claimRunSession,
+  claimWaitingNotification,
   findLatestRunStep,
   findRunById,
   findRunStepById,
   findRunStepBySessionId,
   findUnpromptedRunSteps,
+  findWorkflowById,
   insertRun,
   insertRunStep,
   listRunSteps,
@@ -161,6 +165,12 @@ export interface AgentWorkflowRunServiceOptions {
   /** `null` when this Backend has no managed runtime — a run is then refused up front. */
   readonly prompts: WorkflowPromptPort | null;
   readonly handoff: WorkflowHandoffPort;
+  /**
+   * Where "this step is waiting for you" goes. `null` on an app built without a producer (a
+   * read-only test app): the run then behaves exactly as it did before this existed — it advances
+   * when the operator ends each step, and says nothing in the meantime.
+   */
+  readonly notifier?: WorkflowNotifierPort | null | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onError?: ((error: unknown, context: string) => void) | undefined;
 }
@@ -177,6 +187,7 @@ export class AgentWorkflowRunService {
   readonly #sessions: WorkflowSessionPort;
   readonly #prompts: WorkflowPromptPort | null;
   readonly #handoff: WorkflowHandoffPort;
+  readonly #notifier: WorkflowNotifierPort | null;
   readonly #now: () => Date;
   readonly #onError: ((error: unknown, context: string) => void) | undefined;
 
@@ -192,6 +203,7 @@ export class AgentWorkflowRunService {
     this.#sessions = options.sessions;
     this.#prompts = options.prompts;
     this.#handoff = options.handoff;
+    this.#notifier = options.notifier ?? null;
     this.#now = options.now ?? (() => new Date());
     this.#onError = options.onError;
   }
@@ -552,6 +564,134 @@ export class AgentWorkflowRunService {
 
     await this.#enqueue({ kind: 'resume', runId: id });
     return this.get(id);
+  }
+
+  // ------------------------------------------------------------------- "it is waiting for you"
+
+  /**
+   * A managed Session's turn ended and it is now idle — **tell the operator, if it is a step.**
+   *
+   * ## The signal, and why it is trustworthy
+   *
+   * `ManagedSessionController` fires this when the runtime's `result` message ends a turn that was
+   * really in flight, and *not* when the turn was interrupted (the operator did that, so they are
+   * present) or rate-limited (a retry is already queued, so nothing is waiting for a human). It is
+   * the same fact `hasTurnInFlight` reports and `NO_TURN_IN_FLIGHT` is raised from — the Backend
+   * already trusts it to decide whether an interrupt is legal, which is a decision an operator can
+   * feel. Delivered in-process, from the one pump that owns the session, so there is no ordering
+   * question and no second source to disagree with.
+   *
+   * ## Why this is not auto-advance, and never becomes it
+   *
+   * F7 keeps `completed` reachable only by an explicit `end` with trigger `user`, and PRD §15 puts
+   * autonomous review flows in Phase 5. A turn ending is not a session ending — Claude Code
+   * routinely stops a turn to ask a question — so ending the step here would hand the next agent a
+   * hand-off from work that stopped mid-sentence. This method writes one timestamp and produces one
+   * Notification. It cannot advance anything.
+   *
+   * ## The four edges, and where each is handled
+   *
+   *  - **an interactive chat between messages** — every managed Session goes idle at the end of
+   *    every turn. `findRunStepBySessionId` returns `null` for all of them, in one indexed read,
+   *    and that is the entire filter;
+   *  - **the same step, twice** — `claimWaitingNotification` is a conditional `UPDATE`, so the
+   *    second turn of a step the operator is already talking to claims nothing and sends nothing;
+   *  - **quiet hours and the toggles** — not touched here at all. The port is
+   *    `NotificationProducer`, which applies `notifications.events`, `quietHours` and the Telegram
+   *    configuration to this type exactly as it does to the other six. There is no bypass, and the
+   *    absence of one is the point;
+   *  - **a step that is no longer waiting** — the run was stopped, the attempt already failed, the
+   *    Session was ended a moment ago, or the prompt was never submitted. All four are re-checked
+   *    inside the claiming transaction, against the rows rather than against the signal.
+   *
+   * Never throws: this is the tail of a live session's pump. A failure releases the claim (so the
+   * *next* turn can try again) and is reported.
+   */
+  async noteTurnEnded(sessionId: string): Promise<void> {
+    const notifier = this.#notifier;
+    if (notifier === null) return;
+
+    let claimed: { step: AgentWorkflowRunStepRow; facts: WorkflowStepWaiting } | null = null;
+    try {
+      // One cheap indexed read, and the overwhelmingly common answer is "not a workflow session" —
+      // the same first move `#onEvent` makes, for the same reason.
+      const step = await findRunStepBySessionId(this.#db, sessionId);
+      if (step === null) return;
+
+      claimed = await this.#claimWaiting(step.id);
+      if (claimed === null) return;
+
+      await notifier.notifyWorkflowStepWaiting(claimed.facts);
+    } catch (error) {
+      this.#onError?.(error, `workflow step waiting notification for session ${sessionId}`);
+      if (claimed !== null) await this.#releaseWaiting(claimed.step.id);
+    }
+  }
+
+  /**
+   * Re-check everything that makes "waiting" true, then claim the notification.
+   *
+   * The claim is taken **before** the Notification is produced rather than after, which is the same
+   * trade `#submitPrompt` makes and settles the same way: a crash in the window between them loses
+   * the page, and losing it is recoverable — the run view still shows the step waiting, and the
+   * next turn of that step cannot re-page because the claim is already taken. The other order would
+   * duplicate, and a duplicate page is what teaches an operator to ignore the channel.
+   */
+  async #claimWaiting(
+    runStepId: string,
+  ): Promise<{ step: AgentWorkflowRunStepRow; facts: WorkflowStepWaiting } | null> {
+    return this.#outbox.run(async (tx) => {
+      const step = await findRunStepById(tx.tx, runStepId);
+      // `promptSentAt === null`: the step has not been told what to do yet, so an idle runtime is
+      // waiting for *us*, not for the operator.
+      if (step === null || step.state !== 'running' || step.promptSentAt === null) return null;
+      if (step.waitingNotifiedAt !== null) return null;
+
+      const run = await findRunById(tx.tx, step.runId);
+      if (run === null || run.state !== 'running') return null;
+
+      // A Session that has already left `running` is not waiting for anybody: the operator ended
+      // it between the turn ending and this read, and the advance job is on its way.
+      const session = await this.#sessions.get(step.sessionId).catch(() => null);
+      if (session === null || session.state !== 'running') return null;
+
+      const workflow = await findWorkflowById(tx.tx, run.workflowId);
+      /* c8 ignore next — `agent_workflow_runs.workflow_id` is RESTRICT; the row cannot vanish */
+      if (workflow === null) return null;
+
+      const steps = await listWorkflowSteps(tx.tx, [workflow.id]);
+      const agentName =
+        steps.find((candidate) => candidate.ordinal === step.ordinal)?.agentName ??
+        // The chain was edited under a live run: the position no longer names an agent. The run
+        // still has one — `agent_workflow_run_steps.agent_id` recorded it — but its *name* is a
+        // join this path does not otherwise need, and "step 3" is enough to act on.
+        `step ${String(step.ordinal + 1)}`;
+
+      if (!(await claimWaitingNotification(tx.tx, step.id, this.#now()))) return null;
+
+      return {
+        step,
+        facts: {
+          runId: run.id,
+          sessionId: step.sessionId,
+          workflowName: workflow.name,
+          agentName,
+          stepOrdinal: step.ordinal,
+          stepCount: run.stepCount,
+        },
+      };
+    });
+  }
+
+  /** Give the claim back, so a later turn of the same step can try again. Best-effort. */
+  async #releaseWaiting(runStepId: string): Promise<void> {
+    await this.#outbox
+      .run(async (tx) => {
+        await updateRunStep(tx.tx, runStepId, { waitingNotifiedAt: null });
+      })
+      .catch((error: unknown) => {
+        this.#onError?.(error, `releasing the waiting claim on run step ${runStepId}`);
+      });
   }
 
   // -------------------------------------------------------------------------------- triggers

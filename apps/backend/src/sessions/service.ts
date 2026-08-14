@@ -16,7 +16,7 @@ import type { CommitCursor } from '../commits/cursors.js';
 import { listCommits } from '../commits/store.js';
 import type { Outbox } from '../events/index.js';
 import { ApiError } from '../http/errors.js';
-import type { SessionAgentPort } from './agent-binding.js';
+import { type SessionAgentPort, sessionAgentRefusal } from './agent-binding.js';
 import { buildSessionFiles, type SessionFilesReadModel } from './files.js';
 import type { LaunchDisposition, ManagedSessionRegistry } from './manager.js';
 import {
@@ -42,7 +42,11 @@ import {
   serializeTimelineEntry,
   type TimelineEntryResource,
 } from './serialize.js';
-import type { SessionAction, SessionStateMachine } from './state-machine.js';
+import {
+  OBSERVED_UNSUPPORTED_ACTIONS,
+  type SessionAction,
+  type SessionStateMachine,
+} from './state-machine.js';
 import { normalizeOperatorTitle } from './title.js';
 
 /**
@@ -669,11 +673,17 @@ export class SessionService {
   /**
    * The `agent_id` (and `runtime`) a `PATCH` should write, or a refusal.
    *
-   * Three refusals, each naming a different fact:
-   *   - the Session has left `created`, so the system prompt is already fixed (`CONFLICT`);
+   * Three refusals, each naming a different fact, and **not one of them is written here**:
    *   - the Session is observed, so Mission Control does not own its process and could not apply
    *     a persona to it at all (`OPERATION_NOT_SUPPORTED`);
+   *   - the Session has left `created`, so the system prompt is already fixed (`CONFLICT`);
    *   - the Agent's scope does not admit this Session (`VALIDATION_FAILED`, from the port).
+   *
+   * The first two are `sessionAgentRefusal`, which `serializeSession` also publishes as
+   * `Session.agentBindingRefusal`; the third is `agentBindingRefusal`, which
+   * `GET /projects/{id}/available-agents` also publishes. Every rule that decides a binding is
+   * therefore stated once and *read* twice, instead of being discoverable only by attempting the
+   * write and being transcribed by anything that needed to predict it.
    */
   async #resolveAgentChange(
     session: SessionRow,
@@ -681,23 +691,8 @@ export class SessionService {
   ): Promise<{ agentId?: string | null; runtime?: string }> {
     if (session.agentId === agentId) return {};
 
-    if (session.sessionType === 'observed') {
-      throw new ApiError(
-        'OPERATION_NOT_SUPPORTED',
-        'Mission Control does not launch an observed session, so an agent cannot steer one',
-        { sessionType: session.sessionType, field: 'agentId' },
-      );
-    }
-
-    if (session.state !== 'created') {
-      throw new ApiError(
-        'CONFLICT',
-        "An agent is bound before launch: this session's state is '" +
-          session.state +
-          "' and its system prompt is already fixed",
-        { state: session.state, field: 'agentId' },
-      );
-    }
+    const refusal = sessionAgentRefusal(session);
+    if (refusal !== null) throw new ApiError(refusal.code, refusal.explanation, refusal.details);
 
     if (agentId === null) return { agentId: null };
 
@@ -860,10 +855,16 @@ export class SessionService {
  * The state machine is the authority, but it only sees actions that reach it — and a queued
  * launch (§6.2.1) deliberately performs no transition at request time. Without this check an
  * observed Session's `start` would be silently enqueued at capacity instead of rejected.
+ *
+ * **The list is the state machine's own** (`OBSERVED_UNSUPPORTED_ACTIONS`), imported rather than
+ * repeated. It was repeated once, and the copy had already fallen behind: it named
+ * `start`/`pause`/`resume` and not `cancel`, so an observed Session past `created` answered "only
+ * a session that has not launched can be cancelled" — a true sentence about the wrong problem —
+ * instead of naming the session type, which is the fact the operator can act on.
  */
 function assertApplicable(session: SessionRow, action: SessionAction): void {
   if (session.sessionType !== 'observed') return;
-  if (action !== 'start' && action !== 'pause' && action !== 'resume') return;
+  if (!OBSERVED_UNSUPPORTED_ACTIONS.includes(action)) return;
 
   throw new ApiError(
     'OPERATION_NOT_SUPPORTED',

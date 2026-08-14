@@ -32,7 +32,7 @@ import type { AgentTeamService } from './service.js';
  *   PATCH  /api/v1/agent-teams/{id}   name, description, roster, project assignments
  *   DELETE /api/v1/agent-teams/{id}   204; 409 while assigned
  *
- *   GET    /api/v1/projects/{id}/available-agents
+ *   GET    /api/v1/projects/{id}/available-agents   `?sessionId=` for the PATCH-time question
  *
  * **Two of these are not in §13.2's reserved list, and both are recorded there rather than
  * smuggled in.**
@@ -127,8 +127,24 @@ const updateBodySchema = {
   },
 } as const;
 
+/**
+ * `?sessionId=` — "answer as if binding to this Session" (see `availability.ts`).
+ *
+ * Optional, and its absence is the create-time question rather than a defaulted one. Unknown
+ * parameter *names* are rejected by `registerQueryStrictness`, so a client cannot ask this until
+ * the Backend accepts it and cannot mistype it into silence afterwards.
+ */
+const availableAgentsQuerySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { sessionId: { type: 'string', pattern: UUID_PATTERN } },
+} as const;
+
 interface IdParams {
   id: string;
+}
+interface AvailableAgentsQuery {
+  sessionId?: string;
 }
 interface ListQuery {
   limit?: number;
@@ -260,14 +276,20 @@ export function registerAgentTeamRoutes(
     },
   );
 
-  app.get<{ Params: IdParams }>(
+  app.get<{ Params: IdParams; Querystring: AvailableAgentsQuery }>(
     '/api/v1/projects/:id/available-agents',
     {
       schema: {
         params: idParamsSchema,
+        querystring: availableAgentsQuerySchema,
         response: { 200: dataEnvelopeSchema(projectAvailableAgentsSchema) },
       },
     },
-    async (request) => dataEnvelope(await readProjectAvailableAgents(db, request.params.id)),
+    async (request) =>
+      dataEnvelope(
+        await readProjectAvailableAgents(db, request.params.id, {
+          sessionId: request.query.sessionId,
+        }),
+      ),
   );
 }

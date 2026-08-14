@@ -671,6 +671,14 @@ export const DEFAULT_EVENT_TOGGLES: NotificationEventToggles = Object.freeze({
   syncFailed: true,
   repositoryProblem: true,
   costBudgetAlert: true,
+  /**
+   * On by default, like every other toggle. A workflow run that nobody is watching stalls
+   * silently until the operator opens the run view — which is the gap this notification exists to
+   * close — and an operator who does watch it turns the switch off. The stored `notifications.
+   * events` document is normalized against these defaults key by key, so an install that predates
+   * this key inherits `true` without a data migration.
+   */
+  workflowStepWaiting: true,
 });
 
 export const DEFAULT_DAILY_REPORT: DailyReportSettings = Object.freeze({

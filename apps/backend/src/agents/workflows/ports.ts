@@ -14,22 +14,28 @@ export interface WorkflowActor {
 }
 
 /**
- * The three seams the workflow runner reaches the rest of the Backend through.
+ * The four seams the workflow runner reaches the rest of the Backend through.
  *
  * They are narrow on purpose. The runner's whole job is *sequencing*, and the moment it holds a
  * `SessionService` it can do anything a Session can do — including the one thing this slice must
  * never do, which is invent a second way to run Claude Code. Declaring exactly five session
- * operations, one prompt operation and one hand-off operation makes the boundary reviewable: if a
- * future change needs a sixth, it has to be added here, in front of everyone.
+ * operations, one prompt operation, one hand-off operation and one notification makes the boundary
+ * reviewable: if a future change needs another, it has to be added here, in front of everyone.
  *
- * The fifth arrived that way. `cancel` is here because Stop could not stop a step whose Session
- * was still queued behind the concurrency semaphore: it reported the Session "left unstarted" and
- * left the queued launch alive, so the run was `stopped` while its next Claude Code process was
- * still on its way. See `WorkflowSessionPort.cancel`.
+ * The fifth session verb arrived that way. `cancel` is here because Stop could not stop a step
+ * whose Session was still queued behind the concurrency semaphore: it reported the Session "left
+ * unstarted" and left the queued launch alive, so the run was `stopped` while its next Claude Code
+ * process was still on its way. See `WorkflowSessionPort.cancel`.
  *
- * All three are satisfied structurally by services that already exist and are already tested —
- * `SessionService`, `PromptService`, `SessionExportService` — so nothing implements them twice in
- * production. The unit tier substitutes fakes; the integration tier passes the real ones.
+ * So did the fourth seam. `WorkflowNotifierPort` exists because a chain that advances on a human
+ * ending each step is invisible to a human who is not looking at the run view — and the fix for
+ * that is a notification, **not** an auto-advance. There is deliberately no verb here that ends,
+ * completes or otherwise finishes a Session on the operator's behalf.
+ *
+ * All four are satisfied structurally by services that already exist and are already tested —
+ * `SessionService`, `PromptService`, `SessionExportService`, `NotificationProducer` — so nothing
+ * implements them twice in production. The unit tier substitutes fakes; the integration tier passes
+ * the real ones.
  */
 
 /** What the runner needs from a Session. Five verbs, and no access to `sessions.state`. */
@@ -90,6 +96,38 @@ export interface WorkflowPromptPort {
     readonly sessionId: string;
     readonly content: string;
   }): Promise<{ readonly messageId: string }>;
+}
+
+/**
+ * Everything the runner knows about a step that is waiting for its operator.
+ *
+ * IDs plus the two names a sentence needs. The Notification's remaining facts — the project name,
+ * the Session's title — are read by the producer from the Session itself (`notifications/facts.ts`
+ * already does exactly that for `session.completed`), so the runner does not join tables it has no
+ * other reason to touch.
+ */
+export interface WorkflowStepWaiting {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly workflowName: string;
+  readonly agentName: string;
+  /** 0-based, as everywhere else in this module. Rendered as `ordinal + 1`. */
+  readonly stepOrdinal: number;
+  /** The run's snapshotted `step_count`, so "3 of 4" survives a later edit to the chain. */
+  readonly stepCount: number;
+}
+
+/**
+ * "Tell the operator", and nothing else.
+ *
+ * Satisfied structurally by `NotificationProducer`, which already owns every decision this port
+ * must not make a second time: the per-event toggle, quiet hours, whether Telegram is configured,
+ * and who the recipient is. The runner decides **whether a step is waiting**; the producer decides
+ * **whether that becomes a Notification and where it goes**. Neither half re-implements the other,
+ * which is what stops this from becoming a paging path with its own private idea of quiet hours.
+ */
+export interface WorkflowNotifierPort {
+  notifyWorkflowStepWaiting(input: WorkflowStepWaiting): Promise<unknown>;
 }
 
 /**

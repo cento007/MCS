@@ -122,6 +122,45 @@ export function renderSessionFailed(facts: SessionNotificationFacts): RenderedNo
   };
 }
 
+// ------------------------------------------------------------------------ workflow steps
+
+export interface WorkflowStepWaitingFacts {
+  readonly workflowName: string;
+  readonly agentName: string;
+  /** 0-based, as in the run's own rows. Rendered as `ordinal + 1`. */
+  readonly stepOrdinal: number;
+  readonly stepCount: number;
+  readonly projectName: string | null;
+  /** The step Session's title — `"<workflow> · step 2 · QA"` unless the operator renamed it. */
+  readonly sessionTitle: string | null;
+}
+
+/**
+ * "Your turn" — a PRD §5.6 step whose Session has gone idle and is waiting to be ended.
+ *
+ * The body says what happens **when the operator acts**, not what went wrong, because nothing has:
+ * a managed Session is never auto-completed (F7), so a step that has stopped talking is the
+ * designed shape of a run and not a fault. The last step gets a different sentence for the same
+ * reason the run does — ending it finishes the run rather than handing off — and getting that
+ * wrong would promise a next step that does not exist.
+ */
+export function renderWorkflowStepWaiting(facts: WorkflowStepWaitingFacts): RenderedNotification {
+  const position = `${facts.stepOrdinal + 1} of ${facts.stepCount}`;
+  const isLast = facts.stepOrdinal + 1 >= facts.stepCount;
+
+  return {
+    title: `Workflow step ${position} is waiting — ${facts.workflowName}`,
+    body: bodyLines([
+      `Step: ${facts.agentName}`,
+      facts.projectName === null ? null : `Project: ${facts.projectName}`,
+      facts.sessionTitle === null ? null : `Session: ${facts.sessionTitle}`,
+      isLast
+        ? 'The agent has finished its turn. End the session when you are satisfied — that completes the run.'
+        : 'The agent has finished its turn. End the session when you are satisfied and the next step starts.',
+    ]),
+  };
+}
+
 // ---------------------------------------------------------------------------- repositories
 
 export interface RepositoryNotificationFacts {

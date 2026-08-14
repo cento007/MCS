@@ -228,6 +228,7 @@ describe('defaults an empty database serves (§7.2)', () => {
       syncFailed: true,
       repositoryProblem: true,
       costBudgetAlert: true,
+      workflowStepWaiting: true,
     });
     expect(settingDefault('notifications.dailyReport')).toEqual({ enabled: true, time: '18:00' });
     expect(settingDefault('notifications.quietHours')).toEqual({

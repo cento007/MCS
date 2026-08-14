@@ -2417,6 +2417,12 @@ paths:
           schema:
             type: string
             pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: sessionId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
       responses:
         '200':
           description: OK
@@ -3327,6 +3333,40 @@ paths:
     post:
       operationId: postSessionsByIdArchive
       summary: 'POST /sessions/{id}/archive'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Session'
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: declared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/sessions/{id}/cancel':
+    post:
+      operationId: postSessionsByIdCancel
+      summary: 'POST /sessions/{id}/cancel'
       parameters:
         - name: id
           in: path
@@ -4681,6 +4721,8 @@ paths:
                       type: boolean
                     costBudgetAlert:
                       type: boolean
+                    workflowStepWaiting:
+                      type: boolean
                 dailyReport:
                   type: object
                   additionalProperties: false
@@ -5138,6 +5180,14 @@ components:
           type: string
         updatedAt:
           type: string
+    AgentBindingRefusalReason:
+      type: string
+      enum:
+        - archived
+        - project_unstated
+        - other_project
+        - session_not_yet
+        - session_elsewhere
     AgentPermissions:
       type: object
       additionalProperties: false
@@ -6749,6 +6799,7 @@ components:
         - repository_problem
         - daily_report
         - cost_budget_alert
+        - workflow_step_waiting
     NotificationsReadAll:
       type: object
       additionalProperties: false
@@ -6779,12 +6830,15 @@ components:
               type: boolean
             costBudgetAlert:
               type: boolean
+            workflowStepWaiting:
+              type: boolean
           required:
             - sessionComplete
             - sessionFailed
             - syncFailed
             - repositoryProblem
             - costBudgetAlert
+            - workflowStepWaiting
         dailyReport:
           type: object
           additionalProperties: false
@@ -6896,11 +6950,18 @@ components:
       additionalProperties: false
       required:
         - projectId
+        - sessionId
         - team
         - agents
+        - refused
       properties:
         projectId:
           type: string
+        sessionId:
+          type:
+            - string
+            - 'null'
+          description: 'The Session the refusals were computed against (`?sessionId=`), or null for the create-time question. It is what separates `session_not_yet` from `session_elsewhere`.'
         team:
           anyOf:
             - $ref: '#/components/schemas/AssignedTeam'
@@ -6909,6 +6970,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AvailableAgent'
+        refused:
+          type: array
+          items:
+            $ref: '#/components/schemas/RefusedAgent'
     PullRequest:
       type: object
       additionalProperties: false
@@ -7070,6 +7135,46 @@ components:
           $ref: '#/components/schemas/SecretFieldRead'
         embeddingModel:
           type: string
+    RefusedAgent:
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - name
+        - scope
+        - projectId
+        - sessionId
+        - runtime
+        - archivedAt
+        - reason
+        - explanation
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        scope:
+          $ref: '#/components/schemas/AgentScope'
+        projectId:
+          type:
+            - string
+            - 'null'
+        sessionId:
+          type:
+            - string
+            - 'null'
+        runtime:
+          $ref: '#/components/schemas/AgentRuntime'
+        archivedAt:
+          type:
+            - string
+            - 'null'
+        reason:
+          $ref: '#/components/schemas/AgentBindingRefusalReason'
+          description: 'Why an Agent cannot be bound to a new Session in this Project. `session_not_yet` is the one temporary refusal: that agent becomes bindable through PATCH /sessions/{id} once its Session exists.'
+        explanation:
+          type: string
+          description: 'The rule and the way out of it, in one operator-facing sentence. This is the identical string `POST /sessions` and `PATCH /sessions/{id}` answer with when the binding is attempted, because both come from one function.'
     Repository:
       type: object
       additionalProperties: false
@@ -7288,6 +7393,7 @@ components:
         - branch
         - workingDirectory
         - agentId
+        - agentBindingRefusal
         - runtime
         - observation
         - costUsd
@@ -7336,6 +7442,10 @@ components:
             - string
             - 'null'
           description: 'The Agent persona this Session runs as (PRD 5.1), or null. The id ONLY - the Agent resource is served by GET /agents/{id}, because inlining a persona would put a 20 000-character system prompt on the session list.'
+        agentBindingRefusal:
+          anyOf:
+            - $ref: '#/components/schemas/SessionAgentBindingRefusal'
+            - type: 'null'
         runtime:
           $ref: '#/components/schemas/SessionRuntimeInfo'
         observation:
@@ -7378,6 +7488,23 @@ components:
             - 'null'
         updatedAt:
           type: string
+    SessionAgentBindingRefusal:
+      type: object
+      additionalProperties: false
+      required:
+        - reason
+        - explanation
+      properties:
+        reason:
+          $ref: '#/components/schemas/SessionAgentRefusalReason'
+          description: 'Why a Session refuses a change to `agentId`. `observed`: Mission Control did not launch the process. `already_launched`: the system prompt was fixed at spawn.'
+        explanation:
+          type: string
+    SessionAgentRefusalReason:
+      type: string
+      enum:
+        - observed
+        - already_launched
     SessionExport:
       type: object
       additionalProperties: false

@@ -52,6 +52,7 @@ export const NOTIFICATION_TYPE_TOGGLES: Readonly<
   sync_failed: 'syncFailed',
   repository_problem: 'repositoryProblem',
   cost_budget_alert: 'costBudgetAlert',
+  workflow_step_waiting: 'workflowStepWaiting',
   daily_report: null,
 });
 
@@ -60,6 +61,11 @@ export const NOTIFICATION_TYPE_TOGGLES: Readonly<
  * operator asked for did not happen; a repository problem is `warning` because tracking
  * degraded but nothing the operator started was lost; a budget alert is `warning` because it
  * is a threshold crossing, not a failure.
+ *
+ * `workflow_step_waiting` is **`info`**, and that is a deliberate refusal to inflate it: nothing
+ * has gone wrong and nothing is degraded. A step waiting for its operator is the designed shape of
+ * a Phase 4 run (a managed Session is never auto-completed), so this is the notification saying
+ * "your turn", not "something broke".
  */
 export const NOTIFICATION_TYPE_SEVERITIES: Readonly<
   Record<NotificationType, NotificationSeverity>
@@ -69,6 +75,7 @@ export const NOTIFICATION_TYPE_SEVERITIES: Readonly<
   sync_failed: 'error',
   repository_problem: 'warning',
   cost_budget_alert: 'warning',
+  workflow_step_waiting: 'info',
   daily_report: 'info',
 });
 

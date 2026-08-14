@@ -12,24 +12,29 @@ import {
 } from './test-support.js';
 
 /**
- * The Agent picker in the Launch dialog (PRD §5.1, slice 2).
+ * The Agent picker in the Launch dialog (PRD §5.1).
  *
- * Slice 1 made an agent's instructions the runtime's system prompt and its permissions the
- * runtime's `disallowedTools`. **None of it was reachable from a browser**: `agentId` appeared
- * nowhere in this feature and the hand-written `Session` type had no field for it, so an operator
- * could build an agent and never run one. This suite covers the four things that closing that loop
- * has to get right:
+ * ## What changed under this suite
+ *
+ * The picker used to read every agent (`GET /agents?limit=200&includeArchived=true`) and decide
+ * locally which ones could be bound, from a hand-written copy of the Backend's refusals. It now
+ * reads **one document** — `GET /projects/{id}/available-agents` — which carries the offer set,
+ * the Project's team, and every refused agent with the Backend's own sentence attached. So these
+ * tests no longer seed agents and assert a partition; they seed a *server answer* and assert the
+ * screen renders it without editing it.
+ *
+ * Five things have to keep being true:
  *
  *  1. **None is the default**, and costs nothing — most sessions will not use an agent.
- *  2. **Only bindable agents are offered**, and every exclusion is stated with its rule. A dropdown
- *     that silently drops an agent generates "where did it go" and answers nothing.
- *  3. **The consequence is shown**, not just the name: binding an agent *removes tools*.
- *  4. **A choice invalidated by changing the project is withdrawn out loud**, not left to become a
- *     `400` on `[Create]`.
+ *  2. **The server's offer set is the offer set**, and no client rule narrows it.
+ *  3. **Every absence is named, in the server's words** — the same string its `400`/`409` carries.
+ *  4. **"Cannot tell" is not "nothing"** — four distinct silences, told apart.
+ *  5. **The consequence is shown**, not just the name: binding an agent *removes tools*.
  */
 
 const PROJECT_A = '0198a2f3-9c41-7bd2-a10e-000000000001';
 const PROJECT_B = '0198a2f3-9c41-7bd2-a10e-000000000002';
+const AGENT_ID = '0198a2f3-9c41-7bd2-a10e-00000000a001';
 
 const PROJECTS = [
   {
@@ -56,7 +61,7 @@ const PROJECTS = [
 
 function makeAgent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id: '0198a2f3-9c41-7bd2-a10e-00000000a001',
+    id: AGENT_ID,
     name: 'Architect',
     description: 'Reviews designs against the Foundation Contract.',
     scope: 'global',
@@ -69,21 +74,55 @@ function makeAgent(overrides: Record<string, unknown> = {}): Record<string, unkn
     archivedAt: null,
     createdAt: '2026-08-01T09:00:00.000Z',
     updatedAt: '2026-08-01T09:00:00.000Z',
+    onTeam: false,
+    ...overrides,
+  };
+}
+
+function makeRefusal(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    agentId: 'a-theirs',
+    name: 'Other Architect',
+    scope: 'project',
+    projectId: PROJECT_B,
+    sessionId: null,
+    runtime: 'claude_code',
+    archivedAt: null,
+    reason: 'other_project',
+    explanation:
+      'This agent is scoped to a different project than the session. A project agent is offered ' +
+      'to its own project and nowhere else, and scope cannot be changed after an agent is created.',
     ...overrides,
   };
 }
 
 let api: ApiMock;
 
-function seed(agents: readonly unknown[]): void {
-  api.on('GET', '/api/v1/agents', { body: listBody(agents) });
+/** Seed `GET /projects/{id}/available-agents`, per project. */
+function seedAvailability(
+  projectId: string,
+  body: {
+    agents?: readonly unknown[];
+    refused?: readonly unknown[];
+    team?: unknown;
+    omitRefused?: boolean;
+  } = {},
+): void {
+  const document: Record<string, unknown> = {
+    projectId,
+    team: body.team ?? null,
+    agents: body.agents ?? [],
+  };
+  if (body.omitRefused !== true) document['refused'] = body.refused ?? [];
+  api.on('GET', `/projects/${projectId}/available-agents`, { body: dataBody(document) });
 }
 
 beforeEach(() => {
   api = mockApi();
   api.on('GET', '/api/v1/projects?', { body: listBody(PROJECTS) });
   api.on('GET', '/api/v1/repositories', { body: listBody([]) });
-  seed([]);
+  seedAvailability(PROJECT_A);
+  seedAvailability(PROJECT_B);
 });
 
 afterEach(() => {
@@ -93,7 +132,7 @@ afterEach(() => {
 describe('the agent picker defaults to none', () => {
   it('opens on “None” and creates a session with no agentId at all', async () => {
     const user = userEvent.setup();
-    seed([makeAgent()]);
+    seedAvailability(PROJECT_A, { agents: [makeAgent()] });
     api.on('POST', '/api/v1/sessions', {
       status: 201,
       body: dataBody(makeSession({ state: 'created' })),
@@ -120,35 +159,51 @@ describe('the agent picker defaults to none', () => {
   });
 
   it('is inert until a project is chosen, and says why', async () => {
-    seed([makeAgent()]);
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
 
     const picker = await screen.findByLabelText('Agent');
     expect(picker).toBeDisabled();
     expect(screen.getByTestId('agent-field-disabled')).toHaveTextContent('Choose a project first');
+    // Nothing was asked, so nothing is claimed about which agents exist.
+    expect(api.callsTo('available-agents')).toHaveLength(0);
   });
 });
 
-describe('only bindable agents are offered, and the rest are accounted for', () => {
-  it('offers global and own-project agents; excludes the other three with their reasons', async () => {
+describe('the server decides what is offered, and this screen does not narrow it', () => {
+  it('offers exactly the agents the document offers', async () => {
     const user = userEvent.setup();
-    seed([
-      makeAgent({ id: 'a-global', name: 'Architect' }),
-      makeAgent({ id: 'a-mine', name: 'ERP Architect', scope: 'project', projectId: PROJECT_A }),
-      makeAgent({
-        id: 'a-theirs',
-        name: 'Other Architect',
-        scope: 'project',
-        projectId: PROJECT_B,
-      }),
-      makeAgent({ id: 'a-retired', name: 'Retired One', archivedAt: '2026-08-10T00:00:00.000Z' }),
-      makeAgent({
-        id: 'a-session',
-        name: 'Release Manager',
-        scope: 'session',
-        sessionId: '0198a2f3-9c41-7bd2-a10e-0000000000s1',
-      }),
-    ]);
+    seedAvailability(PROJECT_A, {
+      agents: [
+        makeAgent({ id: 'a-global', name: 'Architect' }),
+        makeAgent({ id: 'a-mine', name: 'ERP Architect', scope: 'project', projectId: PROJECT_A }),
+      ],
+      refused: [
+        makeRefusal(),
+        makeRefusal({
+          agentId: 'a-retired',
+          name: 'Retired One',
+          scope: 'global',
+          projectId: null,
+          archivedAt: '2026-08-10T00:00:00.000Z',
+          reason: 'archived',
+          explanation:
+            'This agent is archived and cannot be bound to a session. Un-archive it on the ' +
+            'Agents screen if it should still be used.',
+        }),
+        makeRefusal({
+          agentId: 'a-session',
+          name: 'Release Manager',
+          scope: 'session',
+          projectId: null,
+          sessionId: '0198a2f3-9c41-7bd2-a10e-0000000000s1',
+          reason: 'session_not_yet',
+          explanation:
+            'A session-scoped agent names the session it belongs to, and that session does not ' +
+            'exist yet. Create the session first, then bind this agent with PATCH ' +
+            '/sessions/{id} while it is still in ‹created›.',
+        }),
+      ],
+    });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
@@ -161,21 +216,72 @@ describe('only bindable agents are offered, and the rest are accounted for', () 
     ).toBeInTheDocument();
     expect(within(picker).queryByRole('option', { name: /Other Architect/ })).toBeNull();
 
-    // The three that are missing are named, each with the rule that excluded it.
+    // The three that are missing are named, each with the Backend's own sentence.
     const exclusions = screen.getByTestId('agent-exclusions');
     expect(exclusions).toHaveTextContent('3 agents are not offered here.');
     expect(screen.getByTestId('agent-excluded-other_project')).toHaveTextContent(
-      'Scoped to a different project',
+      'scoped to a different project',
     );
     expect(screen.getByTestId('agent-excluded-archived')).toHaveTextContent('Un-archive it');
     expect(screen.getByTestId('agent-excluded-session_not_yet')).toHaveTextContent(
       'does not exist yet',
     );
+    // The one refusal with a way out keeps naming it — create-time versus PATCH is the whole
+    // reason these explanations exist.
+    expect(screen.getByTestId('agent-excluded-session_not_yet')).toHaveTextContent(
+      'PATCH /sessions/{id}',
+    );
   });
 
+  it('offers an agent no client rule would have offered', async () => {
+    const user = userEvent.setup();
+    /*
+     * Archived, session-scoped and pointed at a different session — every input the deleted
+     * client-side rules keyed on, on one agent the server nonetheless put in `agents`. A picker
+     * that still held those rules would drop it. This one offers it, because the server's answer
+     * is the answer.
+     */
+    seedAvailability(PROJECT_A, {
+      agents: [
+        makeAgent({
+          id: 'a-impossible',
+          name: 'Impossible',
+          scope: 'session',
+          sessionId: 'some-other-session',
+          archivedAt: '2026-08-10T00:00:00.000Z',
+        }),
+      ],
+    });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+
+    const picker = await screen.findByLabelText('Agent');
+    await waitFor(() =>
+      expect(within(picker).getByRole('option', { name: /Impossible/ })).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId('agent-exclusions')).toBeNull();
+  });
+
+  it('reads no agent list of its own — one document answers the whole field', async () => {
+    const user = userEvent.setup();
+    seedAvailability(PROJECT_A, { agents: [makeAgent()] });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+    await screen.findByRole('option', { name: /Architect · Global/ });
+
+    // `GET /agents` is for *naming* an agent a Session already ran as. Reading it here is how the
+    // client ended up with enough data to re-derive a rule it should be asking about.
+    expect(api.calls.filter((call) => /\/api\/v1\/agents(\?|$)/.test(call.url))).toHaveLength(0);
+    expect(api.callsTo(`/projects/${PROJECT_A}/available-agents`).length).toBeGreaterThan(0);
+  });
+});
+
+describe('where the server cannot tell, the screen says so rather than guessing', () => {
   it('names the missing route rather than showing an empty picker', async () => {
     const user = userEvent.setup();
-    api.on('GET', '/api/v1/agents', {
+    api.on('GET', `/projects/${PROJECT_A}/available-agents`, {
       status: 404,
       body: { error: { code: 'NOT_FOUND', message: 'no route', requestId: 'req-1' } },
     });
@@ -183,23 +289,77 @@ describe('only bindable agents are offered, and the rest are accounted for', () 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
 
-    expect(await screen.findByTestId('agent-route-missing')).toHaveTextContent('/api/v1/agents');
+    expect(await screen.findByTestId('agent-route-missing')).toHaveTextContent('available-agents');
     // The session is still creatable — an agent was never required.
     expect(screen.getByLabelText('Agent')).toBeDisabled();
+    expect(screen.queryByTestId('agent-exclusions')).toBeNull();
+  });
+
+  it('distinguishes a failed read from an empty one', async () => {
+    const user = userEvent.setup();
+    api.on('GET', `/projects/${PROJECT_A}/available-agents`, {
+      status: 500,
+      body: { error: { code: 'INTERNAL_ERROR', message: 'boom', requestId: 'req-2' } },
+    });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+
+    expect(await screen.findByTestId('agent-field-error')).toHaveTextContent(
+      'no absence can be explained',
+    );
+    expect(screen.getByLabelText('Agent')).toBeDisabled();
+  });
+
+  it('admits it cannot account for absences when the document states no refusals', async () => {
+    const user = userEvent.setup();
+    // A Backend that serves availability without a `refused` array. The offer set is still its
+    // answer, so the field works — but "3 agents are not offered here" would be a claim this
+    // client has no source for, and "nothing was refused" would be worse.
+    seedAvailability(PROJECT_A, { agents: [makeAgent()], omitRefused: true });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+
+    expect(await screen.findByTestId('agent-refusals-unstated')).toHaveTextContent(
+      'does not say which agents it left out',
+    );
+    expect(screen.queryByTestId('agent-exclusions')).toBeNull();
+    // The offer is still made: this is a gap in the explanation, not in the answer.
+    expect(
+      within(screen.getByLabelText('Agent')).getByRole('option', { name: /Architect/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('names a document field it does not read, so a renamed contract is visible', async () => {
+    const user = userEvent.setup();
+    api.on('GET', `/projects/${PROJECT_A}/available-agents`, {
+      body: dataBody({
+        projectId: PROJECT_A,
+        team: null,
+        agents: [makeAgent()],
+        refusedAgents: [makeRefusal()],
+      }),
+    });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+
+    expect(await screen.findByTestId('agent-availability-unrecognised')).toHaveTextContent(
+      'refusedAgents',
+    );
+    expect(screen.getByTestId('agent-refusals-unstated')).toBeInTheDocument();
   });
 });
 
 describe('the consequence of the choice, not only its name', () => {
   it('names the tools the agent removes from this session', async () => {
     const user = userEvent.setup();
-    seed([makeAgent()]);
+    seedAvailability(PROJECT_A, { agents: [makeAgent()] });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
-    await user.selectOptions(
-      await screen.findByLabelText('Agent'),
-      '0198a2f3-9c41-7bd2-a10e-00000000a001',
-    );
+    await user.selectOptions(await screen.findByLabelText('Agent'), AGENT_ID);
 
     const consequence = screen.getByTestId('agent-consequence');
     expect(consequence).toHaveTextContent('This session will run as Architect');
@@ -213,14 +373,11 @@ describe('the consequence of the choice, not only its name', () => {
 
   it('says nothing is removed rather than staying silent for an unrestricted agent', async () => {
     const user = userEvent.setup();
-    seed([makeAgent({ disallowedTools: [] })]);
+    seedAvailability(PROJECT_A, { agents: [makeAgent({ disallowedTools: [] })] });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
-    await user.selectOptions(
-      await screen.findByLabelText('Agent'),
-      '0198a2f3-9c41-7bd2-a10e-00000000a001',
-    );
+    await user.selectOptions(await screen.findByLabelText('Agent'), AGENT_ID);
 
     expect(screen.getByTestId('agent-consequence')).toHaveTextContent('It removes no tools');
   });
@@ -228,14 +385,11 @@ describe('the consequence of the choice, not only its name', () => {
   it('never implies a restriction a Backend without disallowedTools did not state', async () => {
     const user = userEvent.setup();
     const { disallowedTools: _dropped, ...withoutTools } = makeAgent();
-    seed([withoutTools]);
+    seedAvailability(PROJECT_A, { agents: [withoutTools] });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
-    await user.selectOptions(
-      await screen.findByLabelText('Agent'),
-      '0198a2f3-9c41-7bd2-a10e-00000000a001',
-    );
+    await user.selectOptions(await screen.findByLabelText('Agent'), AGENT_ID);
 
     expect(screen.getByTestId('agent-consequence-unknown')).toHaveTextContent(
       'does not say which tools this agent removes',
@@ -244,11 +398,16 @@ describe('the consequence of the choice, not only its name', () => {
 });
 
 describe('a choice the new project would reject is withdrawn, out loud', () => {
-  it('clears a project-scoped agent when the project changes, and names the rule', async () => {
+  it('clears a project-scoped agent when the project changes, using the server’s reason', async () => {
     const user = userEvent.setup();
-    seed([
-      makeAgent({ id: 'a-mine', name: 'ERP Architect', scope: 'project', projectId: PROJECT_A }),
-    ]);
+    seedAvailability(PROJECT_A, {
+      agents: [
+        makeAgent({ id: 'a-mine', name: 'ERP Architect', scope: 'project', projectId: PROJECT_A }),
+      ],
+    });
+    seedAvailability(PROJECT_B, {
+      refused: [makeRefusal({ agentId: 'a-mine', name: 'ERP Architect', projectId: PROJECT_A })],
+    });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
@@ -260,13 +419,52 @@ describe('a choice the new project would reject is withdrawn, out loud', () => {
     await waitFor(() => expect(screen.getByLabelText('Agent')).toHaveValue(''));
     expect(screen.getByTestId('agent-withdrawn')).toHaveTextContent('ERP Architect was cleared');
     expect(screen.getByTestId('agent-withdrawn')).toHaveTextContent(
-      'Scoped to a different project',
+      'scoped to a different project',
     );
+  });
+
+  it('withdraws honestly when the new project’s document does not explain the absence', async () => {
+    const user = userEvent.setup();
+    seedAvailability(PROJECT_A, {
+      agents: [
+        makeAgent({ id: 'a-mine', name: 'ERP Architect', scope: 'project', projectId: PROJECT_A }),
+      ],
+    });
+    seedAvailability(PROJECT_B, { omitRefused: true });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+    await user.selectOptions(await screen.findByLabelText('Agent'), 'a-mine');
+    await user.selectOptions(screen.getByLabelText('Project'), PROJECT_B);
+
+    await waitFor(() => expect(screen.getByLabelText('Agent')).toHaveValue(''));
+    // Named from the selection, not invented; and the reason is admitted rather than composed.
+    expect(screen.getByTestId('agent-withdrawn')).toHaveTextContent('ERP Architect was cleared');
+    expect(screen.getByTestId('agent-withdrawn')).toHaveTextContent('did not say why');
+  });
+
+  it('does not withdraw a choice while the new project’s read is still failing', async () => {
+    const user = userEvent.setup();
+    seedAvailability(PROJECT_A, { agents: [makeAgent({ id: 'a-global', name: 'Architect' })] });
+    api.on('GET', `/projects/${PROJECT_B}/available-agents`, {
+      status: 500,
+      body: { error: { code: 'INTERNAL_ERROR', message: 'boom', requestId: 'req-3' } },
+    });
+
+    renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
+    await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
+    await user.selectOptions(await screen.findByLabelText('Agent'), 'a-global');
+    await user.selectOptions(screen.getByLabelText('Project'), PROJECT_B);
+
+    // A read that failed is not a refusal. Clearing here would discard a deliberate choice on the
+    // strength of a question nobody answered.
+    expect(await screen.findByTestId('agent-field-error')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-withdrawn')).toBeNull();
   });
 
   it('sends the chosen agent on create', async () => {
     const user = userEvent.setup();
-    seed([makeAgent()]);
+    seedAvailability(PROJECT_A, { agents: [makeAgent()] });
     api.on('POST', '/api/v1/sessions', {
       status: 201,
       body: dataBody(makeSession({ state: 'created' })),
@@ -275,17 +473,14 @@ describe('a choice the new project would reject is withdrawn, out loud', () => {
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);
     await user.selectOptions(await screen.findByLabelText('Project'), PROJECT_A);
     await user.type(screen.getByLabelText('Working directory'), 'D:\\Repos\\MCS');
-    await user.selectOptions(
-      await screen.findByLabelText('Agent'),
-      '0198a2f3-9c41-7bd2-a10e-00000000a001',
-    );
+    await user.selectOptions(await screen.findByLabelText('Agent'), AGENT_ID);
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(api.calls.some((call) => call.method === 'POST')).toBe(true));
     expect(api.calls.find((call) => call.method === 'POST')?.body).toEqual({
       projectId: PROJECT_A,
       workingDirectory: 'D:\\Repos\\MCS',
-      agentId: '0198a2f3-9c41-7bd2-a10e-00000000a001',
+      agentId: AGENT_ID,
     });
   });
 });
@@ -293,28 +488,21 @@ describe('a choice the new project would reject is withdrawn, out loud', () => {
 describe('the project’s team leads the picker (PRD §5.7)', () => {
   it('groups the team’s agents first, under the team’s name', async () => {
     const user = userEvent.setup();
-    seed([
-      makeAgent({ id: 'a-one', name: 'Architect' }),
-      makeAgent({ id: 'a-two', name: 'Security' }),
-    ]);
-    api.on('GET', '/available-agents', {
-      body: dataBody({
-        projectId: PROJECT_A,
-        team: {
-          id: 't1',
-          name: 'Feature squad',
-          description: null,
-          scope: 'global',
-          projectId: null,
-          memberCount: 2,
-          archivedMemberCount: 1,
-          assignedAt: '2026-08-01T00:00:00.000Z',
-        },
-        agents: [
-          { ...makeAgent({ id: 'a-one' }), onTeam: true },
-          { ...makeAgent({ id: 'a-two' }), onTeam: false },
-        ],
-      }),
+    seedAvailability(PROJECT_A, {
+      agents: [
+        makeAgent({ id: 'a-one', name: 'Architect', onTeam: true }),
+        makeAgent({ id: 'a-two', name: 'Security', onTeam: false }),
+      ],
+      team: {
+        id: 't1',
+        name: 'Feature squad',
+        description: null,
+        scope: 'global',
+        projectId: null,
+        memberCount: 2,
+        archivedMemberCount: 1,
+        assignedAt: '2026-08-01T00:00:00.000Z',
+      },
     });
 
     renderWithProviders(<LaunchSessionModal open onClose={() => {}} />);

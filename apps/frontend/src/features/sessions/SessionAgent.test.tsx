@@ -43,12 +43,29 @@ function agentResource(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
+/** `makeSession`'s project — the one the bind dialog asks about. */
+const PROJECT_ID = '0198a2f3-9c41-7bd2-a10e-000000000001';
+
 let api: ApiMock;
+
+function seedAvailability(body: { agents?: readonly unknown[]; refused?: readonly unknown[] }) {
+  api.on('GET', '/available-agents', {
+    body: dataBody({
+      projectId: PROJECT_ID,
+      team: null,
+      agents: body.agents ?? [],
+      refused: body.refused ?? [],
+    }),
+  });
+}
 
 beforeEach(() => {
   api = mockApi();
   api.on('GET', `/api/v1/agents/${AGENT_ID}`, { body: dataBody(agentResource()) });
   api.on('GET', '/api/v1/agents?', { body: listBody([agentResource()]) });
+  // The bind dialog offers what `GET /projects/{id}/available-agents` offers, and nothing else —
+  // there is no client-side rule left that could widen or narrow it.
+  seedAvailability({ agents: [{ ...agentResource(), onTeam: false }] });
 });
 
 afterEach(() => {
@@ -126,6 +143,50 @@ describe('the session detail header states its agent', () => {
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(onBind).toHaveBeenCalledWith(AGENT_ID);
+  });
+
+  /**
+   * The one place the server's answer was computed for a different moment.
+   *
+   * `GET /projects/{id}/available-agents` evaluates the rule with `sessionId: null` — "which agent
+   * may a *new* session here be launched as" — so a session-scoped agent always comes back as
+   * `session_not_yet`, including the one that names this very Session. Reprinting "that session
+   * does not exist yet" next to a Session the operator is looking at would be a confident
+   * falsehood; this screen states the gap instead, and does not re-derive a rule to close it.
+   */
+  it('does not reprint a create-time refusal at a session that exists', async () => {
+    const user = userEvent.setup();
+    seedAvailability({
+      refused: [
+        {
+          agentId: 'a-session',
+          name: 'Release Manager',
+          scope: 'session',
+          projectId: null,
+          sessionId: 'some-session',
+          runtime: 'claude_code',
+          archivedAt: null,
+          reason: 'session_not_yet',
+          explanation:
+            'A session-scoped agent names the session it belongs to, and that session does not ' +
+            'exist yet. Create the session first, then bind this agent with PATCH /sessions/{id}.',
+        },
+      ],
+    });
+
+    renderWithProviders(
+      <SessionAgentLine
+        session={makeSession({ state: 'created', agentId: null })}
+        onBind={() => {}}
+        saving={false}
+      />,
+    );
+    await user.click(screen.getByTestId('session-agent-bind'));
+
+    const row = await screen.findByTestId('agent-excluded-session_not_yet');
+    expect(row).toHaveTextContent('Release Manager');
+    expect(row).toHaveTextContent('cannot say whether this agent belongs to');
+    expect(row).not.toHaveTextContent('does not exist yet');
   });
 
   it('refuses to offer a binding on an observed session', () => {

@@ -1,12 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ErrorPanel } from '../../components/ErrorPanel.js';
 import { Modal } from '../../components/Modal.js';
 import { Skeleton } from '../../components/Skeleton.js';
-import { type AgentBindingExclusion, agentBindingRefusal } from '../../lib/agents/index.js';
 import { useUiStore } from '../../stores/ui-store.js';
-import { AgentField } from './AgentField.js';
-import { useBindableAgents, useProjectTeam } from './agents.js';
+import { AgentField, type WithdrawnAgent } from './AgentField.js';
+import { useAgentAvailability } from './agents.js';
 import { useCreateSession } from './mutations.js';
 import { useProjects, useRepositories } from './queries.js';
 
@@ -114,23 +113,28 @@ export function LaunchSessionModal({
   const [branch, setBranch] = useState('');
   const [model, setModel] = useState('');
   const [agentId, setAgentId] = useState('');
-  const [withdrawnAgent, setWithdrawnAgent] = useState<AgentBindingExclusion | null>(null);
+  const [withdrawnAgent, setWithdrawnAgent] = useState<WithdrawnAgent | null>(null);
   const [workingDirectory, setWorkingDirectory] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
+
+  /**
+   * The chosen agent's name, captured at selection.
+   *
+   * The withdrawal below has to *name* what it cleared, and by the time it fires the agent has
+   * already left the offer set it would have been read from. Captured when it was certainly there
+   * rather than looked up when it certainly is not.
+   */
+  const chosenName = useRef<string | null>(null);
 
   const projects = useProjects(open);
   const repositories = useRepositories(projectId === '' ? null : projectId, open);
   /**
-   * `sessionId: null` is what makes every **session-scoped** agent unofferable here, and it is a
-   * fact rather than a placeholder: such an agent names the Session it belongs to, and this Session
-   * does not exist yet. The exclusion list says so, and points at the surface that can bind one.
+   * Which agents may be bound, **asked rather than derived** — one read, `GET
+   * /projects/{id}/available-agents`, answering with the offer set, the Project's team and the
+   * Backend's own sentence for every agent it declined. There is no client-side rule left: a
+   * refusal added server-side arrives here on the same commit or arrives nowhere.
    */
-  const agents = useBindableAgents(
-    { projectId: projectId === '' ? null : projectId, sessionId: null },
-    open,
-  );
-  /** PRD §5.7 emphasis only — the Project's team leads the picker. Fails soft in every direction. */
-  const team = useProjectTeam(projectId === '' ? null : projectId, open);
+  const agents = useAgentAvailability(projectId === '' ? null : projectId, open);
   const create = useCreateSession();
 
   const repository =
@@ -155,21 +159,25 @@ export function LaunchSessionModal({
    * This is the one way this dialog can hold a value the API will reject: an operator picks the
    * ERP Architect, then realises they meant a different project. Leaving the selection in place
    * would turn `[Create]` into a `400 VALIDATION_FAILED` about a field three rows up; clearing it
-   * silently would drop a deliberate choice with no event. So it is cleared *and* stated, with the
-   * same sentence the exclusion list uses.
+   * silently would drop a deliberate choice with no event. So it is cleared *and* stated, using
+   * the Backend's own sentence for the refusal — the same string its `400` would have carried.
+   *
+   * **Only on `ready`.** The offer set is empty while the new Project's read is in flight, and
+   * while the route is missing, and after it failed. Withdrawing on any of those would clear a
+   * deliberate choice on the strength of a question that was never answered.
    */
   useEffect(() => {
     if (agentId === '') return;
-    const agent = agents.all.find((candidate) => candidate.id === agentId);
-    if (agent === undefined) return;
-    const refusal = agentBindingRefusal(agent, {
-      projectId: projectId === '' ? null : projectId,
-      sessionId: null,
-    });
-    if (refusal === null) return;
+    if (agents.status !== 'ready') return;
+    if (agents.offered.some((option) => option.agent.id === agentId)) return;
+
+    const refusal = agents.refused.find((entry) => entry.agentId === agentId) ?? null;
     setAgentId('');
-    setWithdrawnAgent(refusal);
-  }, [agentId, agents.all, projectId]);
+    setWithdrawnAgent({
+      name: refusal?.name ?? chosenName.current ?? 'The chosen agent',
+      explanation: refusal?.explanation ?? null,
+    });
+  }, [agentId, agents.status, agents.offered, agents.refused]);
 
   // Opening the dialog adopts the caller's Project. Applied on open rather than only at mount
   // because this component stays mounted between openings on the Sessions list.
@@ -332,16 +340,17 @@ export function LaunchSessionModal({
            */}
           <AgentField
             read={agents}
-            team={team}
             value={agentId}
             onChange={(next) => {
               setAgentId(next);
+              chosenName.current =
+                agents.offered.find((option) => option.agent.id === next)?.agent.name ?? null;
               setWithdrawnAgent(null);
             }}
             withdrawn={withdrawnAgent}
             disabledReason={
               projectId === ''
-                ? 'Choose a project first. A project-scoped agent is only offered to its own project, so there is nothing to match against until then.'
+                ? 'Choose a project first. Which agents can be bound is a question about a project, and the Backend answers it per project.'
                 : null
             }
           />

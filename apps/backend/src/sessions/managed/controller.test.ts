@@ -50,6 +50,8 @@ interface Harness {
   readonly deltas: FakeDeltaSink;
   readonly errors: unknown[];
   readonly rateLimits: RateLimitedTurn[];
+  /** Every `onTurnEnded` call — "this session is idle and nothing here will wake it". */
+  readonly turnEnds: string[];
 }
 
 function harness(
@@ -64,6 +66,7 @@ function harness(
   const deltas = createFakeDeltaSink();
   const errors: unknown[] = [];
   const rateLimits: RateLimitedTurn[] = [];
+  const turnEnds: string[] = [];
 
   const controller = new ManagedSessionController({
     sessionId,
@@ -85,11 +88,23 @@ function harness(
     baseline: ZERO_COST,
     onError: (error) => errors.push(error),
     onRateLimited: (turn) => rateLimits.push(turn),
+    onTurnEnded: (id) => turnEnds.push(id),
     interruptTimeoutMs: options.interruptTimeoutMs ?? 200,
     disposeTimeoutMs: options.disposeTimeoutMs ?? 200,
   });
 
-  return { sessionId, controller, runtime, messages, state, cost, deltas, errors, rateLimits };
+  return {
+    sessionId,
+    controller,
+    runtime,
+    messages,
+    state,
+    cost,
+    deltas,
+    errors,
+    rateLimits,
+    turnEnds,
+  };
 }
 
 describe('spawn confirmation (F7 "system confirms spawn")', () => {
@@ -211,6 +226,64 @@ describe('tool calls (WS6 §5.2 tool-use-turn)', () => {
     );
 
     await h.controller.dispose();
+  });
+});
+
+/**
+ * The signal behind "a workflow step is waiting for you".
+ *
+ * It is the same fact `hasTurnInFlight` reports — the one `NO_TURN_IN_FLIGHT` is raised from — so
+ * these cases are about *which endings count*. Two deliberately do not: an interrupt means the
+ * operator is at the keyboard, and a rate-limited turn is already re-queued, so in neither is the
+ * session waiting for a human.
+ */
+describe('turn-ended signal (onTurnEnded)', () => {
+  it('fires once per turn that ends on its own, naming the session', async () => {
+    const h = harness(happyMultiTurn);
+    await h.controller.ready();
+
+    await h.controller.submit({ content: 'one', messageId: null });
+    await waitFor(() => h.turnEnds.length === 1, { label: 'first turn end' });
+    expect(h.turnEnds).toEqual([h.sessionId]);
+    expect(h.controller.hasTurnInFlight).toBe(false);
+
+    await h.controller.submit({ content: 'two', messageId: null });
+    await waitFor(() => h.turnEnds.length === 2, { label: 'second turn end' });
+
+    await h.controller.dispose();
+  });
+
+  it('stays silent for an interrupted turn — the operator asked for the stop', async () => {
+    const h = harness(interruptedTurn);
+    await h.controller.ready();
+    await h.controller.submit({ content: 'Start the refactor', messageId: null });
+    await waitFor(() => h.deltas.deltas.length === 2, { label: 'deltas before interrupt' });
+
+    await h.controller.interrupt();
+    await h.controller.dispose();
+
+    expect(h.turnEnds).toEqual([]);
+  });
+
+  it('stays silent for a rate-limited turn — the retry is already scheduled', async () => {
+    const h = harness(rateLimitStop);
+    await h.controller.ready();
+    await h.controller.submit({ content: 'Do the thing', messageId: 'message-1' });
+
+    await waitFor(() => h.rateLimits.length === 1, { label: 'rate limit callback' });
+
+    expect(h.turnEnds).toEqual([]);
+    await h.controller.dispose();
+  });
+
+  it('stays silent when the stream dies — a crashed session is not an idle one', async () => {
+    const h = harness(midStreamCrash);
+    await h.controller.ready();
+    await h.controller.submit({ content: 'Start', messageId: null });
+
+    await waitFor(() => h.state.transitions.length === 1, { label: 'crash transition' });
+
+    expect(h.turnEnds).toEqual([]);
   });
 });
 

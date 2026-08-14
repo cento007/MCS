@@ -162,6 +162,12 @@ export interface NotificationEventToggles {
   readonly syncFailed: boolean;
   readonly repositoryProblem: boolean;
   readonly costBudgetAlert: boolean;
+  /**
+   * "A workflow step is waiting for you" (PRD §5.6). A real toggle, on the same footing as the
+   * five above: it is read by `decideNotification`, so switching it off stops the Notification
+   * existing at all — in-app and on Telegram — rather than merely muting one channel.
+   */
+  readonly workflowStepWaiting: boolean;
 }
 
 export interface DailyReportSettings {

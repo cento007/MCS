@@ -50,6 +50,12 @@ export interface ManagedRuntimeOptions {
   /** The WebSocket hub. Absent = no live relay; persistence and cost are unaffected. */
   readonly deltas?: SessionDeltaSink | undefined;
   readonly retries?: TurnRetryScheduler | undefined;
+  /**
+   * "A turn ended and this session is now idle" — forwarded from every controller this runtime
+   * owns. See `ManagedSessionController`'s `onTurnEnded` for which endings qualify and why the
+   * other two do not.
+   */
+  readonly onTurnEnded?: ((sessionId: string) => void) | undefined;
   readonly onError?: ((error: unknown, sessionId: string) => void) | undefined;
   /** PRD §4.1 session metadata. Defaults: this host, and `NODE_ENV`. */
   readonly machine?: string | null | undefined;
@@ -138,6 +144,16 @@ export class ManagedRuntime implements SessionRuntimePort {
         void this.#options.retries?.schedule(turn).catch((error: unknown) => {
           this.#options.onError?.(error, turn.sessionId);
         });
+      },
+      onTurnEnded: (sessionId) => {
+        // Wrapped rather than passed straight through: the controller calls this from inside the
+        // pump, and a listener that threw would end the stream for a live Session. Nothing this
+        // notification does is worth a transcript.
+        try {
+          this.#options.onTurnEnded?.(sessionId);
+        } catch (error) {
+          this.#options.onError?.(error, sessionId);
+        }
       },
       onClosed: (sessionId) => {
         // Only if it is still *this* controller: a relaunch may already have replaced it.

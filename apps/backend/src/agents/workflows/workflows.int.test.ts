@@ -1121,6 +1121,129 @@ describe('the spend bounds an operator can see and set', () => {
 
 // =============================================================================================
 
+/**
+ * "A workflow step is waiting for you" — the notification, end to end.
+ *
+ * The signal itself (a turn ending on its own, and not an interrupted or rate-limited one) is the
+ * managed controller's, and `sessions/managed/controller.test.ts` pins which endings fire it. This
+ * file starts one step past that, at `noteTurnEnded`, which is the seam the controller calls: what
+ * it exercises is the *decision* — is this a step, is the run still going, has it been said
+ * already — and the Notification the producer writes.
+ *
+ * Nothing here ends a Session. The run still advances only when the operator does.
+ */
+describe('telling the operator a step is waiting', () => {
+  async function notifications() {
+    return testDatabase()
+      .db.select()
+      .from(schema.notifications)
+      .where(eq(schema.notifications.type, 'workflow_step_waiting'));
+  }
+
+  it('produces one notification naming the step, and never a second one for it', async () => {
+    const workflowId = await seedChain();
+    const run = (await startRun(workflowId)).json<{ data: { id: string } }>().data;
+
+    await waitFor(async () => prompts.submitted.length === 1, 'the step-1 prompt');
+    const [first] = await runStepRows(run.id);
+
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+
+    const [written] = await notifications();
+    expect(written?.title).toContain('Workflow step 1 of 2 is waiting');
+    expect(written?.severity).toBe('info');
+    // The run, so everything said about one chain shares a correlation id.
+    expect(written?.correlationId).toBe(run.id);
+    expect(written?.payload).toMatchObject({ sessionId: first?.sessionId, runId: run.id });
+    // No `eventType`: there is no originating F6 event for a runtime going idle.
+    // Indexed optionally rather than cast-then-indexed: `written` is typed possibly-undefined,
+    // and `(undefined as Record<…>)['eventType']` throws instead of asserting. The `title`
+    // assertion above is what actually proves a notification was written.
+    expect(
+      (written?.payload as Record<string, unknown> | undefined)?.['eventType'],
+    ).toBeUndefined();
+
+    // The claim is on the attempt row, and it is what makes the second call silent — an operator
+    // answering a question inside the step must not be paged for the turn that answers it.
+    expect((await runStepRows(run.id))[0]?.waitingNotifiedAt).not.toBeNull();
+
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+    expect(await notifications()).toHaveLength(1);
+  });
+
+  it('says nothing about a session that is not a workflow step', async () => {
+    // Every managed Session goes idle at the end of every turn. This is the entire filter, and
+    // without it the notification would fire for ordinary interactive chat.
+    const loose = await seedSession({ projectId, userId, state: 'running' });
+
+    await app.workflows.runs.noteTurnEnded(loose);
+
+    expect(await notifications()).toHaveLength(0);
+  });
+
+  it('notifies again for the *next* step, because that is a different thing to be told', async () => {
+    const workflowId = await seedChain();
+    const run = (await startRun(workflowId)).json<{ data: { id: string } }>().data;
+
+    await waitFor(async () => prompts.submitted.length === 1, 'the step-1 prompt');
+    const [first] = await runStepRows(run.id);
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+
+    await post(`/api/v1/sessions/${first?.sessionId}/end`);
+    await waitFor(async () => prompts.submitted.length === 2, 'the step-2 prompt');
+    const rows = await runStepRows(run.id);
+
+    await app.workflows.runs.noteTurnEnded(rows[1]?.sessionId ?? '');
+
+    const written = await notifications();
+    expect(written).toHaveLength(2);
+    expect(written.map((row) => row.title).sort()).toEqual([
+      expect.stringContaining('step 1 of 2'),
+      expect.stringContaining('step 2 of 2'),
+    ]);
+    // The last step's sentence is different, because ending it completes the run rather than
+    // handing off to a step that does not exist.
+    expect(written.find((row) => row.title.includes('step 2 of 2'))?.body).toContain(
+      'completes the run',
+    );
+  });
+
+  it('says nothing once the run is no longer running', async () => {
+    const workflowId = await seedChain();
+    const run = (await startRun(workflowId)).json<{ data: { id: string } }>().data;
+
+    await waitFor(async () => prompts.submitted.length === 1, 'the step-1 prompt');
+    const [first] = await runStepRows(run.id);
+
+    await post(`/api/v1/agent-workflow-runs/${run.id}/stop`);
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+
+    expect(await notifications()).toHaveLength(0);
+  });
+
+  it('obeys the operator’s toggle rather than inventing a bypass', async () => {
+    // `notifications.events.workflowStepWaiting` is a real switch on the same footing as the other
+    // five: it goes through `decideNotification`, which is also where quiet hours are applied.
+    const saved = await app.app.inject({
+      method: 'PUT',
+      url: '/api/v1/settings/notifications',
+      headers: { cookie },
+      payload: { events: { workflowStepWaiting: false } },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const workflowId = await seedChain();
+    const run = (await startRun(workflowId)).json<{ data: { id: string } }>().data;
+    await waitFor(async () => prompts.submitted.length === 1, 'the step-1 prompt');
+    const [first] = await runStepRows(run.id);
+
+    await app.workflows.runs.noteTurnEnded(first?.sessionId ?? '');
+
+    expect(await notifications()).toHaveLength(0);
+  });
+});
+
 describe('a Backend with no managed runtime', () => {
   it('refuses a run up front rather than launching a Session it cannot speak to', async () => {
     // No `workflowPrompts`, no `agentRuntime`: `sessions.managed` is null, so there is no prompt

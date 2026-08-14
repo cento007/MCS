@@ -7,9 +7,11 @@ import {
   renderSessionCompleted,
   renderSessionFailed,
   renderSyncFailed,
+  renderWorkflowStepWaiting,
   type SessionNotificationFacts,
   shortReason,
   UNTITLED_SESSION,
+  type WorkflowStepWaitingFacts,
 } from './render.js';
 
 const session = (overrides: Partial<SessionNotificationFacts> = {}): SessionNotificationFacts => ({
@@ -119,6 +121,46 @@ describe('renderSessionFailed (PRD §9 Alerts: Session Errors)', () => {
     expect(renderSessionFailed(session({ failureReason: null })).body).toContain(
       'Reason: not recorded',
     );
+  });
+});
+
+describe('renderWorkflowStepWaiting (PRD §5.6 — your turn)', () => {
+  const waiting = (
+    overrides: Partial<WorkflowStepWaitingFacts> = {},
+  ): WorkflowStepWaitingFacts => ({
+    workflowName: 'Review chain',
+    agentName: 'QA',
+    stepOrdinal: 1,
+    stepCount: 4,
+    projectName: 'Mission Control',
+    sessionTitle: 'Review chain · step 2 · QA',
+    ...overrides,
+  });
+
+  it('names the position, the agent and what ending the session does next', () => {
+    const rendered = renderWorkflowStepWaiting(waiting());
+
+    expect(rendered.title).toBe('Workflow step 2 of 4 is waiting — Review chain');
+    expect(rendered.body).toContain('Step: QA');
+    expect(rendered.body).toContain('Project: Mission Control');
+    expect(rendered.body).toContain('the next step starts');
+  });
+
+  it('says the run finishes when the waiting step is the last one', () => {
+    const rendered = renderWorkflowStepWaiting(waiting({ stepOrdinal: 3, stepCount: 4 }));
+
+    expect(rendered.title).toBe('Workflow step 4 of 4 is waiting — Review chain');
+    // Promising a next step that does not exist is the one thing this sentence must not do.
+    expect(rendered.body).toContain('completes the run');
+    expect(rendered.body).not.toContain('next step');
+  });
+
+  it('drops the lines it has no facts for rather than printing an absence', () => {
+    const rendered = renderWorkflowStepWaiting(waiting({ projectName: null, sessionTitle: null }));
+
+    expect(rendered.body).not.toContain('Project:');
+    expect(rendered.body).not.toContain('Session:');
+    expect(rendered.body).toContain('Step: QA');
   });
 });
 

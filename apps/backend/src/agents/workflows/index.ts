@@ -1,7 +1,12 @@
 import type { Db, Queue } from '@mc/shared';
 import type { FastifyInstance } from 'fastify';
 import type { EventBus, Outbox } from '../../events/index.js';
-import type { WorkflowHandoffPort, WorkflowPromptPort, WorkflowSessionPort } from './ports.js';
+import type {
+  WorkflowHandoffPort,
+  WorkflowNotifierPort,
+  WorkflowPromptPort,
+  WorkflowSessionPort,
+} from './ports.js';
 import { registerAgentWorkflowRoutes } from './routes.js';
 import { AgentWorkflowRunService } from './runs.js';
 import { AgentWorkflowService } from './service.js';
@@ -55,6 +60,11 @@ export interface RegisterAgentWorkflowsOptions {
   /** `null` on a Backend with no managed runtime — `POST /agent-workflow-runs` then 503s. */
   readonly prompts: WorkflowPromptPort | null;
   readonly handoff: WorkflowHandoffPort;
+  /**
+   * The Notification producer, for "this step is waiting for you". Optional because an app built
+   * without an outbox/queue has none; a run then advances exactly as before and says nothing.
+   */
+  readonly notifier?: WorkflowNotifierPort | null | undefined;
   readonly now?: (() => Date) | undefined;
   readonly onError?: ((error: unknown, context: string) => void) | undefined;
   readonly onTimezoneRejected?: ((timezone: string, error: unknown) => void) | undefined;
@@ -86,6 +96,7 @@ export function registerAgentWorkflows(
     sessions: options.sessions,
     prompts: options.prompts,
     handoff: options.handoff,
+    ...(options.notifier === undefined ? {} : { notifier: options.notifier }),
     ...(options.now === undefined ? {} : { now: options.now }),
     ...(options.onError === undefined ? {} : { onError: options.onError }),
   });

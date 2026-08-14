@@ -451,6 +451,8 @@ export type AgentWorkflowRunStepUpdate = Partial<{
   error: string | null;
   completedAt: Date | null;
   promptSentAt: Date | null;
+  /** Only ever set back to `null` here — the claim is `claimWaitingNotification`. */
+  waitingNotifiedAt: Date | null;
 }>;
 
 export async function updateRunStep(
@@ -464,6 +466,35 @@ export async function updateRunStep(
     .where(eq(schema.agentWorkflowRunSteps.id, id))
     .returning();
   return rows[0] ?? null;
+}
+
+/**
+ * Claim the right to tell the operator this step is waiting — **once**.
+ *
+ * `WHERE waiting_notified_at IS NULL` is the whole mechanism, and it is in the statement rather
+ * than in the service for the same reason `claimRunSession` computes its increment in SQL: two
+ * turns of one step ending close together would otherwise both read NULL and both page. Returns
+ * whether *this* caller won; the loser does nothing at all.
+ *
+ * Deliberately not a lock-and-write pair: there is nothing to decide between reading and writing,
+ * so the conditional update *is* the decision, and it cannot be interleaved.
+ */
+export async function claimWaitingNotification(
+  tx: DbTransaction,
+  id: string,
+  at: Date,
+): Promise<boolean> {
+  const rows = await tx
+    .update(schema.agentWorkflowRunSteps)
+    .set({ waitingNotifiedAt: at, updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.agentWorkflowRunSteps.id, id),
+        isNull(schema.agentWorkflowRunSteps.waitingNotifiedAt),
+      ),
+    )
+    .returning({ id: schema.agentWorkflowRunSteps.id });
+  return rows.length === 1;
 }
 
 /**

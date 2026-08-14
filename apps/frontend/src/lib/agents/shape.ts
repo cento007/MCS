@@ -32,10 +32,18 @@ export interface AgentView {
   readonly raw: unknown;
 }
 
-/** Fields this client reads. Anything else on the resource is reported as unrecognised. */
+/**
+ * Fields this client reads. Anything else on the resource is reported as unrecognised.
+ *
+ * `onTeam` is here because `GET /projects/{id}/available-agents` serves an `AvailableAgent` — an
+ * `Agent` plus that one flag — through this same projection. It is read by the availability
+ * reader rather than by `readAgent`, but listing it keeps the Agent Builder from announcing a
+ * field the API legitimately serves as one it does not understand.
+ */
 const KNOWN_FIELDS = new Set([
   'id',
   'name',
+  'onTeam',
   'description',
   'scope',
   'projectId',

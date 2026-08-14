@@ -3,7 +3,7 @@ import { Modal } from '../../components/Modal.js';
 import { type AgentView, bindingConsequence, sessionBindability } from '../../lib/agents/index.js';
 import type { Session } from '../../lib/api/index.js';
 import { AgentField } from './AgentField.js';
-import { useBindableAgents, useSessionAgent } from './agents.js';
+import { useAgentAvailability, useSessionAgent } from './agents.js';
 
 /**
  * Which Agent a Session runs — or ran — as (PRD §5.1).
@@ -78,46 +78,60 @@ export function SessionAgentLine({ session, onBind, saving }: SessionAgentLinePr
   if (session.agentId === null && !bindability.bindable) return null;
 
   return (
-    <p data-testid="session-agent-line" className="mt-1 flex flex-wrap items-center gap-2 text-2xs">
-      <span className="text-text-muted">Agent</span>
+    /*
+     * The dialog is a **sibling** of the line, not a child of it.
+     *
+     * It used to be nested inside this `<p>`, which is invalid HTML — a `<p>` may hold phrasing
+     * content only, and the dialog contains `<h2>`, `<div>`, `<p>`, `<details>` and `<ul>`. The
+     * browser silently auto-closed the paragraph and reparented the dialog, so it *looked* right
+     * while React logged six "cannot be a descendant" errors per open. Found by opening the screen
+     * rather than by any suite, which is the usual way this class of defect is found.
+     */
+    <>
+      <p
+        data-testid="session-agent-line"
+        className="mt-1 flex flex-wrap items-center gap-2 text-2xs"
+      >
+        <span className="text-text-muted">Agent</span>
 
-      {session.agentId === null ? (
-        <span className="text-text-secondary">none — no persona, no tool restrictions</span>
-      ) : (
-        <>
-          <SessionAgentTag
-            agentId={session.agentId}
-            agent={resolved.agent}
-            unreadable={resolved.unavailable || resolved.unreadable}
-          />
-          <AgentEffect agent={resolved.agent} />
-          {resolved.agent?.archivedAt === null || resolved.agent === null ? null : (
-            <span className="text-text-muted">
-              archived since — the binding stands, because archiving an agent does not rewrite the
-              sessions that ran as it
-            </span>
-          )}
-          {resolved.unavailable ? (
-            <span style={{ color: 'var(--color-warning)' }}>
-              this agent could not be read, so what it removed cannot be shown
-            </span>
-          ) : null}
-        </>
-      )}
+        {session.agentId === null ? (
+          <span className="text-text-secondary">none — no persona, no tool restrictions</span>
+        ) : (
+          <>
+            <SessionAgentTag
+              agentId={session.agentId}
+              agent={resolved.agent}
+              unreadable={resolved.unavailable || resolved.unreadable}
+            />
+            <AgentEffect agent={resolved.agent} />
+            {resolved.agent?.archivedAt === null || resolved.agent === null ? null : (
+              <span className="text-text-muted">
+                archived since — the binding stands, because archiving an agent does not rewrite the
+                sessions that ran as it
+              </span>
+            )}
+            {resolved.unavailable ? (
+              <span style={{ color: 'var(--color-warning)' }}>
+                this agent could not be read, so what it removed cannot be shown
+              </span>
+            ) : null}
+          </>
+        )}
 
-      {bindability.bindable ? (
-        <button
-          type="button"
-          data-testid="session-agent-bind"
-          onClick={() => setOpen(true)}
-          className="rounded-xs border border-border-control px-2 text-2xs text-text"
-          style={{ minHeight: 24 }}
-        >
-          {session.agentId === null ? 'Choose an agent' : 'Change'}
-        </button>
-      ) : (
-        <span className="text-text-muted">· fixed at launch</span>
-      )}
+        {bindability.bindable ? (
+          <button
+            type="button"
+            data-testid="session-agent-bind"
+            onClick={() => setOpen(true)}
+            className="rounded-xs border border-border-control px-2 text-2xs text-text"
+            style={{ minHeight: 24 }}
+          >
+            {session.agentId === null ? 'Choose an agent' : 'Change'}
+          </button>
+        ) : (
+          <span className="text-text-muted">· fixed at launch</span>
+        )}
+      </p>
 
       {open ? (
         <BindAgentModal
@@ -130,7 +144,7 @@ export function SessionAgentLine({ session, onBind, saving }: SessionAgentLinePr
           }}
         />
       ) : null}
-    </p>
+    </>
   );
 }
 
@@ -176,9 +190,16 @@ function AgentEffect({ agent }: { agent: AgentView | null }) {
 /**
  * Bind or unbind, for a Session that is still in `created`.
  *
- * This is also the **only** path by which a session-scoped agent (PRD §5.2) becomes usable: such an
- * agent names the Session it belongs to, so it cannot exist before the Session does and cannot be
- * chosen at create time. Here the Session id is known, so `partitionAgentsForBinding` offers it.
+ * The offer set is the Backend's, read from `GET /projects/{id}/available-agents` for this
+ * Session's Project — the same document and the same rule the Launch dialog uses, because a
+ * second answer to "may this agent be bound" is the defect this whole change removes.
+ *
+ * **One thing that read cannot tell this screen**, and it is stated rather than guessed. The
+ * Backend evaluates availability with `sessionId: null` — the create-time question — so a
+ * *session-scoped* agent (PRD §5.2) always comes back refused as `session_not_yet`, even the one
+ * that names this very Session. This surface used to offer it, from a client-side rule; it no
+ * longer decides, so it says instead that this Backend was not asked about this Session. Closing
+ * that needs a `sessionId` on the availability read, not a rule here.
  */
 function BindAgentModal({
   session,
@@ -192,14 +213,16 @@ function BindAgentModal({
   onBind: (agentId: string | null) => void;
 }) {
   const [agentId, setAgentId] = useState(session.agentId ?? '');
-  const agents = useBindableAgents({ projectId: session.projectId, sessionId: session.id }, true);
+  const agents = useAgentAvailability(session.projectId, true);
 
-  // A refetch that lands while the dialog is open must not leave a selection the API would refuse.
+  // A refetch that lands while the dialog is open must not leave a selection the API would refuse
+  // — but only once the read has actually answered, or an in-flight request would silently clear
+  // a choice nobody rejected.
   useEffect(() => {
     if (agentId === '') return;
-    const offered = agents.choices.offerable.some((option) => option.agent.id === agentId);
-    if (!offered) setAgentId('');
-  }, [agentId, agents.choices.offerable]);
+    if (agents.status !== 'ready') return;
+    if (!agents.offered.some((option) => option.agent.id === agentId)) setAgentId('');
+  }, [agentId, agents.status, agents.offered]);
 
   const unchanged = (session.agentId ?? '') === agentId;
 
@@ -245,6 +268,7 @@ function BindAgentModal({
         onChange={setAgentId}
         withdrawn={null}
         disabledReason={null}
+        sessionExists
       />
     </Modal>
   );

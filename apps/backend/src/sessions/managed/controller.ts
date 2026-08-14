@@ -67,6 +67,25 @@ export interface ManagedSessionControllerOptions {
   readonly onError?: ((error: unknown, sessionId: string) => void) | undefined;
   /** Called when a turn ends rate-limited. The registry turns it into a delayed job (§4.3). */
   readonly onRateLimited?: ((turn: RateLimitedTurn) => void) | undefined;
+  /**
+   * Called when a turn ends and **leaves the session idle** — the runtime has stopped and nothing
+   * in this Backend is going to start it again.
+   *
+   * This is the same fact `hasTurnInFlight` reports and `NO_TURN_IN_FLIGHT` is raised from
+   * (§6.3.1), delivered as an edge instead of a poll. Its one consumer is the agent-workflow
+   * runner, which turns it into "this step is waiting for you" for a **workflow** Session and
+   * ignores every other one — an interactive chat between messages is idle too, and is not news.
+   *
+   * Two endings deliberately do **not** call it, because in neither is the session waiting for a
+   * human:
+   *  - **interrupted** — the operator asked for the stop, so they are demonstrably present;
+   *  - **rate-limited** — the turn is already re-enqueued as a delayed job (§4.3), so what the
+   *    session is waiting for is the clock.
+   *
+   * A turn that ended with `result.is_error` *does* call it: the turn failed, the Session is still
+   * `running`, and nothing further happens until a person prompts it again.
+   */
+  readonly onTurnEnded?: ((sessionId: string) => void) | undefined;
   /** Called once the pump has stopped, whatever the cause. */
   readonly onClosed?: ((sessionId: string) => void) | undefined;
   readonly interruptTimeoutMs?: number | undefined;
@@ -89,6 +108,7 @@ export class ManagedSessionController {
   readonly #deltas: SessionDeltaSink | null;
   readonly #onError: ((error: unknown, sessionId: string) => void) | undefined;
   readonly #onRateLimited: ((turn: RateLimitedTurn) => void) | undefined;
+  readonly #onTurnEnded: ((sessionId: string) => void) | undefined;
   readonly #onClosed: ((sessionId: string) => void) | undefined;
   readonly #interruptTimeoutMs: number;
   readonly #disposeTimeoutMs: number;
@@ -127,6 +147,7 @@ export class ManagedSessionController {
     this.#deltas = options.deltas ?? null;
     this.#onError = options.onError;
     this.#onRateLimited = options.onRateLimited;
+    this.#onTurnEnded = options.onTurnEnded;
     this.#onClosed = options.onClosed;
     this.#interruptTimeoutMs = options.interruptTimeoutMs ?? DEFAULT_INTERRUPT_TIMEOUT_MS;
     this.#disposeTimeoutMs = options.disposeTimeoutMs ?? DEFAULT_DISPOSE_TIMEOUT_MS;
@@ -492,6 +513,10 @@ export class ManagedSessionController {
 
     const interrupted = this.#interrupting;
     const prompt = this.#currentPrompt;
+    // Captured before it is cleared below: `onTurnEnded` claims *a turn ended*, and a `result`
+    // that answers no turn of ours (a replay, a runtime that volunteers one at attach) has not
+    // ended one. Saying otherwise would page an operator about a session nobody prompted.
+    const wasInFlight = this.#turnInFlight;
 
     this.#turnInFlight = false;
     this.#currentPrompt = null;
@@ -531,6 +556,11 @@ export class ManagedSessionController {
         this.#sessionId,
       );
     }
+
+    // Last, and only for a turn that was really in flight and really ended on its own. The
+    // listener is fire-and-forget by contract (`runtime.ts` wraps it); the pump must not be able
+    // to die because something downstream of a *notification* threw.
+    if (wasInFlight) this.#onTurnEnded?.(this.#sessionId);
   }
 
   /** Persist what streamed before an interrupt, when the runtime did not do it for us. */

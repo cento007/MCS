@@ -407,6 +407,90 @@ describe('lifecycle sub-actions (§6.3)', () => {
   });
 });
 
+/**
+ * `POST /sessions/{id}/cancel` — the exit from `created` (§6.2.1).
+ *
+ * `SessionService.cancel` existed for a slice with no route: it was reachable only from a workflow
+ * Stop, so an operator who queued a launch and changed their mind had nothing to call. `end` cannot
+ * stand in — F7 has no `created -> completed` edge.
+ */
+describe('cancel — revoking a launch that has not happened (§6.2.1)', () => {
+  it('moves a `created` Session to failed(cancelled)', async () => {
+    const { body } = await createSession();
+
+    const response = await request('POST', `/api/v1/sessions/${body.id}/cancel`);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: SessionBody }>().data.state).toBe('failed');
+
+    const [row] = await testDatabase()
+      .db.select({ failureReason: schema.sessions.failureReason })
+      .from(schema.sessions)
+      .where(eq(schema.sessions.id, body.id));
+    expect(row?.failureReason).toBe('cancelled');
+  });
+
+  it('revokes a queued launch: the slot frees and the Session never runs', async () => {
+    built.sessions.registry.setMaxConcurrentSessions(1);
+    const first = await createSession();
+    const queued = await createSession();
+
+    await request('POST', `/api/v1/sessions/${first.body.id}/start`);
+    const launch = await request('POST', `/api/v1/sessions/${queued.body.id}/start`);
+    expect(launch.json<{ meta: { launch: string } }>().meta.launch).toBe('queued');
+
+    expect((await request('POST', `/api/v1/sessions/${queued.body.id}/cancel`)).statusCode).toBe(
+      200,
+    );
+
+    // The guarantee is F7's, not the consumer's: `failed` has no edge into `running`, so the
+    // durable `session.launch` job cannot start it however the race falls.
+    await request('POST', `/api/v1/sessions/${first.body.id}/end`);
+    const after = await request('GET', `/api/v1/sessions/${queued.body.id}`);
+    expect(after.json<{ data: SessionBody }>().data.state).toBe('failed');
+    expect(runtime.launches.some((entry) => entry.sessionId === queued.body.id)).toBe(false);
+  });
+
+  it('refuses a Session that has already launched', async () => {
+    const { body } = await createSession();
+    await request('POST', `/api/v1/sessions/${body.id}/start`);
+
+    const response = await request('POST', `/api/v1/sessions/${body.id}/cancel`);
+
+    expect(response.statusCode).toBe(409);
+    const error = response.json<{ error: { code: string; details: { from: string } } }>().error;
+    expect(error.code).toBe('INVALID_STATE_TRANSITION');
+    expect(error.details.from).toBe('running');
+  });
+
+  it('refuses an observed Session by naming the type, not the state', async () => {
+    // Cancel abandons a launch Mission Control was going to make, and it never made one for an
+    // observed Session (`OBSERVED_UNSUPPORTED_ACTIONS`). Both a `created` and a `running` observed
+    // Session answer the same way — the type is the reason in both.
+    for (const state of ['created', 'running'] as const) {
+      const sessionId = await seedSession({ projectId, userId, sessionType: 'observed', state });
+
+      const response = await request('POST', `/api/v1/sessions/${sessionId}/cancel`);
+
+      expect(response.statusCode, state).toBe(409);
+      expect(response.json<{ error: { code: string } }>().error.code, state).toBe(
+        'OPERATION_NOT_SUPPORTED',
+      );
+    }
+  });
+
+  it('is authenticated like every other lifecycle action', async () => {
+    const { body } = await createSession();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${body.id}/cancel`,
+    });
+
+    expect(response.statusCode).toBe(401);
+  });
+});
+
 describe('observed sessions refuse actions their type cannot take (§6.3, WS1 §5.2)', () => {
   it('OPERATION_NOT_SUPPORTED for start, pause, resume and interrupt', async () => {
     const created = await seedSession({

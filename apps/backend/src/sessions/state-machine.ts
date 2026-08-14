@@ -46,7 +46,7 @@ export type SessionAction = 'start' | 'cancel' | 'pause' | 'resume' | 'end' | 'a
  *   - `pause`/`resume` — Mission Control cannot gate an external CLI.
  * `end` *is* supported and means "stop observing"; `archive` is identical to managed.
  */
-const OBSERVED_UNSUPPORTED_ACTIONS: readonly SessionAction[] = [
+export const OBSERVED_UNSUPPORTED_ACTIONS: readonly SessionAction[] = [
   'start',
   'cancel',
   'pause',

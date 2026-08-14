@@ -56,6 +56,13 @@ export interface Agent {
   readonly updatedAt: string;
 }
 
+export type AgentBindingRefusalReason =
+  | 'archived'
+  | 'project_unstated'
+  | 'other_project'
+  | 'session_not_yet'
+  | 'session_elsewhere';
+
 export interface AgentPermissions {
   readonly repository: {
     readonly read: boolean;
@@ -616,7 +623,8 @@ export type NotificationType =
   | 'sync_failed'
   | 'repository_problem'
   | 'daily_report'
-  | 'cost_budget_alert';
+  | 'cost_budget_alert'
+  | 'workflow_step_waiting';
 
 export interface NotificationsReadAll {
   readonly updated: number;
@@ -629,6 +637,7 @@ export interface NotificationsSettings {
     readonly syncFailed: boolean;
     readonly repositoryProblem: boolean;
     readonly costBudgetAlert: boolean;
+    readonly workflowStepWaiting: boolean;
   };
   readonly dailyReport: {
     readonly enabled: boolean;
@@ -669,8 +678,11 @@ export interface Project {
 
 export interface ProjectAvailableAgents {
   readonly projectId: string;
+  /** The Session the refusals were computed against (`?sessionId=`), or null for the create-time question. It is what separates `session_not_yet` from `session_elsewhere`. */
+  readonly sessionId: string | null;
   readonly team: AssignedTeam | null;
   readonly agents: readonly AvailableAgent[];
+  readonly refused: readonly RefusedAgent[];
 }
 
 export interface PullRequest {
@@ -717,6 +729,20 @@ export interface QdrantSettings {
   readonly port: number;
   readonly apiKey: SecretFieldRead;
   readonly embeddingModel: string;
+}
+
+export interface RefusedAgent {
+  readonly agentId: string;
+  readonly name: string;
+  readonly scope: AgentScope;
+  readonly projectId: string | null;
+  readonly sessionId: string | null;
+  readonly runtime: AgentRuntime;
+  readonly archivedAt: string | null;
+  /** Why an Agent cannot be bound to a new Session in this Project. `session_not_yet` is the one temporary refusal: that agent becomes bindable through PATCH /sessions/{id} once its Session exists. */
+  readonly reason: AgentBindingRefusalReason;
+  /** The rule and the way out of it, in one operator-facing sentence. This is the identical string `POST /sessions` and `PATCH /sessions/{id}` answer with when the binding is attempted, because both come from one function. */
+  readonly explanation: string;
 }
 
 export interface Repository {
@@ -801,6 +827,7 @@ export interface Session {
   readonly workingDirectory: string;
   /** The Agent persona this Session runs as (PRD 5.1), or null. The id ONLY - the Agent resource is served by GET /agents/{id}, because inlining a persona would put a 20 000-character system prompt on the session list. */
   readonly agentId: string | null;
+  readonly agentBindingRefusal: SessionAgentBindingRefusal | null;
   readonly runtime: SessionRuntimeInfo;
   readonly observation: SessionObservation | null;
   readonly costUsd: number | null;
@@ -814,6 +841,14 @@ export interface Session {
   readonly archivedAt: string | null;
   readonly updatedAt: string;
 }
+
+export interface SessionAgentBindingRefusal {
+  /** Why a Session refuses a change to `agentId`. `observed`: Mission Control did not launch the process. `already_launched`: the system prompt was fixed at spawn. */
+  readonly reason: SessionAgentRefusalReason;
+  readonly explanation: string;
+}
+
+export type SessionAgentRefusalReason = 'observed' | 'already_launched';
 
 export interface SessionExport {
   readonly format: 'markdown';

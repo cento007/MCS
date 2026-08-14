@@ -3,6 +3,7 @@ import {
   type Assert,
   arrayOf,
   booleanValue,
+  type Covers,
   describe,
   type ExactShape,
   entityId,
@@ -20,6 +21,7 @@ import {
   stringValue,
   timestampValue,
 } from '../http/response-schema.js';
+import { SESSION_AGENT_REFUSALS, type SessionAgentRefusalReason } from './agent-binding.js';
 import type { SessionFilesReadModel, SessionFileTouch } from './files.js';
 import type {
   MessageResource,
@@ -78,6 +80,31 @@ export type _SessionTokenUsageShape = Assert<
   ExactShape<SessionResource['tokenUsage'], typeof sessionTokenUsageSchema>
 >;
 
+/**
+ * Why this Session will not accept a change to `agentId` — the two refusals
+ * `PATCH /sessions/{id}` raises, published so a client does not have to predict them.
+ *
+ * `null` on the resource means the Session *will* accept one, which is the whole of "render a
+ * control here rather than a fact".
+ */
+export const sessionAgentRefusalReasonSchema = enumSchema(
+  'SessionAgentRefusalReason',
+  SESSION_AGENT_REFUSALS,
+  'Why a Session refuses a change to `agentId`. `observed`: Mission Control did not launch the process. `already_launched`: the system prompt was fixed at spawn.',
+);
+export type _SessionAgentRefusalValues = Assert<
+  Covers<SessionAgentRefusalReason, typeof SESSION_AGENT_REFUSALS>
+>;
+
+export const sessionAgentBindingRefusalSchema = objectSchema('SessionAgentBindingRefusal', {
+  reason: sessionAgentRefusalReasonSchema,
+  /** The identical sentence the `409`/`400` carries — one function produces both. */
+  explanation: stringValue,
+});
+export type _SessionAgentBindingRefusalShape = Assert<
+  ExactShape<SessionResource['agentBindingRefusal'], typeof sessionAgentBindingRefusalSchema>
+>;
+
 /** F7's canonical state list, read from `@mc/shared` so the document cannot invent a sixth. */
 export const sessionStateSchema = enumSchema('SessionState', SESSION_STATES);
 export const sessionTypeSchema = enumSchema('SessionType', ['managed', 'observed']);
@@ -103,6 +130,7 @@ export const sessionSchema = objectSchema('Session', {
     nullableEntityId,
     'The Agent persona this Session runs as (PRD 5.1), or null. The id ONLY - the Agent resource is served by GET /agents/{id}, because inlining a persona would put a 20 000-character system prompt on the session list.',
   ),
+  agentBindingRefusal: nullable(sessionAgentBindingRefusalSchema),
   runtime: sessionRuntimeSchema,
   observation: nullable(sessionObservationSchema),
   costUsd: nullableNumber,

@@ -556,6 +556,30 @@ describe('binding an agent to a session', () => {
     const unbound = await patch(`/api/v1/sessions/${created.json().data.id}`, { agentId: null });
     expect(unbound.json().data.agentId).toBeNull();
   });
+
+  it('states on the Session itself whether an agent can still be bound, in the same words', async () => {
+    // The last transcription in this domain: a client that wants to know whether to render the
+    // agent as a control or as a fact had to re-implement these two rules, because the only way to
+    // learn them was to attempt the write. Both now come from `sessionAgentRefusal`.
+    const created = await createSession();
+    expect(created.json().data.agentBindingRefusal).toBeNull();
+
+    const agentId = await seedAgent({ name: 'Late' });
+
+    for (const [sessionId, reason] of [
+      [await seedSession({ projectId, userId, state: 'running' }), 'already_launched'],
+      [await seedSession({ projectId, userId, sessionType: 'observed' }), 'observed'],
+    ] as const) {
+      const read = await get(`/api/v1/sessions/${sessionId}`);
+      const refusal = read.json().data.agentBindingRefusal;
+      expect(refusal.reason, reason).toBe(reason);
+
+      const attempt = await patch(`/api/v1/sessions/${sessionId}`, { agentId });
+      expect(attempt.statusCode, reason).toBe(409);
+      // Identical, not merely similar: the resource and the refusal are one function.
+      expect(attempt.json().error.message, reason).toBe(refusal.explanation);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

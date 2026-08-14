@@ -36,6 +36,7 @@ import {
   renderSessionCompleted,
   renderSessionFailed,
   renderSyncFailed,
+  renderWorkflowStepWaiting,
 } from './render.js';
 
 /**
@@ -184,6 +185,61 @@ export class NotificationProducer {
     }
 
     return produced;
+  }
+
+  /**
+   * **`WorkflowNotifierPort`** — "a workflow step is waiting for you" (PRD §5.6).
+   *
+   * A seventh notification type with **no originating event**, and the third of its kind: like
+   * `daily_report` (a scheduled job) and `cost_budget_alert` (a threshold evaluation), the fact it
+   * reports is not a state change. A managed Session going idle at the end of a turn is not an F7
+   * transition — the Session stays `running` — so there is nothing for `handleEvent` to map, and
+   * `NOTIFICATION_EVENT_TYPES` gains no row. That is exactly the case arbitration A8 kept
+   * `notifications.type` a separate enum for.
+   *
+   * **Which sessions this is called for is decided elsewhere, on purpose.** The agent-workflow
+   * runner asks the question ("is this Session a step, is its run still going, has it already been
+   * announced?"); this method answers a narrower one, and answers it the same way it answers the
+   * other six: `produce` applies `notifications.events.workflowStepWaiting`, quiet hours and the
+   * Telegram configuration. There is no bypass and no second policy.
+   *
+   * The Session facts are read here rather than passed in for the reason F6.1 gives about event
+   * payloads: the caller has ids and two names, and the project name and title belong to the
+   * Session — `readSessionFacts` already reads exactly those for `session.completed`.
+   */
+  async notifyWorkflowStepWaiting(input: {
+    readonly runId: string;
+    readonly sessionId: string;
+    readonly workflowName: string;
+    readonly agentName: string;
+    readonly stepOrdinal: number;
+    readonly stepCount: number;
+  }): Promise<ProducedNotification | null> {
+    const facts = await readSessionFacts(this.#db, input.sessionId);
+
+    return this.produce({
+      type: 'workflow_step_waiting',
+      rendered: renderWorkflowStepWaiting({
+        workflowName: input.workflowName,
+        agentName: input.agentName,
+        stepOrdinal: input.stepOrdinal,
+        stepCount: input.stepCount,
+        // A Session row that vanished under us is not a reason to page nobody: the step is still
+        // waiting, and the two absent lines are simply omitted (`bodyLines`).
+        projectName: facts?.projectName ?? null,
+        sessionTitle: facts?.title ?? null,
+      }),
+      payload: {
+        // No `eventType`: there is no originating F6 event (arbitration A8), and inventing one
+        // would send a consumer looking for a frame that was never emitted.
+        sessionId: input.sessionId,
+        runId: input.runId,
+        stepOrdinal: input.stepOrdinal,
+        stepCount: input.stepCount,
+      },
+      // The run, so every Notification about one chain shares a correlation id.
+      correlationId: input.runId,
+    });
   }
 
   /**

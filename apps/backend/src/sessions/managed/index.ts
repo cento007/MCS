@@ -74,6 +74,36 @@ export function createDeltaRelay(): DeltaRelay {
   };
 }
 
+/**
+ * A settable "a turn ended and this session is idle" listener — `createDeltaRelay`'s twin, for the
+ * same ordering reason and with the same one-line cost.
+ *
+ * The consumer is the agent-workflow runner, which `app.ts` builds *after* the Session domain
+ * because a workflow step **is** a Session. Handing the runtime its listener at construction time
+ * would mean building the runner first, which is not possible; a late attach is the alternative to
+ * inverting a dependency that points the right way.
+ *
+ * Exactly one listener, not a list. Two consumers of "this session is idle" would be two policies
+ * about what idle means, and the second one to arrive would silently replace the first — which is
+ * what this shape makes visible rather than convenient.
+ */
+export interface TurnRelay {
+  attach(listener: (sessionId: string) => void): void;
+  turnEnded(sessionId: string): void;
+}
+
+export function createTurnRelay(): TurnRelay {
+  let listener: ((sessionId: string) => void) | null = null;
+  return {
+    attach(next: (sessionId: string) => void): void {
+      listener = next;
+    },
+    turnEnded(sessionId: string): void {
+      listener?.(sessionId);
+    },
+  };
+}
+
 export interface ManagedSessionsOptions {
   readonly db: Db;
   readonly outbox: Outbox;
@@ -94,6 +124,8 @@ export interface ManagedSessions {
   readonly runtime: ManagedRuntime;
   readonly prompts: PromptService;
   readonly deltas: DeltaRelay;
+  /** Attach the single "a turn ended, this session is idle" listener — see `createTurnRelay`. */
+  readonly turns: TurnRelay;
   /** Subscribe the rate-limit retry consumer (§4.3). */
   start(): Promise<void>;
   /** Stop consuming and let every child go. */
@@ -102,6 +134,7 @@ export interface ManagedSessions {
 
 export function createManagedSessions(options: ManagedSessionsOptions): ManagedSessions {
   const deltas = createDeltaRelay();
+  const turns = createTurnRelay();
   const cost = options.cost ?? createSessionCostStore(options.db);
 
   const retries =
@@ -128,6 +161,9 @@ export function createManagedSessions(options: ManagedSessionsOptions): ManagedS
     cost,
     deltas,
     retries,
+    onTurnEnded: (sessionId) => {
+      turns.turnEnded(sessionId);
+    },
     onError: options.onError,
     spawnTimeoutMs: options.spawnTimeoutMs,
     interruptTimeoutMs: options.interruptTimeoutMs,
@@ -149,6 +185,7 @@ export function createManagedSessions(options: ManagedSessionsOptions): ManagedS
     runtime,
     prompts,
     deltas,
+    turns,
 
     async start(): Promise<void> {
       unsubscribe ??= await options.queue.subscribeJobs<PromptRetryJob>(

@@ -1,68 +1,130 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import {
-  type AgentBindingChoices,
-  type AgentBindingContext,
   type AgentView,
-  partitionAgentsForBinding,
+  NO_AVAILABILITY,
+  type ProjectAgentAvailability,
   readAgent,
   readAgentList,
+  readProjectAgentAvailability,
 } from '../../lib/agents/index.js';
 import { type ApiError, apiGet, apiList, endpoints, queryKeys } from '../../lib/api/index.js';
 
 /**
- * The Agents a Session can be bound to (PRD §5.1, TDS 04 §13.2).
+ * The two agent reads the Sessions slice makes, and they answer different questions.
  *
- * ## Why this reads every agent rather than a filtered list
+ *  - **`useAgentAvailability`** — *which agents may be bound to a Session in this Project, and why
+ *    the others may not.* One request, `GET /projects/{id}/available-agents`, and the whole answer
+ *    is the server's.
+ *  - **`useAgentDirectory` / `useSessionAgent`** — *what is this agent called.* A lookup over
+ *    `GET /agents`, used to name an agent a Session is **already** bound to. It says nothing about
+ *    bindability and must not: a running Session may be bound to an archived agent, or to one
+ *    scoped to a project the operator is not looking at, and those are exactly the two cases where
+ *    knowing which persona ran matters most.
  *
- * `GET /agents` accepts `?projectId=`, and using it looks like the obvious move. It is the wrong
- * one twice over:
+ * ## What this file used to do
  *
- *  - `?projectId=` filters on `agents.project_id`, so it returns *only* the project-scoped agents
- *    and drops every **global** one — which is the majority of what a launch should be offered.
- *  - `?includeArchived=` defaults to **false**, so archived agents would never arrive and the
- *    picker could not say *"3 agents are not offered here, and here is why"* about them. An
- *    absence the screen cannot account for is indistinguishable from an agent that does not exist.
+ * `useBindableAgents` read the *whole* agents table (`?limit=200&includeArchived=true`) and
+ * partitioned it in the browser with `partitionAgentsForBinding` — a hand-maintained transcription
+ * of the Backend's refusals. It was written that way for a good reason: the availability route
+ * returned only what *was* available, so using it would have left the picker unable to account for
+ * an agent the operator could see on the Agents screen and not find here.
  *
- * So this reads the whole set — bounded at 200, one cheap request on a single-operator instance —
- * and partitions it locally with `partitionAgentsForBinding`, which transcribes the Backend's own
- * refusals. Everything that is missing from the dropdown is therefore something the screen can
- * name.
+ * The Backend now returns both halves from one function — the same `agentBindingRefusal` that
+ * `POST /sessions` enforces — so the reason for the local partition is gone and with it the risk
+ * that paid for it: a refusal added server-side reaches this picker on the same commit, or it
+ * reaches nothing. The exclusion sentences rendered under the field are the server's own strings,
+ * identical to the ones its `400`/`409` would have carried.
  *
- * `retry: false` for the reason the Agents screen uses it: on a Backend without `/agents` the
- * route is a 404, and retrying it three times only delays an honest answer. `unavailable` is that
- * answer, and it is a different fact from "this instance has no agents".
+ * `useProjectTeam` is gone for the same reason: it read this very document for `onTeam` while the
+ * offer set came from somewhere else. One document, one read, one answer.
  */
 
 const AGENTS_STALE_MS = 30_000;
 
-export interface BindableAgentsRead {
-  readonly choices: AgentBindingChoices;
-  /** Every agent the Backend served, before the binding rules were applied. */
-  readonly all: readonly AgentView[];
-  /** Rows served without an id or a name. Counted, never silently dropped. */
-  readonly unreadable: number;
-  readonly isPending: boolean;
-  readonly isError: boolean;
+/**
+ * Whether the question could be asked, and whether it was answered.
+ *
+ * Five states rather than a `boolean` plus a `null`, because *not offered* and *cannot tell
+ * whether it would be offered* are different facts and the picker renders them differently — the
+ * Memory screen's four-empty-states doctrine, applied to a dropdown.
+ */
+export type AgentAvailabilityStatus =
+  /** No Project chosen yet, so the question has no subject. Nothing was asked. */
+  | 'unasked'
+  | 'pending'
+  /** This Backend does not serve the route at all — different from "no agents". */
+  | 'route_missing'
+  /** The read failed. Nothing can be offered and nothing can be explained. */
+  | 'failed'
+  | 'ready';
+
+export interface AgentAvailabilityRead extends ProjectAgentAvailability {
+  readonly status: AgentAvailabilityStatus;
   readonly error: ApiError | null;
-  /** The Backend does not serve `/agents` at all — not the same as "no agents yet". */
-  readonly unavailable: boolean;
 }
 
-/** A 404/501 on a collection route means the route is missing, not that the request was wrong. */
-export function isAgentsRouteMissing(error: unknown): boolean {
+/** A 404/501 means the route is missing, not that the request was wrong. */
+export function isRouteMissing(error: unknown): boolean {
   const apiError = error as ApiError | null;
   if (apiError === null || apiError === undefined) return false;
   return apiError.status === 404 || apiError.status === 501;
 }
 
-export function useBindableAgents(
-  context: AgentBindingContext,
+/**
+ * `GET /projects/{id}/available-agents` — bindability, asked rather than derived.
+ *
+ * `retry: false` for the reason the Agents screen uses it: on a Backend without the route this is
+ * a 404, and retrying it three times only delays an honest answer.
+ */
+export function useAgentAvailability(
+  projectId: string | null,
   enabled: boolean,
-): BindableAgentsRead {
+): AgentAvailabilityRead {
+  const asked = enabled && projectId !== null;
+
+  const query = useQuery<unknown, ApiError>({
+    queryKey: queryKeys.projects.availableAgents(projectId ?? 'none'),
+    enabled: asked,
+    retry: false,
+    staleTime: AGENTS_STALE_MS,
+    queryFn: ({ signal }) =>
+      apiGet<unknown>(endpoints.projects.availableAgents(projectId as string), { signal }),
+  });
+
+  const availability = useMemo(
+    () => (query.data === undefined ? NO_AVAILABILITY : readProjectAgentAvailability(query.data)),
+    [query.data],
+  );
+
+  const status: AgentAvailabilityStatus = !asked
+    ? 'unasked'
+    : query.isError
+      ? isRouteMissing(query.error)
+        ? 'route_missing'
+        : 'failed'
+      : query.isSuccess
+        ? 'ready'
+        : 'pending';
+
+  return {
+    ...availability,
+    status,
+    error: query.isError && !isRouteMissing(query.error) ? query.error : null,
+  };
+}
+
+/**
+ * Every Agent this instance has, for **naming** one — never for deciding what may be bound.
+ *
+ * Archived rows are included deliberately: a Session bound before its agent was retired still has
+ * to render a name, because archival does not rewrite the sessions that ran as it.
+ */
+export function useAgentDirectory(enabled: boolean): {
+  readonly agents: readonly AgentView[];
+  readonly isPending: boolean;
+} {
   const query = useQuery<readonly unknown[], ApiError>({
-    // The same cache slot the Agents screen fills when it is showing archived rows, so opening the
-    // Launch modal after visiting `/agents` costs nothing and vice versa.
     queryKey: queryKeys.agents.list({ limit: 200, includeArchived: true }),
     enabled,
     retry: false,
@@ -77,97 +139,8 @@ export function useBindableAgents(
   });
 
   const read = useMemo(() => readAgentList(query.data ?? []), [query.data]);
-  const { projectId, sessionId } = context;
-  const choices = useMemo(
-    () => partitionAgentsForBinding(read.agents, { projectId, sessionId }),
-    [read.agents, projectId, sessionId],
-  );
 
-  const unavailable = query.isError && isAgentsRouteMissing(query.error);
-
-  return {
-    choices,
-    all: read.agents,
-    unreadable: read.unreadable,
-    isPending: enabled && query.isPending,
-    isError: query.isError && !unavailable,
-    error: unavailable ? null : (query.error ?? null),
-    unavailable,
-  };
-}
-
-/**
- * `GET /projects/{id}/available-agents` — the read that makes PRD §5.7's teams mean something.
- *
- * ## Why this is used for *emphasis* and not as the offer set
- *
- * It is the Backend's positive statement of the same rule `partitionAgentsForBinding` transcribes:
- * every agent it returns can be bound in this Project, and the ones it omits cannot. Using it as
- * the dropdown's contents would be tempting and would be a downgrade, because it returns only what
- * *is* available — so the picker could no longer account for the agent the operator can see on the
- * Agents screen and cannot find here. "Where did my agent go" is the question a filtered picker
- * generates, and the answer is never "it does not exist".
- *
- * What it adds is the thing a local partition cannot know: **which of the available agents are on
- * this Project's team**. That is the whole point of a team — the launch picker leads with the five
- * personas the operator chose to work with rather than an undifferentiated list.
- *
- * It fails soft in every direction. No route, no team, an error: the picker simply has no emphasis,
- * which is exactly how it behaved before teams existed.
- */
-export interface ProjectTeamRead {
-  /** Agent ids on the Project's assigned team, or an empty set when there is none. */
-  readonly onTeam: ReadonlySet<string>;
-  /** The team's name, for the group label. `null` when no team is assigned or none was read. */
-  readonly teamName: string | null;
-  /** Roster seats held by an archived agent — the difference between "5 members" and 4 offered. */
-  readonly archivedMemberCount: number;
-}
-
-const NO_TEAM: ProjectTeamRead = {
-  onTeam: new Set<string>(),
-  teamName: null,
-  archivedMemberCount: 0,
-};
-
-export function useProjectTeam(projectId: string | null, enabled: boolean): ProjectTeamRead {
-  const query = useQuery<unknown, ApiError>({
-    queryKey: queryKeys.projects.availableAgents(projectId ?? 'none'),
-    enabled: enabled && projectId !== null,
-    retry: false,
-    staleTime: AGENTS_STALE_MS,
-    queryFn: ({ signal }) =>
-      apiGet<unknown>(endpoints.projects.availableAgents(projectId as string), { signal }),
-  });
-
-  return useMemo(() => readProjectTeam(query.data), [query.data]);
-}
-
-/** Projected defensively: this read is younger than everything else the modal calls. */
-export function readProjectTeam(document: unknown): ProjectTeamRead {
-  if (typeof document !== 'object' || document === null) return NO_TEAM;
-  const record = document as Record<string, unknown>;
-
-  const onTeam = new Set<string>();
-  const agents = record['agents'];
-  if (Array.isArray(agents)) {
-    for (const entry of agents) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const row = entry as Record<string, unknown>;
-      if (row['onTeam'] === true && typeof row['id'] === 'string') onTeam.add(row['id']);
-    }
-  }
-
-  const team = record['team'];
-  const teamRecord =
-    typeof team === 'object' && team !== null ? (team as Record<string, unknown>) : null;
-  const teamName = typeof teamRecord?.['name'] === 'string' ? (teamRecord['name'] as string) : null;
-  const archivedMemberCount =
-    typeof teamRecord?.['archivedMemberCount'] === 'number'
-      ? (teamRecord['archivedMemberCount'] as number)
-      : 0;
-
-  return { onTeam, teamName, archivedMemberCount };
+  return { agents: read.agents, isPending: enabled && query.isPending };
 }
 
 /**
@@ -175,8 +148,7 @@ export function readProjectTeam(document: unknown): ProjectTeamRead {
  *
  * One request for the whole table rather than one per row: the Sessions list can hold fifty rows
  * bound to a handful of agents, and `useSessionAgent` per row would issue a request per *distinct*
- * agent on a screen whose job is to load fast. It shares the cache slot the picker fills, so a
- * table rendered after the Launch modal has been opened costs nothing at all.
+ * agent on a screen whose job is to load fast.
  *
  * The trade is stated rather than hidden: this reads one bounded page, so a Session bound to an
  * agent outside it resolves to `null` and the row renders the id tail. The **detail** header uses
@@ -195,27 +167,26 @@ export function useAgentNames(enabled: boolean): {
   /** False while the read is still in flight — a `null` before this is "not yet", not "missing". */
   readonly settled: boolean;
 } {
-  const read = useBindableAgents({ projectId: null, sessionId: null }, enabled);
+  const directory = useAgentDirectory(enabled);
 
   const byId = useMemo(() => {
     const map = new Map<string, AgentView>();
-    for (const agent of read.all) map.set(agent.id, agent);
+    for (const agent of directory.agents) map.set(agent.id, agent);
     return map;
-  }, [read.all]);
+  }, [directory.agents]);
 
   const lookup = useMemo<AgentLookup>(() => (agentId: string) => byId.get(agentId) ?? null, [byId]);
 
-  return { lookup, settled: !enabled || !read.isPending };
+  return { lookup, settled: !enabled || !directory.isPending };
 }
 
 /**
  * One Agent by id, for a Session that is already bound to one.
  *
- * Separate from `useBindableAgents` on purpose: a Session may run as an **archived** agent (it was
- * bound before it was retired, and archival deliberately does not rewrite history), and it may run
- * as one scoped to a project the operator is not currently looking at. Deriving the name from the
- * bindable list would make exactly those two agents display as nothing at all — the two cases where
- * knowing which persona ran matters most.
+ * Separate from the availability read on purpose: a Session may run as an **archived** agent (it
+ * was bound before it was retired, and archival deliberately does not rewrite history), and it may
+ * run as one scoped to a project the operator is not currently looking at. Deriving the name from
+ * the bindable set would make exactly those two agents display as nothing at all.
  */
 export function useSessionAgent(agentId: string | null): {
   readonly agent: AgentView | null;
