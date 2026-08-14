@@ -140,6 +140,28 @@ export const BACKEND_QUEUES = Object.freeze([
     retryLimit: 0,
     expireInSeconds: 600,
   }),
+  /**
+   * `agent_workflow.advance` — move a workflow run to its next step (PRD §5.6).
+   *
+   * Produced *and* consumed here; see `QUEUE_NAMES.AGENT_WORKFLOW_ADVANCE` for why the Backend
+   * and not a worker.
+   *
+   * **`retryLimit: 0`, and the reason is the same one `memory.index` gives with one addition.**
+   * Every failure this handler can see is already recorded as data — a step that cannot be
+   * launched **halts the run** with a reason the operator can read and resume from — so a pg-boss
+   * retry could only repeat work that will fail identically. The addition is that a retry is not
+   * merely useless here, it is *expensive*: the handler creates a Claude Code Session, so a
+   * redelivery that raced the run's own state would spend money twice. The run's own budget
+   * (`ck_agent_workflow_runs_sessions_launched`) is the backstop; dropping the job is the policy.
+   *
+   * `expireInSeconds: 300` against one context package (bounded at 25 s of memory plus 10 s of
+   * git by `sessions/export/service.ts`) and one Session spawn.
+   */
+  Object.freeze({
+    name: QUEUE_NAMES.AGENT_WORKFLOW_ADVANCE,
+    retryLimit: 0,
+    expireInSeconds: 300,
+  }),
 ]);
 
 export interface CreateBackendQueueOptions {

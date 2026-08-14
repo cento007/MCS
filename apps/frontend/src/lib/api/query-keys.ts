@@ -163,6 +163,37 @@ export const queryKeys = {
     list: (filters: ListFilters = {}) => ['agent-teams', 'list', filters] as const,
     detail: (id: string) => ['agent-teams', id] as const,
   },
+  /**
+   * PRD §5.6 workflows, and the runs of them.
+   *
+   * **Two roots, not one**, and the split is the same argument `agentTeams` makes against nesting
+   * under `agents`: a workflow *definition* changes when a person edits it — rarely — while a
+   * *run* changes every time a step advances, which on a four-step chain is a dozen invalidations
+   * inside an hour. Nesting runs under `['agent-workflows']` would refetch every definition and
+   * every list on every step transition, and the definition did not move.
+   *
+   * The run list is keyed by workflow id because that is the only way it is ever read (a
+   * workflow's own history), and `'list'` keeps it out of `detail`'s namespace for the reason at
+   * the top of this file.
+   */
+  agentWorkflows: {
+    root: () => ['agent-workflows'] as const,
+    list: (filters: ListFilters = {}) => ['agent-workflows', 'list', filters] as const,
+    detail: (id: string) => ['agent-workflows', id] as const,
+    /**
+     * `GET /agent-workflows/{id}/cost-estimate`.
+     *
+     * Nested under the workflow's detail slot because that is what it is derived from — editing the
+     * chain changes it — and because `agent_workflow.updated` should therefore invalidate it along
+     * with the definition, which a prefix invalidation on `['agent-workflows', id]` does for free.
+     */
+    costEstimate: (id: string) => ['agent-workflows', id, 'cost-estimate'] as const,
+  },
+  agentWorkflowRuns: {
+    root: () => ['agent-workflow-runs'] as const,
+    list: (filters: ListFilters = {}) => ['agent-workflow-runs', 'list', filters] as const,
+    detail: (id: string) => ['agent-workflow-runs', id] as const,
+  },
 } as const;
 
 /** A query key as the invalidation machinery passes it around. */

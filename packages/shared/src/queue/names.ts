@@ -125,6 +125,26 @@ export const QUEUE_NAMES = Object.freeze({
    * envelope and is in the §15.4 catalog.
    */
   MEMORY_RETENTION: 'memory.retention',
+  /**
+   * Move a workflow run to its next step — payload `{ kind, runId, … }` (PRD §5.6).
+   *
+   * A job name, not an event: the *outcomes* are `agent.execution_started`,
+   * `agent_workflow.run.completed` and friends, which do carry F6 envelopes and do appear in the
+   * §15.2 catalog.
+   *
+   * **Produced and consumed by the Backend**, arbitration A16 applied exactly as `memory.index`
+   * applies it: the trigger is a domain event on the in-process post-commit bus
+   * (`session.completed` / `session.failed`), the work is enqueued to a queue with **one**
+   * consuming process, and no queue has two consumers. The Backend is that process because the
+   * work is "generate a context package, create a Session, launch it" — all three are Backend
+   * services holding Backend state (the concurrency semaphore, the managed runtime registry), and
+   * none of them is reachable from a worker.
+   *
+   * `concurrency: 1`, so two advances can never race to launch a second Session for one run.
+   * The real guarantee is in the database (`ux_agent_workflow_run_steps_attempt` and
+   * `ck_agent_workflow_runs_sessions_launched`); this only keeps the common case cheap.
+   */
+  AGENT_WORKFLOW_ADVANCE: 'agent_workflow.advance',
 } as const);
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];

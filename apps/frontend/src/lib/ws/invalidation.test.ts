@@ -88,7 +88,7 @@ describe('queryKeysForEvent', () => {
     expect(keys).toContain(`["sessions","${SESSION_ID}","files"]`);
   });
 
-  it('refetches the agents group on an agent write, and ignores execution events', () => {
+  it('refetches the agents group on an agent write', () => {
     // Phase 4 graduated `agent.created`/`agent.updated` from reserved to produced when the Agents
     // screen shipped. The blunt prefix is right here where it was wrong for memory: `GET /agents`
     // is one cheap read with no embedding call behind it, and these fire when a person presses
@@ -96,9 +96,62 @@ describe('queryKeysForEvent', () => {
     for (const type of ['agent.created', 'agent.updated']) {
       expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual(['["agents"]']);
     }
-    // Executions stay ignored: nothing in the SPA renders one, so a refetch would redraw nothing.
-    expect(queryKeysForEvent(event('agent.execution_started', {}))).toEqual([]);
-    expect(queryKeysForEvent(event('agent.execution_failed', {}))).toEqual([]);
+  });
+
+  it('treats the three execution events as workflow step boundaries', () => {
+    /**
+     * These used to invalidate **nothing**, on the stated grounds that "nothing in the SPA renders
+     * an execution". Slice 3 ended that: the workflow slice produces them for exactly the fact
+     * §15.4 reserved them for — an Agent ran a task — which is one *step* of a run, and the run
+     * screen renders every one of them.
+     *
+     * They reach the named run first, then the run group, then the Sessions group: a step boundary
+     * *is* a Session reaching a terminal state, and the run screen shows each step's Session state
+     * beside the run's own account of it.
+     */
+    expect(
+      keyStrings(queryKeysForEvent(event('agent.execution_started', { runId: 'r1' }))),
+    ).toEqual([
+      '["agent-workflow-runs","r1"]',
+      '["agent-workflow-runs"]',
+      '["sessions"]',
+      '["spend"]',
+    ]);
+    // Without a `runId` there is nothing to target, and the group is the honest fallback.
+    expect(keyStrings(queryKeysForEvent(event('agent.execution_failed', {})))).toEqual([
+      '["agent-workflow-runs"]',
+      '["sessions"]',
+      '["spend"]',
+    ]);
+  });
+
+  it('separates a workflow definition write from a run moving', () => {
+    // A definition changes when a person presses Save; a run changes on its own. Nesting the two
+    // would refetch every definition on every step transition.
+    for (const type of ['agent_workflow.created', 'agent_workflow.updated']) {
+      expect(keyStrings(queryKeysForEvent(event(type, {})))).toEqual(['["agent-workflows"]']);
+    }
+    for (const type of [
+      'agent_workflow.run.started',
+      'agent_workflow.run.completed',
+      'agent_workflow.run.halted',
+      'agent_workflow.run.stopped',
+    ]) {
+      const keys = keyStrings(queryKeysForEvent(event(type, { runId: 'r1' })));
+      expect(keys).toContain('["agent-workflow-runs","r1"]');
+      expect(keys).not.toContain('["agent-workflows"]');
+    }
+  });
+
+  it('lets a session ending reach the run it was a step of', () => {
+    // The advance is driven by exactly these two events, and they arrive *before* the
+    // `agent_workflow.run.*` that follows. Without this the run screen would keep showing the step
+    // that just finished as running until the next event landed.
+    for (const type of ['session.completed', 'session.failed']) {
+      expect(keyStrings(queryKeysForEvent(event(type, { sessionId: SESSION_ID })))).toContain(
+        '["agent-workflow-runs"]',
+      );
+    }
   });
 
   it('separates team writes from agent writes', () => {
@@ -169,10 +222,14 @@ describe('queryKeysForChannel (reconnect gap healing)', () => {
     // permissions that are no longer what it says they are. Teams and every Project's availability
     // read ride the same channel, so the heal covers them — an `agent.assigned` missed inside the
     // window is exactly what leaves a launch picker leading with the wrong team.
+    // Workflows and runs ride the same channel from slice 3. A run is the one thing here that
+    // moves on its own, so a gap of unknown content is exactly when its state is most likely stale.
     expect(keyStrings(queryKeysForChannel('agents'))).toEqual([
       '["agents"]',
       '["agent-teams"]',
       '["projects"]',
+      '["agent-workflows"]',
+      '["agent-workflow-runs"]',
     ]);
   });
 

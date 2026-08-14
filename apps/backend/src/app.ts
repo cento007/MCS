@@ -9,6 +9,11 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type AdrModule, registerAdrs } from './adrs/index.js';
 import { type AgentModule, registerAgents } from './agents/index.js';
+import {
+  type AgentWorkflowModule,
+  registerAgentWorkflows,
+  type WorkflowPromptPort,
+} from './agents/workflows/index.js';
 import { registerAuditLog } from './audit/index.js';
 import { type AuthService, type FixedWindowRateLimiter, registerAuth } from './auth/index.js';
 import { registerCommits } from './commits/index.js';
@@ -207,6 +212,19 @@ export interface BuildAppOptions {
   readonly sessionExportProbe?:
     | ((localPath: string, options: { timeoutMs: number }) => Promise<WorkingTreeStatus>)
     | undefined;
+  /**
+   * The prompt surface an agent-workflow step is driven through (PRD §5.6).
+   *
+   * Defaults to the managed wrapper's own `PromptService`, and is `null` when no `agentRuntime`
+   * was supplied — a Backend with no runtime then refuses `POST /agent-workflow-runs` up front
+   * rather than launching a Session it can never speak to.
+   *
+   * The override exists for the same reason `runtime` exists beside `agentRuntime`: a workflow
+   * test needs a launchable Session with a **distinct** `runtime_session_id` per step
+   * (`ux_sessions_runtime_session_id`), which `createFakeRuntime` gives and a single scripted
+   * `MockAgentRuntime` does not — and it still needs somewhere for the step's prompt to land.
+   */
+  readonly workflowPrompts?: WorkflowPromptPort | undefined;
 }
 
 /** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
@@ -232,6 +250,8 @@ export interface BuiltApp {
   readonly sessions: SessionModule;
   /** Phase 4: the Agent domain (PRD §5, TDS 04 §13.2) and the binding the launch path uses. */
   readonly agents: AgentModule;
+  /** Phase 4 slice 3: PRD §5.6 workflows, their runs, and the event-driven advance. */
+  readonly workflows: AgentWorkflowModule;
   /** Observed-session ingest: `POST /hook-events` + the transcript tailer (TDS 02 §6). */
   readonly observed: ObservedIngestModule;
   /** The four Phase 1 read models (TDS 04 §7.5, §7.7, §7.8, §8). */
@@ -448,6 +468,33 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     },
   });
 
+  // Agent workflows (PRD §5.6) — Phase 4, slice 3. Registered *here* rather than inside
+  // `registerAgents` because it needs three things that exist only now: the `SessionService`
+  // (a workflow step **is** a Session), the managed `PromptService` (which is `null` on a Backend
+  // with no runtime, and a run then refuses up front rather than launching something that cannot
+  // be spoken to), and `SessionExportService` (whose context package is the hand-off between
+  // steps). `registerAgents` runs before the Session domain because the binding resolver has to;
+  // a workflow needs the opposite order, so it is wired where both halves exist.
+  const workflows = registerAgentWorkflows(app, {
+    db: options.db,
+    outbox,
+    bus,
+    queue,
+    sessions: sessions.sessions,
+    prompts: options.workflowPrompts ?? sessions.managed?.prompts ?? null,
+    handoff: sessionExport.service,
+    ...(options.now === undefined ? {} : { now: options.now }),
+    onError: (error, context) => {
+      app.log.error({ err: error, context }, 'agent workflow error');
+    },
+    onTimezoneRejected: (timezone, error) => {
+      app.log.warn(
+        { err: error, timezone },
+        'general.timezone was rejected by PostgreSQL — the workflow cost estimate fell back to UTC',
+      );
+    },
+  });
+
   // The read models the Dashboard and Settings pages are built on: Services health (§7.5),
   // schedule (§7.7), spend (§7.8) and notifications (§8). Health is registered last because it
   // self-reports the hub's connection count and the registry's slot usage (TDS 02 §7.1), and
@@ -565,6 +612,7 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     eventRelay,
     sessions,
     agents,
+    workflows,
     observed,
     serviceHealth,
     schedule,

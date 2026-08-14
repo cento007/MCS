@@ -59,16 +59,25 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
         ? sessionsChannelKeys()
         : [queryKeys.sessions.detail(sessionId), ...sessionsChannelKeys()];
 
+    /**
+     * A Session ending is also **how a workflow run advances**: the runner listens for exactly
+     * these two events and enqueues the next step. So the run group goes stale here — not because
+     * a run event is missing (four of them exist), but because this is the moment the *previous*
+     * step's row becomes final, and it arrives before the `agent_workflow.run.*` that follows it.
+     * Without this, a run screen would show the step that just finished as still running until the
+     * next event landed.
+     */
     case 'session.completed':
     case 'session.failed':
       // Same as a state change, plus the timeline: the terminal transition is the entry an
       // operator diagnosing a failure looks for first.
       return sessionId === null
-        ? sessionsChannelKeys()
+        ? [...sessionsChannelKeys(), queryKeys.agentWorkflowRuns.root()]
         : [
             queryKeys.sessions.detail(sessionId),
             queryKeys.sessions.timeline(sessionId),
             ...sessionsChannelKeys(),
+            queryKeys.agentWorkflowRuns.root(),
           ];
 
     case 'session.message.appended':
@@ -155,8 +164,8 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
      * Save rather than hundreds of times during a backfill, and the Agent Builder is a form that
      * must not keep showing a stale baseline after another tab saved over it.
      *
-     * The three `agent.execution_*` names are deliberately absent: nothing in the SPA renders an
-     * execution, so invalidating on them would refetch a list to redraw nothing.
+     * The three `agent.execution_*` names are handled below rather than here — they are workflow
+     * step boundaries, not agent edits.
      */
     case 'agent.created':
     case 'agent.updated':
@@ -186,6 +195,43 @@ export function queryKeysForEvent(event: EventEnvelope): readonly QueryKey[] {
       return projectId === null
         ? [queryKeys.agentTeams.root()]
         : [queryKeys.projects.availableAgents(projectId), queryKeys.agentTeams.root()];
+    }
+
+    /**
+     * PRD §5.6 workflows, on the same `agents` channel.
+     *
+     * A definition changes when a person presses Save, so the blunt prefix is right — and it also
+     * reaches `['agent-workflows', id, 'cost-estimate']`, which is derived from the chain and would
+     * otherwise keep quoting the old one's history.
+     */
+    case 'agent_workflow.created':
+    case 'agent_workflow.updated':
+      return [queryKeys.agentWorkflows.root()];
+
+    /**
+     * The four run events, and the three `agent.execution_*` step boundaries that ride with them.
+     *
+     * All seven mean the same thing to this client — *a run moved* — and all seven are cheap: a run
+     * document is one `GET` of a handful of rows, and these fire a few times per run rather than
+     * hundreds of times per backfill (the distinction that made `memory.*` targeted instead).
+     *
+     * The **run's own slot** is invalidated when the payload names it, plus the root so the
+     * workflow page's list moves too. `agent.execution_*` carry the step's coordinates, and
+     * `runId` is the one this client can use.
+     */
+    case 'agent_workflow.run.started':
+    case 'agent_workflow.run.completed':
+    case 'agent_workflow.run.halted':
+    case 'agent_workflow.run.stopped':
+    case 'agent.execution_started':
+    case 'agent.execution_completed':
+    case 'agent.execution_failed': {
+      const runId = payloadString(event, 'runId');
+      // The Sessions group goes with it: a step starting *creates* a Session, and a run screen
+      // renders each step's Session state beside the run's own account of it.
+      const keys: QueryKey[] = [queryKeys.agentWorkflowRuns.root(), ...sessionsChannelKeys()];
+      if (runId !== null) keys.unshift(queryKeys.agentWorkflowRuns.detail(runId));
+      return keys;
     }
 
     default:
@@ -247,7 +293,17 @@ export function queryKeysForChannel(channel: string): readonly QueryKey[] {
      * `['projects', id, 'available-agents']` without enumerating the ids the client happens to hold.
      */
     case 'agents':
-      return [queryKeys.agents.root(), queryKeys.agentTeams.root(), queryKeys.projects.root()];
+      return [
+        queryKeys.agents.root(),
+        queryKeys.agentTeams.root(),
+        queryKeys.projects.root(),
+        // Workflows and runs ride this channel too. A run is the one thing here that moves on its
+        // own, so a gap of unknown content is exactly when its state is most likely to be stale —
+        // and a stale `running` badge over a chain that has finished spending is the worst of the
+        // three ways this screen can be wrong.
+        queryKeys.agentWorkflows.root(),
+        queryKeys.agentWorkflowRuns.root(),
+      ];
     default:
       return [];
   }

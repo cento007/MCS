@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   const maxConcurrentSessions = await readMaxConcurrentSessions(database.db);
   const claudeCode = await readClaudeCodeLaunchSettings(database.db);
 
-  const { app, sessions, github, memory } = buildAppWithServices({
+  const { app, sessions, github, memory, workflows } = buildAppWithServices({
     config,
     db: database.db,
     queue,
@@ -119,6 +119,14 @@ async function main(): Promise<void> {
   // does no work until a job arrives, which cannot happen before a model is configured.
   await memory.indexing.start();
 
+  // The single `agent_workflow.advance` consumer, its three session-lifecycle triggers, and the
+  // repair sweep for steps whose Session is live and was never prompted (PRD §5.6). Awaited for
+  // the same reason as `memory.indexing`: it only subscribes and repairs. It must come **after**
+  // `recoverManagedSessions` above — recovery marks orphaned Sessions `failed`, which is what
+  // halts the runs they belonged to, and a runner subscribed before that would try to advance
+  // them mid-recovery.
+  await workflows.runs.start();
+
   // The `memory.retention` chain (PRD §4.4 item 4). `start()` subscribes the tick consumer and
   // primes a tick **only if some tier actually expires** — every tier defaults to `0` (never),
   // so a default install schedules nothing at all. Turning retention on from Settings re-primes
@@ -149,6 +157,9 @@ async function main(): Promise<void> {
   shutdown.onShutdown('memory-indexing', async () => {
     memory.indexing.stop();
     await memory.retention.stop();
+  });
+  shutdown.onShutdown('agent-workflows', async () => {
+    await workflows.runs.shutdown();
   });
   shutdown.onShutdown('http-server', async () => {
     await app.close();

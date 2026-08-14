@@ -46,6 +46,17 @@ export const routes: RouteObject[] = [
           { path: 'agents/new', lazy: () => import('../routes/agent-builder.js') },
           { path: 'agents/teams', lazy: () => import('../routes/agent-teams.js') },
           { path: 'agents/teams/:teamId', lazy: () => import('../routes/agent-team-detail.js') },
+          { path: 'agents/workflows', lazy: () => import('../routes/agent-workflows.js') },
+          {
+            path: 'agents/workflows/:workflowId',
+            lazy: () => import('../routes/agent-workflow-detail.js'),
+          },
+          /*
+           * A run lives at `agents/runs/:runId` rather than under its workflow: it is linked to
+           * from a toast, from the run list and (once a step is open) from a Session, and it must
+           * keep resolving after its workflow is archived.
+           */
+          { path: 'agents/runs/:runId', lazy: () => import('../routes/agent-workflow-run.js') },
           { path: 'agents/:agentId', lazy: () => import('../routes/agent-builder.js') },
           { path: 'settings', element: <Navigate to="/settings/general" replace /> },
           { path: 'settings/:category', lazy: () => import('../routes/settings.js') },

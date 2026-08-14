@@ -68,8 +68,8 @@ export const PHASE_3_EVENT_TYPES = [
 ] as const;
 
 /**
- * Phase 4 event types — **three** of the six names TDS 04 §15.4 reserved, plus three the team
- * slice added.
+ * Phase 4 event types — **all six** of the names TDS 04 §15.4 reserved, plus three the team slice
+ * added and six the workflow slice added.
  *
  *   `agent.created`      — an Agent was defined
  *   `agent.updated`      — its fields, permissions or archived state changed
@@ -94,19 +94,54 @@ export const PHASE_3_EVENT_TYPES = [
  * names only, so these three are recorded as an addition in TDS 04 §13.2 rather than pretending
  * they were foreseen. They ride the reserved `agents` WebSocket channel (§14.3).
  *
- * The three `agent.execution_*` names stay in `RESERVED_EVENT_TYPES.phase4` below because nothing
- * produces them: `POST /agents/{id}/executions` is a later slice, and a workflow (PRD §5.6) is a
- * chain of executions, so neither exists yet. Listing an event name in the live registry makes it
- * subscribable and documentable — and a subscriber that waits forever for
- * `agent.execution_completed` is a worse outcome than a name that is honestly still reserved.
+ * **The three `agent.execution_*` names graduate with the workflow slice, and they are produced
+ * for the fact they were reserved for rather than a parallel one.** §15.4 reserved them alongside
+ * `POST /agents/{id}/executions` — "an agent ran a task". That is exactly what one **step** of a
+ * workflow run is: an Agent, a task, a Session. So the three names name the step boundaries:
+ *
+ *   `agent.execution_started`   — a step's Session was created and its launch requested
+ *   `agent.execution_completed` — that Session reached `completed`
+ *   `agent.execution_failed`    — that Session reached `failed`
+ *
+ * They **derive from** `session.completed` / `session.failed` rather than duplicating them: F7
+ * stays the only lifecycle, and these carry the coordinates a Session event cannot — which run,
+ * which position in the chain, which attempt. A client watching a run would otherwise have to
+ * keep its own session→run map and would get it wrong on reconnect.
+ *
+ * **Six workflow names are additions**, recorded in TDS 04 §13.2.2 the way `agent_team.*` was.
+ * `agent_workflow` is a domain and a run is its sub-entity, so the F6.1 grammar
+ * (`<domain>[.<sub-entity>].<verb-past>`) gives `agent_workflow.run.started` — the same shape as
+ * `session.message.appended`, and deliberately not `agent.workflow_*`, because a workflow is not
+ * owned by an agent any more than a team is.
+ *
+ *   `agent_workflow.created`       — a chain was defined
+ *   `agent_workflow.updated`       — its name, steps or archived state changed
+ *   `agent_workflow.run.started`   — an operator started a run
+ *   `agent_workflow.run.completed` — the last step finished
+ *   `agent_workflow.run.halted`    — a step failed; the run is resumable, not dead
+ *   `agent_workflow.run.stopped`   — the operator stopped it, and the in-flight Session was ended
+ *
+ * There is no `agent_workflow.deleted`: a workflow is archived, because
+ * `agent_workflow_runs.workflow_id` is history in exactly the way `sessions.agent_id` is. The
+ * archive shows up as `agent_workflow.updated` carrying `archived`, which is `agent.updated`'s
+ * shape verbatim.
  */
 export const PHASE_4_EVENT_TYPES = [
   'agent.created',
   'agent.updated',
   'agent.assigned',
+  'agent.execution_started',
+  'agent.execution_completed',
+  'agent.execution_failed',
   'agent_team.created',
   'agent_team.updated',
   'agent_team.deleted',
+  'agent_workflow.created',
+  'agent_workflow.updated',
+  'agent_workflow.run.started',
+  'agent_workflow.run.completed',
+  'agent_workflow.run.halted',
+  'agent_workflow.run.stopped',
 ] as const;
 
 export const EVENT_TYPES = [
@@ -141,10 +176,11 @@ export function isEventType(value: unknown): value is EventType {
  * > TDS scope per the project-plan scope guard.
  *
  * The lists are kept whole after a name graduates into the live registry, so this stays the
- * record of where each one came from. `phase3` is entirely produced; of `phase4`, the three
- * `agent.*` names are live and the three `agent.execution_*` names are not. The three
- * `agent_team.*` types are absent here on purpose — they were never reserved, they were added
- * by the team slice, and back-filling them into a reservation list would erase that fact.
+ * record of where each one came from. `phase3` is entirely produced, and as of the workflow slice
+ * **so is `phase4`** — the three `agent.execution_*` names are produced per workflow step. The
+ * `agent_team.*` and `agent_workflow.*` types are absent here on purpose: they were never
+ * reserved, they were added by the team and workflow slices, and back-filling them into a
+ * reservation list would erase that fact.
  */
 export const RESERVED_EVENT_TYPES = Object.freeze({
   phase3: Object.freeze(['memory.item_stored', 'memory.item_deleted', 'memory.reindexed'] as const),

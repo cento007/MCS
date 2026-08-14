@@ -753,3 +753,61 @@ Two split unique indexes rather than one three-column key, because **a composite
 ### A duplication worth watching
 
 The session-binding refusals now exist twice: authoritatively in `apps/backend/src/agents/binding.ts`, and transcribed into `apps/frontend/src/lib/agents/binding.ts` so the picker can explain an absence. They were verified to match on landing, and nothing ties them together — a fifth refusal added server-side would silently not reach the UI. That is the same root cause as the missing `Session.agentId`: `openapi.yaml` declares no response schemas, so every client-side shape is hand-maintained.
+
+---
+
+## 2026-08-14 — Phase 4 slice 3: a workflow you can define *and* run
+
+PRD §5.6 is one line — `Developer → QA → Security → Architect`. It has been the phase's furniture problem twice: slice 1 declined to build it because no execution primitive existed, slice 2 declined again and left the ordinal off team membership on the grounds that "order belongs to the workflow". This is that workflow, and it executes.
+
+Four tables (migration `0009`), split along one line: `agent_workflows` + `agent_workflow_steps` are a **definition** an operator edits; `agent_workflow_runs` + `agent_workflow_run_steps` are **history** that must not change afterwards. That is why a run snapshots `step_count` instead of counting the definition's rows at read time — "3 of 4" has to keep saying 4 after a fifth step is added.
+
+### A step is a Session, and that is the whole execution model
+
+`agent_workflow_run_steps.session_id` is not a convenience column. A step **is** a managed Session bound to that step's Agent (slice 1's `sessions.agent_id`), which means there is no second runtime, no second state machine, no second transcript story and no second cost story to keep in sync with the first. The consequences are the argument:
+
+- a step's cost is its Session's `total_cost_usd`, so `GET /spend` counts a workflow without knowing workflows exist;
+- a step's transcript is its Session's, so Export, the Context Package and the memory indexer work on it unchanged;
+- a step's concurrency slot is its Session's, so `maxConcurrentSessions` bounds a chain for free.
+
+The three reserved `agent.execution_*` names finally have a producer, and it is that Session's own F7 lifecycle rather than a parallel one. **`POST /agents/{id}/executions` is declined permanently** (TDS 04 §13.2): asked what it would add over `POST /sessions { agentId }`, the honest answer is a different spelling and a second state machine. Slice 2 declined `POST /agents/{id}/assignments` on the same kind of reasoning; this is the same scrutiny applied to the last reserved route.
+
+### A managed Session does not complete itself, and the run does not pretend otherwise
+
+`ManagedSessionController` deliberately keeps a Session `running` after a turn's `result`, because Claude Code routinely ends a turn asking a question. So a step finishes when the **operator ends it**. That is not a limitation worked around — auto-ending on turn completion would hand QA a Developer step that stopped mid-question, which is exactly the plausible-looking gap this feature must never produce, and PRD §15 puts autonomous review flows in Phase 5 anyway. What a run automates is everything *between* steps: the hand-off, the Session, the agent binding, the launch and the prompt.
+
+The advance is event-driven on `session.completed` / `session.failed`, the same two events `memory/indexing.ts` already consumes, enqueued to `agent_workflow.advance` — one queue, one consuming process (arbitration A16), `retryLimit: 0` because the handler creates a Claude Code Session and a redelivery would spend money twice.
+
+### The hand-off is the crux, and it is reuse
+
+Step N+1 receives step N's **context package** (`POST /sessions/{id}/context-package`), unchanged. Phase 3 built that document for "someone resuming abandoned work" — it already carries the working tree as of now, the files touched, the commits, the ADRs and related semantic memory, with every gap named in place. Writing a second document would have meant a second set of bounds, a second truncation policy and a second chance to omit something quietly.
+
+Where it degrades, the next step is **told**: the prompt carries a warning naming the reason and instructing the agent not to assume, and `ck_agent_workflow_run_steps_handoff` makes "degraded with no reason" an unrepresentable row. Three of the eight gap reasons deliberately do *not* count as degradation — `below_threshold` and `only_own_session` are honest answers, and `not_configured` is a property of the install rather than of this hand-off. Counting the third would badge every step of every run on a machine that never opted into Phase 3, which is `integrations.ollama.enabled` in a different costume: a flag whose value never varies says nothing.
+
+### Bounds, because this is the most dangerous feature in the product
+
+Two of the three are database constraints rather than loops that could be wrong:
+
+| bound | enforced by |
+|---|---|
+| at most 10 steps in a chain | `ck_agent_workflow_steps_ordinal` — an eleventh is unrepresentable |
+| a per-run Session budget (operator-set, default one per step + 3 retries, ceiling 20) | `ck_agent_workflow_runs_sessions_launched` — a runner bug that loops fails an UPDATE |
+| **one `running` run per Project** | `ux_agent_workflow_runs_active` — two chains in one working tree is a merge conflict with a bill |
+
+`GET /agent-workflows/{id}/cost-estimate` answers "what will this cost me" *before* the run, from measured history: each step Agent's own completed Sessions. An Agent that has never run reports `null` and is counted in `stepsWithoutHistory`, because a number assembled from unrelated work would be worse than an admitted gap — the same rule the context package follows when it refuses to summarise. **Stop** marks the run `stopped` first and *then* ends the in-flight Session, so the `session.completed` that follows finds a run that is no longer `running`; ending the Session is what actually disposes the runtime, and a "stopped" run whose process was still writing to the repository would be a lie with a bill attached.
+
+### Found on the way
+
+- **A failed step retried itself.** The advance decides what to do next by deriving it from the attempt rows — which is what makes a redelivered job idempotent — and the rows cannot distinguish "failed just now" from "failed and the operator asked for another go". The first cut therefore re-launched on failure: an autonomous retry loop spending money nobody asked it to. Failures now halt inside the same transaction that records them, and the retry path is reachable only from `POST /{id}/resume`.
+- **A halt could leave an attempt row claiming to be `running`** while its Session was `failed` — two rows disagreeing about one fact, and `resume` would then decline because "the latest attempt is in flight". `#halt` closes the in-flight attempt.
+- **`agent_workflow.advance` had to be added to `BACKEND_QUEUES`.** pg-boss 10 refuses to send to a queue that does not exist, so without it every advance was a silent no-op. The integration tier caught it; nothing else would have.
+- **Leaked pg-boss workers made the integration tier lie.** Each test case builds its own app, and the old `shutdown()` did not await `offWork` — so the previous case's consumer was still live, and pg-boss being a competing-consumer substrate, it *stole* the next case's jobs and recorded their prompts against its own recorder. Six tests failed as "the runner never prompted". `shutdown()` is now awaitable and the suite calls it per case; the file went from 150 s to 25 s.
+- **`SessionService.create/start/end` now take `SessionActor` (`Pick<Principal, 'userId'>`)** rather than a full `Principal`. They only ever read the user id, and the runner advancing a chain from a queue consumer has no request — a fabricated `username`, `authMethod` and scope list would have been three untrue facts invented to satisfy a type. Every existing caller passes a `Principal`, which satisfies it structurally.
+
+### Verified against the old behaviour
+
+Each claim was checked by reverting the mechanism and watching the test fail:
+
+- removing the halt-on-failure block → the four halt/resume tests time out, because the run silently re-launches the failed step;
+- removing *both* stop guards (the run-state check and the stopped-attempt check) → the stopped run advances to step 2 and the kill-switch test fails on a second attempt row;
+- the `coalesce` in `ck_agent_workflow_steps_agent_scope` → demonstrated on a scratch database (dropped afterwards): the un-coalesced form **accepts** a `project`-scoped step whose project key is missing, because a CHECK passes when it evaluates to `NULL`. That is the defect `0006` shipped and `0007` had to correct, and it is now a named test.

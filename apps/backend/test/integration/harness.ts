@@ -244,6 +244,11 @@ export function createTestApp(
     ...(options.sessionExportProbe === undefined
       ? {}
       : { sessionExportProbe: options.sessionExportProbe }),
+    // The prompt surface an agent-workflow step is driven through (PRD §5.6). Forwarded so a
+    // workflow test can pair `createFakeRuntime` — which issues a distinct
+    // `runtime_session_id` per launch, as a multi-step run requires — with somewhere for each
+    // step's prompt to land, without standing up the whole Agent SDK pipeline.
+    ...(options.workflowPrompts === undefined ? {} : { workflowPrompts: options.workflowPrompts }),
   });
 
   openApps.push(built.app);
@@ -295,6 +300,13 @@ export async function truncateAll(): Promise<void> {
     'agent_team_assignments',
     'agent_team_members',
     'agent_teams',
+    // Before `agents` and `sessions`, which the run tables reference as history (`RESTRICT`).
+    // A **global** workflow with no steps and no runs is reachable from no cascade at all, so
+    // like `agent_teams` it has to be named or it survives into the next test case.
+    'agent_workflow_run_steps',
+    'agent_workflow_runs',
+    'agent_workflow_steps',
+    'agent_workflows',
     // `agents` and `sessions` reference each other (`sessions.agent_id`, `agents.session_id`),
     // so no ordering of the two is "correct" — TRUNCATE takes them together via CASCADE. Named
     // for the same reason as `memory_items`: the list is the inventory.

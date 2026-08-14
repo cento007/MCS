@@ -24,11 +24,11 @@ import { agentRuntimeLabel, agentScopeLabel } from './types.js';
  * and **Teams** are the second tab, added in slice 2 against TDS 04 §13.2's reserved
  * `/agent-teams` routes.
  *
- * **Workflows (PRD §5.6) are still not here, and there is no tab for them.** A chain
- * `Developer → QA → Security → Architect` needs an execution primitive, and
- * `POST /agents/{id}/executions` is unbuilt with its three `agent.execution_*` events reserved and
- * unproduced. A builder for a sequence nothing can run is the most elaborate inert control this
- * codebase could ship, and the whole Permissions section is an argument against shipping one.
+ * **Workflows (PRD §5.6) are the third tab, added in slice 3.** This paragraph used to explain why
+ * they were absent — a chain `Developer → QA → Security → Architect` needed an execution primitive,
+ * and there was none. There is now: a run is a real resource, each step is a real Session, and the
+ * three `agent.execution_*` events name the step boundaries. The argument against shipping a
+ * builder for a sequence nothing can run stands; it simply no longer applies.
  *
  * The rest of the screen is mostly about being honest when there is nothing to show, because on
  * a fresh install that is every install:

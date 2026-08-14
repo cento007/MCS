@@ -136,7 +136,8 @@ export function RosterField({
 
       <p className="mt-2 text-2xs text-text-muted leading-150">
         {selected.length} of {MAX_AGENT_TEAM_MEMBERS} seats used. A team is a set, not a sequence —
-        there is no ordering here, because order belongs to a workflow and workflows are not built.
+        there is no ordering here, because order belongs to a workflow (PRD §5.6), which is where it
+        is configured.
       </p>
 
       <Excluded exclusions={choices.excluded} />

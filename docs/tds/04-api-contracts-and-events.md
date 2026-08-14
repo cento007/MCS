@@ -100,6 +100,8 @@ All routes require authentication except `POST /api/v1/auth/login`. There is no 
 | MemoryItems | `/api/v1/memory-items` | 3 — stub | §13.1 |
 | Agents | `/api/v1/agents` | 4 | §13.2 |
 | AgentTeams | `/api/v1/agent-teams` | 4 | §13.2.1 |
+| AgentWorkflows | `/api/v1/agent-workflows` | 4 | §13.2.2 |
+| AgentWorkflowRuns | `/api/v1/agent-workflow-runs` | 4 | §13.2.2 |
 | WebSocket | `/api/v1/ws` | 1 | §14 |
 
 ---
@@ -1254,13 +1256,16 @@ What was built: `GET|POST /api/v1/agents` and `GET|PATCH /api/v1/agents/{id}`, F
 
 **Phase 4's second slice landed 2026-08-14: teams, project assignment, and the read that consumes them.** `agent_teams` graduated out of TDS 03 §6's skeleton set (it was the last one), `agent_team_members` was created, and `agent_team_assignments` was added — see the updated status table below.
 
-**Two of this section's items are still unbuilt**, and each omission is a decision rather than a backlog entry:
+**Phase 4's third slice landed 2026-08-14: PRD §5.6 workflows, defined *and* runnable.** `/agent-workflows` and `/agent-workflow-runs` are recorded in §13.2.2 below; neither was reserved by this section, so both are additions rather than departures.
+
+**Both of this section's remaining reserved items are now permanently declined**, and each refusal is a decision rather than a backlog entry:
 
 | Reserved | Status | Why |
 |---|---|---|
-| `POST /agents/{id}/assignments` | **not built, and now permanently** | Assignment turned out to be a *team* relationship, not a per-agent one. Making an Agent available to a Project is `PATCH /agent-teams/{id} { projectIds }`; binding an Agent to a Session stays on the Session resource, because that rule is a Session lifecycle rule (an Agent may only be bound while the Session is `created`). A third spelling would be a second way to write the same rows. `agent.assigned` is now produced — by the team path. |
-| `POST /agents/{id}/executions` | not built | An agent that *runs a task on its own* is a later slice. Its three `agent.execution_*` names stay unproduced. **PRD §5.6 workflows depend on this**: a workflow is an ordered chain of executions, so building workflow tables now would describe something nothing can run. |
+| `POST /agents/{id}/assignments` | **not built, and permanently** | Assignment turned out to be a *team* relationship, not a per-agent one. Making an Agent available to a Project is `PATCH /agent-teams/{id} { projectIds }`; binding an Agent to a Session stays on the Session resource, because that rule is a Session lifecycle rule (an Agent may only be bound while the Session is `created`). A third spelling would be a second way to write the same rows. `agent.assigned` is now produced — by the team path. |
+| `POST /agents/{id}/executions` | **not built, and permanently — declined by slice 3** | **A Session bound to an Agent already *is* an execution**, and has been since slice 1: `POST /sessions { agentId }` creates it, the Agent's `instructions` become the runtime's system prompt, its permissions become `disallowedTools`, F7 governs its lifecycle, `total_cost_usd` accounts for it and the transcript records it. A second route would need a second answer to every one of those. Asked what `POST /agents/{id}/executions` would *add* beyond `POST /sessions`, the honest answer is: a different spelling and a second state machine. The three reserved `agent.execution_*` event names **are** now produced — see §13.2.2 — from the step Sessions of a workflow run, which is the fact they were reserved for. |
 | `/agent-teams` | **built** (slice 2) | All four reserved routes, plus `DELETE` and one availability read — see below. |
+| `/agent-workflows`, `/agent-workflow-runs` | **built** (slice 3), never reserved | §13.2.2. |
 
 ### 13.2.1 AgentTeam (PRD §5.7) — built 2026-08-14
 
@@ -1331,6 +1336,72 @@ What was built: `GET|POST /api/v1/agents` and `GET|PATCH /api/v1/agents/{id}`, F
 
 **Permissions are subtractive.** Granting changes nothing relative to a Session with no Agent; denying removes tools (`disallowedTools`, plus `strictMcpConfig` so an on-disk MCP server cannot supply a differently-named equivalent). There is no `allowedTools` and no `canUseTool` handler, because both auto-approve — a permission model that grants is not a permission model.
 
+### 13.2.2 AgentWorkflow (PRD §5.6) — built 2026-08-14
+
+PRD §5.6 is one line — `Developer → QA → Security → Architect`. This slice builds the definition, the run and the advance, because a workflow that can be drawn and not executed is furniture.
+
+**Routes — none of them reserved by §13.2**, and recorded here rather than smuggled in, exactly as §13.1 recorded the two backfill routes and §13.2.1 recorded `DELETE /agent-teams/{id}`.
+
+- `GET|POST /api/v1/agent-workflows`, `GET|PATCH /api/v1/agent-workflows/{id}` — the chain.
+- `GET /api/v1/agent-workflows/{id}/cost-estimate` — bounded read model, no pagination, no `meta` (§1.2), like `/spend`.
+- `GET|POST /api/v1/agent-workflow-runs`, `GET /api/v1/agent-workflow-runs/{id}` — the executions.
+- `POST /api/v1/agent-workflow-runs/{id}/stop` — the kill switch. `200`, `meta.stoppedSession`.
+- `POST /api/v1/agent-workflow-runs/{id}/resume` — a halted run is not a dead row.
+
+**Stop and resume are sub-actions, and that is the F5.1 idiom used where it belongs.** §13.2.1 declined `POST /agent-teams/{id}/assignments` because an assignment is a *field*; a run is the opposite case — a genuine state machine (`running → halted → running → stopped`) where a `PATCH { state }` would invite a client to move it anywhere the enum allows.
+
+**A step is a Session, and there is no second runtime.** Each step of a run is a managed Session bound to that step's Agent (`sessions.agent_id`, slice 1). Nothing in this slice spawns a process, holds a transcript or accounts for cost — a parallel path would mean a second F7 state machine, a second transcript story and a second cost story, permanently drifting. The consequences are exact and are the argument: a step's cost is its Session's `total_cost_usd`, so `GET /spend` counts a workflow without knowing workflows exist; a step's transcript is its Session's, so Export, the Context Package and the memory indexer work on it unchanged; a step's concurrency slot is its Session's, so `maxConcurrentSessions` bounds a chain for free.
+
+**A managed Session does not complete itself, and the run does not pretend otherwise.** A turn ending is not a session ending — `ManagedSessionController` deliberately keeps a Session `running` after a `result` event, because Claude Code routinely ends a turn asking a question. So a step finishes when the **operator ends it** (`POST /sessions/{id}/end`) or when it fails. That is the Phase 4 shape rather than a limitation worked around: PRD §15 puts autonomous review flows in Phase 5, and auto-ending a step on turn completion would hand QA a Developer step that stopped mid-question — the plausible-looking gap this slice exists to avoid. What a run automates is everything *between* steps: the hand-off, the Session, the agent binding, the launch and the prompt.
+
+**The advance is event-driven, and it follows the memory indexer's pattern verbatim (arbitration A16).** The Backend subscribes to `session.started`, `session.completed` and `session.failed` on its in-process post-commit bus, does one indexed lookup, and enqueues to **`agent_workflow.advance` — a queue with exactly one consuming process**. `retryLimit: 0`: every failure the handler can see halts the run with a reason, and a redelivery would create a Claude Code Session, so a retry here is not merely useless but expensive.
+
+**The hand-off is the crux, and it is reuse rather than invention.** Step N+1 receives step N's **context package** (`POST /sessions/{id}/context-package`, §6.7) unchanged — the document Phase 3 built for "someone resuming abandoned work", which already carries the working tree as of now, the files touched, the commits, the ADRs and related semantic memory, with every gap named in place. Nothing is summarised: there is no model in this path, so a "summary of what the Developer did" could only be string-joined, which is the fabrication `package.ts` and `adr-draft.ts` both refuse. When the package cannot be produced, the next step is **told** — the prompt carries a warning naming the reason and instructing the agent not to assume, and the attempt row records `handoffState: 'degraded'` with that reason so a UI can badge it without parsing prose.
+
+`handoffState` is `none` (first step — not a degradation), `full`, or `degraded`. Three of the eight `RelatedGapReason` values deliberately do **not** degrade: `below_threshold` and `only_own_session` are honest answers, and `not_configured` is a property of the install rather than of this hand-off — counting it would badge every step of every run on a machine that never opted into Phase 3, which is `integrations.ollama.enabled` in a different costume.
+
+**Failure halts; halting is recoverable.** A failed step stops the chain with `haltReason` on the run and `state: 'failed'` on the attempt. `POST /{id}/resume` re-runs that position in a **new** Session as attempt N+1 (F7 states never move backward); the failed attempt keeps its own row and its own Session, so nothing is rewritten. A failure never retries itself: the attempt rows cannot distinguish "failed just now" from "failed and the operator asked again", so an auto-retry derived from state alone would be an autonomous spend loop.
+
+**Stop is a kill switch that stops the spend.** The run is marked `stopped` **first**, in its own transaction, and the in-flight Session is ended afterwards — so the `session.completed` that ending produces finds a run that is no longer `running` and advances nothing (the attempt row is `stopped` too, so the guard is double). `meta.stoppedSession` reports `ended`, `already_terminal`, `left_unstarted` or `null`: F7 has no `created → completed` edge, so a launch still waiting for a concurrency slot is left where it is and the operator is told rather than lied to.
+
+**Three spend bounds, and two of them are database constraints.** This is the most dangerous feature in the product, so the limits are not loops that could be wrong: `ck_agent_workflow_steps_ordinal` makes an eleventh step unrepresentable; `ck_agent_workflow_runs_sessions_launched` makes a run unable to record more launched Sessions than its own `maxSessions` (operator-set, defaulting to one per step plus three retries, ceiling 20); and `ux_agent_workflow_runs_active` admits **one `running` run per Project**, because two chains in one working tree is a merge conflict with a bill attached.
+
+**`GET /{id}/cost-estimate` answers "what will this cost me" before the run starts, and answers it with history.** Nothing here can predict a model's spend, so the basis is `observed_sessions`: the mean and max of each step Agent's own completed Sessions. A step whose Agent has never run reports `observed: null` and is counted in `stepsWithoutHistory`; `projected` is the sum over the measured steps, or `null` when none are measured. A number assembled from unrelated work would be worse than an admitted gap. The document carries `budget: { dailyUsd, spentTodayUsd, remainingUsd }` from the same statement `GET /spend` runs, so the estimate lands next to the limit it will be measured against.
+
+**`AgentWorkflow` resource:**
+
+| field | type | note |
+|---|---|---|
+| `id`, `name`, `description` | uuid, string, string\|null | |
+| `scope` | `'global' \| 'project'` | Two values, as a team's. `ck_agent_workflows_scope_target` mirrors `ck_agents_scope_target` |
+| `projectId` | uuid\|null | Set iff `scope = 'project'` |
+| `steps[]` | `{ ordinal, agentId, agentName, agentScope, agentProjectId, agentArchivedAt, instructions }` | **In chain order, not alphabetical** — the ordering *is* the value. `agentArchivedAt` is shown rather than hidden: a run refuses to start while any step names an archived agent, and this is the field that says which |
+| `stepCount` | integer | |
+| `archivedAt` | timestamp\|null | |
+
+`POST`/`PATCH` take `steps` as a **replace-the-whole-chain** array (omitted leaves it alone). The same Agent may appear twice — `Developer → QA → Developer` is a legitimate chain, which is the one place a workflow differs from a team roster, and there is deliberately no unique index forbidding it. **A chain cannot be edited while a run of it is `running` or `halted`** (`409`, naming the run): a run reads the definition when it advances, so a mid-flight edit would change which agent step 3 runs as *after* the operator saw the estimate and said yes. `step_count` is snapshotted on the run, so history is safe either way — this rule protects consent, not data.
+
+**Workflows are archived, not deleted — the Agent rule, not the team rule, and the difference is which side is history.** `agent_workflow_runs.workflow_id` records which chain a run executed, exactly as `sessions.agent_id` records which persona a conversation ran as, so the FK is `RESTRICT` and there is no delete path. This also answers the question a team's archive could not: an archived workflow simply cannot be started, and every run it produced is untouched. There is no delete for a run either — a run is the record of money spent.
+
+**`AgentWorkflowRun` resource:**
+
+| field | type | note |
+|---|---|---|
+| `id`, `workflowId`, `projectId`, `repositoryId` | uuid, uuid, uuid, uuid\|null | |
+| `task` | string | The operator's goal, verbatim, sent to every step. Never summarised |
+| `workingDirectory`, `branch`, `model` | string, string\|null, string\|null | Facts about *this execution*, so they are on the run and not on the chain |
+| `state` | `'running' \| 'completed' \| 'halted' \| 'stopped'` | No `queued`: a run never waits as a run — the queueing, when it happens, is the Session's (`meta.launch: 'queued'`, §6.2.1) |
+| `stepCount` | integer | The definition's count **as of the start** |
+| `currentStepOrdinal` | integer\|null | Furthest ordinal reached; `null` before the first attempt |
+| `maxSessions`, `sessionsLaunched` | integer | The spend bound and its consumption |
+| `haltReason` | string\|null | Non-null iff `halted`, enforced by `ck_agent_workflow_runs_state_fields` |
+| `steps[]` | `{ ordinal, attempt, agentId, sessionId, state, handoff: { state, reason, promptBytes }, promptSentAt, error, startedAt, completedAt }` | One row per **attempt**; a retry is a new row, never an overwrite |
+| `startedAt`, `completedAt` | timestamp, timestamp\|null | |
+
+`steps[].sessionId` is what makes the resource useful: everything about *what happened* is the Session's, and this document's job is to say which Session rather than restate any of it. The prompt text is **not** served — its size is (`handoff.promptBytes`), and the text itself is a `messages` row on that Session the moment it is submitted. `promptSentAt` is `null` while a launch is still waiting for a concurrency slot, which is a real, visible state of a run rather than an error.
+
+**Events.** The three reserved `agent.execution_*` names graduate here, produced from the step Sessions' own lifecycle rather than from a parallel one: `agent.execution_started` (a step's Session was created and its launch requested), `agent.execution_completed`, `agent.execution_failed`. They carry `{ runId, workflowId, projectId, stepOrdinal, attempt, agentId, sessionId }` — the coordinates a Session event cannot, since a client watching a run would otherwise keep its own session→run map and get it wrong on reconnect. Six names §15.4 never reserved are added: **`agent_workflow.created`**, **`agent_workflow.updated`** (carrying `archived`, exactly as `agent.updated` does), and **`agent_workflow.run.started`** / **`.run.completed`** / **`.run.halted`** / **`.run.stopped`**. The `run` sub-entity form is F6.1's grammar applied literally — `session.message.appended` is the precedent — and `agent.workflow_*` was rejected because a workflow is no more owned by an agent than a team is. All nine ride the reserved `agents` channel (§14.3); the execution events are deliberately **not** relayed on `sessions`, where the Session's own events already are.
+
 ---
 
 ## 14. WebSocket Protocol — `/api/v1/ws` (F5.6)
@@ -1379,7 +1450,7 @@ Matching is exact string comparison of normalized origins (scheme + host + port)
 | `sync` | `sync.*` | 2 |
 | `adrs` | `adr.created`, `adr.updated` | 2 |
 | `memory` | reserved | 3 — stub |
-| `agents` | `agent.created`, `agent.updated`, `agent.assigned` (§15.4), plus `agent_team.created` / `agent_team.updated` / `agent_team.deleted` (§13.2.1 additions). Execution events are a later slice | 4 |
+| `agents` | All six §15.4 reserved names — `agent.created`, `agent.updated`, `agent.assigned`, `agent.execution_started`, `agent.execution_completed`, `agent.execution_failed` — plus `agent_team.created` / `.updated` / `.deleted` (§13.2.1 additions) and `agent_workflow.created` / `.updated` / `.run.started` / `.run.completed` / `.run.halted` / `.run.stopped` (§13.2.2 additions). Fifteen types on one channel, deliberately: agents, teams, chains and runs are one screen, and §14.3 caps a connection at 64 subscriptions | 4 |
 
 Single-user system: any authenticated `full` principal may subscribe to any channel. Limit: 64 concurrent channel subscriptions per connection (`ack { ok: false, error: { code: 'VALIDATION_FAILED' } }` beyond).
 
@@ -1562,7 +1633,20 @@ Notes:
 
 `agent.created`, `agent.updated`, `agent.assigned`, `agent.execution_started`, `agent.execution_completed`, `agent.execution_failed` — producer: backend; consumers TBD in Phase 4 design.
 
-**Two of the six are live as of 2026-08-14** (Phase 4, first slice): `agent.created` and `agent.updated`, produced by the Backend through the outbox and relayed on the `agents` channel. Payloads carry ids and scalars only (F6.2): `{ agentId, scope, projectId, sessionId }` and `{ agentId, changedFields, archived }`. The other four stay reserved because nothing produces them — assignment and execution are later slices, and a name in the live registry is subscribable, so a client waiting forever for `agent.execution_completed` would be a worse outcome than a name that is honestly still reserved.
+**All six are live as of 2026-08-14**, across Phase 4's three slices, and every one is produced by the Backend through the outbox and relayed on the `agents` channel. Payloads carry ids and scalars only (F6.2).
+
+| name | slice | payload | produced by |
+|---|---|---|---|
+| `agent.created` | 1 | `{ agentId, scope, projectId, sessionId }` | `POST /agents` |
+| `agent.updated` | 1 | `{ agentId, changedFields, archived }` | `PATCH /agents/{id}` |
+| `agent.assigned` | 2 | `{ teamId, projectId, agentIds }` | a team write that actually changed a Project's available-agent set (§13.2.1) |
+| `agent.execution_started` | 3 | `{ runId, workflowId, projectId, stepOrdinal, attempt, agentId, sessionId, handoffState }` | a workflow run creating and launching a step's Session (§13.2.2) |
+| `agent.execution_completed` | 3 | the same coordinates | that Session reaching `completed` |
+| `agent.execution_failed` | 3 | the same coordinates plus `reason` | that Session reaching `failed` |
+
+The three `agent.execution_*` names are produced **from the step Session's own F7 lifecycle**, not from a second one — `POST /agents/{id}/executions` was declined (§13.2), because a Session bound to an Agent already *is* an execution. What these events add over `session.completed` is the run coordinates, which a Session event cannot carry.
+
+Nine further names are live and were **never reserved here**, because they belong to entities §15.4 predates: `agent_team.created` / `.updated` / `.deleted` (slice 2, §13.2.1) and `agent_workflow.created` / `.updated` / `.run.started` / `.run.completed` / `.run.halted` / `.run.stopped` (slice 3, §13.2.2). They are recorded as additions rather than back-filled into this reservation list, which would erase where they came from.
 
 ---
 

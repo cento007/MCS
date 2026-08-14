@@ -410,6 +410,430 @@ paths:
       x-mc-strictness:
         query: strict
         body: strict
+  /agent-workflow-runs:
+    get:
+      operationId: getAgentWorkflowRuns
+      summary: 'GET /agent-workflow-runs'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - running
+              - completed
+              - halted
+              - stopped
+        - name: workflowId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postAgentWorkflowRuns
+      summary: 'POST /agent-workflow-runs'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - workflowId
+                - projectId
+                - task
+                - workingDirectory
+              additionalProperties: false
+              properties:
+                workflowId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                projectId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                task:
+                  type: string
+                  minLength: 1
+                  maxLength: 20000
+                workingDirectory:
+                  type: string
+                  minLength: 1
+                  maxLength: 4096
+                repositoryId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                branch:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                model:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                maxSessions:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-workflow-runs/{id}':
+    get:
+      operationId: getAgentWorkflowRunsById
+      summary: 'GET /agent-workflow-runs/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-workflow-runs/{id}/resume':
+    post:
+      operationId: postAgentWorkflowRunsByIdResume
+      summary: 'POST /agent-workflow-runs/{id}/resume'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - 'null'
+              additionalProperties: false
+              properties: {}
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-workflow-runs/{id}/stop':
+    post:
+      operationId: postAgentWorkflowRunsByIdStop
+      summary: 'POST /agent-workflow-runs/{id}/stop'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type:
+                - object
+                - 'null'
+              additionalProperties: false
+              properties: {}
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  /agent-workflows:
+    get:
+      operationId: getAgentWorkflows
+      summary: 'GET /agent-workflows'
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: includeArchived
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - global
+              - project
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    post:
+      operationId: postAgentWorkflows
+      summary: 'POST /agent-workflows'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - scope
+                - steps
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 2000
+                scope:
+                  type: string
+                  enum:
+                    - global
+                    - project
+                projectId:
+                  type:
+                    - string
+                    - 'null'
+                  pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                steps:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: object
+                    required:
+                      - agentId
+                    additionalProperties: false
+                    properties:
+                      agentId:
+                        type: string
+                        pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                      instructions:
+                        type:
+                          - string
+                          - 'null'
+                        maxLength: 4000
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-workflows/{id}':
+    get:
+      operationId: getAgentWorkflowsById
+      summary: 'GET /agent-workflows/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+    patch:
+      operationId: patchAgentWorkflowsById
+      summary: 'PATCH /agent-workflows/{id}'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                description:
+                  type:
+                    - string
+                    - 'null'
+                  maxLength: 2000
+                steps:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: object
+                    required:
+                      - agentId
+                    additionalProperties: false
+                    properties:
+                      agentId:
+                        type: string
+                        pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+                      instructions:
+                        type:
+                          - string
+                          - 'null'
+                        maxLength: 4000
+                archived:
+                  type: boolean
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
+  '/agent-workflows/{id}/cost-estimate':
+    get:
+      operationId: getAgentWorkflowsByIdCostEstimate
+      summary: 'GET /agent-workflows/{id}/cost-estimate'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      responses:
+        default:
+          $ref: '#/components/responses/ErrorEnvelope'
+      x-mc-response-schema: undeclared
+      x-mc-auth:
+        mode: authenticated
+        scope: full
+        allowCookie: true
+      x-mc-strictness:
+        query: strict
+        body: strict
   /agents:
     get:
       operationId: getAgents

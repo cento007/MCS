@@ -288,7 +288,7 @@ function TeamDetail({ teamId }: { teamId: string | null }) {
 
           <BuilderSection
             title="Members"
-            description="The agents on this team, sorted by name — the order the API returns them in. A team is a set; there is no ordering to configure, because order belongs to a workflow and workflows are not built."
+            description="The agents on this team, sorted by name — the order the API returns them in. A team is a set; there is no ordering to configure, because order belongs to a workflow (PRD §5.6), which is where it is now configured."
           >
             {!(team?.membersServed ?? true) ? (
               <p

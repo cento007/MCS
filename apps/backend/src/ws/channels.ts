@@ -123,6 +123,25 @@ const STATIC_ROUTES: Readonly<Record<string, readonly StaticChannel[]>> = Object
   'agent_team.created': ['agents'],
   'agent_team.updated': ['agents'],
   'agent_team.deleted': ['agents'],
+  // Workflows and their runs (slice 3). Same channel again, for the third time and for the same
+  // reason: a client holding an agent list, a team roster or a run's progress is one screen, and
+  // §14.3 caps a connection at 64 subscriptions.
+  //
+  // **The three `agent.execution_*` types are routed here and deliberately NOT onto `sessions`.**
+  // A step's Session already emits its own `session.started` / `session.completed` /
+  // `session.failed` on `sessions` and `session:{id}`; these carry the *workflow* coordinates
+  // (which run, which position, which attempt), which is a different fact for a different screen.
+  // Relaying them on `sessions` as well would make one Session ending arrive twice on one channel
+  // and invite a client to count it twice.
+  'agent.execution_started': ['agents'],
+  'agent.execution_completed': ['agents'],
+  'agent.execution_failed': ['agents'],
+  'agent_workflow.created': ['agents'],
+  'agent_workflow.updated': ['agents'],
+  'agent_workflow.run.started': ['agents'],
+  'agent_workflow.run.completed': ['agents'],
+  'agent_workflow.run.halted': ['agents'],
+  'agent_workflow.run.stopped': ['agents'],
 });
 
 const SESSIONS_CHANNEL_SET: ReadonlySet<string> = new Set(SESSIONS_CHANNEL_EVENTS);

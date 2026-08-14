@@ -148,6 +148,63 @@ export const endpoints = {
     list: '/agent-teams',
     detail: (id: string) => `/agent-teams/${id}`,
   },
+  /**
+   * PRD §5.6 agent workflows — an ordered chain of agents, each step a Session (TDS 04 §13.2.2).
+   *
+   * **None of these routes was reserved by §13.2**, which listed Agent CRUD, assignment, execution
+   * and AgentTeam CRUD and nothing else. They are additions, recorded in §13.2.2 the way §13.1
+   * recorded the two backfill routes. The `agent-` prefix keeps them clear of
+   * `projects.workflow_mode` — PRD §4.3's Manual/Assisted setting, which is a completely different
+   * thing already called "workflow" in this product.
+   *
+   * There is deliberately **no `DELETE`**: a workflow is referenced as history by
+   * `agent_workflow_runs.workflow_id` exactly as an Agent is by `sessions.agent_id`, so retirement
+   * is `PATCH { archived: true }` and the FK is `RESTRICT`. Nothing deletes a run either — a run is
+   * the record of money spent.
+   */
+  agentWorkflows: {
+    list: '/agent-workflows',
+    detail: (id: string) => `/agent-workflows/${id}`,
+    /**
+     * What a run of this chain would cost, **before** it is started.
+     *
+     * A bounded read model, not a forecast: it reports what each step's Agent has actually cost
+     * across its own completed Sessions, and says `null` where an Agent has never run. The pre-run
+     * dialog renders it with that caveat intact rather than summing it into one confident number.
+     */
+    costEstimate: (id: string) => `/agent-workflows/${id}/cost-estimate`,
+  },
+  /**
+   * Runs are a **top-level collection**, not a sub-resource of the workflow.
+   *
+   * `POST /agent-workflow-runs { workflowId, projectId, … }` starts one. That is the Backend's
+   * shape and it is the right one: a run is filtered by project and state as often as by workflow,
+   * and a run outlives the definition's page.
+   */
+  agentWorkflowRuns: {
+    list: '/agent-workflow-runs',
+    detail: (id: string) => `/agent-workflow-runs/${id}`,
+    /**
+     * The kill switch. `200 { data: run, meta: { stoppedSession } }`.
+     *
+     * A sub-action POST rather than `PATCH { state }` because a run is a genuine state machine and
+     * a patch would invite a client to move it anywhere the enum allows. It marks the run
+     * `stopped` **first**, then ends the in-flight Session — so the `session.completed` that
+     * ending produces reaches a run that is no longer running and advances nothing.
+     * `meta.stoppedSession` is what happened to that Session, and the UI reports it verbatim
+     * instead of claiming.
+     */
+    stop: (id: string) => `/agent-workflow-runs/${id}/stop`,
+    /**
+     * Pick a halted chain up where it broke — a **new** attempt at the failed step, in a new
+     * Session, because F7 states never move backward.
+     *
+     * It exists because `halted` is not terminal: `TERMINAL_AGENT_WORKFLOW_RUN_STATES` is
+     * `['completed', 'stopped']`, and a run that stopped at a failed step is waiting for a decision
+     * rather than dead.
+     */
+    resume: (id: string) => `/agent-workflow-runs/${id}/resume`,
+  },
 } as const;
 
 /**

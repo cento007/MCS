@@ -5,7 +5,10 @@
  * express it, and `packages/shared/drizzle/*.sql` is what actually runs. 20 Phase 1–2 tables
  * (TDS 03 §9 inventory) plus `memory_items` (designed in Phase 3) and the Phase 4 agent
  * framework — `agents`, then `agent_teams` with `agent_team_members` and
- * `agent_team_assignments`. Each graduated in the phase TDS 03 §6 deferred its design to.
+ * `agent_team_assignments`, then `agent_workflows` with `agent_workflow_steps`,
+ * `agent_workflow_runs` and `agent_workflow_run_steps`. Each graduated in the phase TDS 03 §6
+ * deferred its design to; the workflow tables were never reserved at all, because §5.6 had no
+ * execution primitive to hang them on until slice 3 gave it one.
  *
  * **There is no `skeletons.ts` any more, and its absence is the point.** It held the tables that
  * reserved a name and nothing else; `memory_items` left in Phase 3, `agents` in Phase 4's first
@@ -28,6 +31,7 @@
  */
 
 export * from './agent-teams.js';
+export * from './agent-workflows.js';
 export * from './agents.js';
 export * from './audit.js';
 export * from './auth.js';

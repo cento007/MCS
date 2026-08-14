@@ -14,6 +14,7 @@
 export * from './adr.js';
 export * from './agent.js';
 export * from './agent-team.js';
+export * from './agent-workflow.js';
 export * from './memory.js';
 export * from './notification.js';
 export * from './service-health.js';
@@ -36,6 +37,8 @@ export const ENTITY_TABLES = Object.freeze({
   AuditLogEntry: 'audit_log_entries',
   Agent: 'agents',
   AgentTeam: 'agent_teams',
+  AgentWorkflow: 'agent_workflows',
+  AgentWorkflowRun: 'agent_workflow_runs',
   MemoryItem: 'memory_items',
 } as const);
 

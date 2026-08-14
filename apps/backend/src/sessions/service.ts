@@ -58,6 +58,18 @@ export interface RequestContext {
   readonly ipAddress: string | null;
 }
 
+/**
+ * **Everything the lifecycle methods below actually read off a `Principal`** — the user id, which
+ * becomes `sessions.user_id` and the audit row's `actor_id`.
+ *
+ * Declared and used in place of `Principal` on `create`, `start` and `end` so that a caller which
+ * genuinely has no request — the agent-workflow runner advancing a chain from a queue consumer
+ * (PRD §5.6) — can name the operator whose run it is without fabricating an `authMethod`, a
+ * `username` and a scope list that would all be untrue. Every existing caller passes a full
+ * `Principal`, which satisfies this structurally, so nothing at a route changes.
+ */
+export type SessionActor = Pick<Principal, 'userId'>;
+
 export interface CreateSessionInput {
   readonly projectId: string;
   readonly workingDirectory: string;
@@ -131,7 +143,7 @@ export class SessionService {
 
   /** `POST /api/v1/sessions` — creates a **managed** Session in state `created`. */
   async create(
-    principal: Principal,
+    principal: SessionActor,
     input: CreateSessionInput,
     ctx: RequestContext,
   ): Promise<SessionResource> {
@@ -304,7 +316,7 @@ export class SessionService {
    * checked *before* the queue decision, so a queued launch is always one that would have been
    * legal had a slot been free.
    */
-  async start(principal: Principal, id: string, ctx: RequestContext): Promise<LaunchResult> {
+  async start(principal: SessionActor, id: string, ctx: RequestContext): Promise<LaunchResult> {
     const session = await this.#require(id);
     assertLaunchable(session, 'start');
 
@@ -404,7 +416,7 @@ export class SessionService {
    * For an observed Session this is "stop observing" (WS1 §5.2): Mission Control detaches and
    * closes the record; the external session may keep running, unobserved.
    */
-  async end(principal: Principal, id: string, ctx: RequestContext): Promise<SessionResource> {
+  async end(principal: SessionActor, id: string, ctx: RequestContext): Promise<SessionResource> {
     const session = await this.#require(id);
     assertApplicable(session, 'end');
 
@@ -719,7 +731,7 @@ export class SessionService {
   }
 
   async #audit(
-    principal: Principal,
+    principal: SessionActor,
     sessionId: string,
     action: string,
     after: Record<string, unknown>,
