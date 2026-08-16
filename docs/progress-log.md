@@ -932,3 +932,39 @@ Two corrections to the PRD's framing: it is pre-1.0 with heavy churn (default br
 Three agents shared one working tree, and one of them ran `git stash` as a probe — stashing two agents' uncommitted work, with the `pop` then aborting on untracked-file collisions. It was recovered and independently verified (both agents' edits coexist in files they both touched), but it was one failed `pop` from real loss. Destructive git commands are now explicitly forbidden in agent briefs; separate worktrees would make the hazard structural rather than procedural.
 
 A second agent stalled after completing its work and before verifying it. The work was sound; the verification, two typecheck seam errors and a line-ending regression were finished by hand.
+
+## 2026-08-16 — The Frontend stops needing a process
+
+`apps/backend/src/app.ts` had carried one line of future tense since the scaffold: "static SPA serving ... registered here by their owning workstreams." Everything around it had been built. It had not.
+
+The consequence was invisible because the workaround was so comfortable. `pnpm dev` starts Vite on `:5173` proxying `/api` back to `:8710`, which is the right thing while writing code — so nobody hit the gap during development. But it was the **only** way to reach the UI, on this machine and on the Ubuntu box alike. `deploy/systemd/README.md` says "The Frontend has no unit. It is a static build artifact served by the Backend on the same origin (F2.3) — no nginx, no reverse proxy required in V1", and `vite.config.ts` says the same in its header. Neither was true. The documented single-process deployment did not exist, and the thing standing in for it was a development server.
+
+It surfaced from an unrelated question — how to start the stack at logon — where the answer "run these two processes, one of which is a dev server" was the tell.
+
+### What it is
+
+`http/spa.ts`, `@fastify/static`, and an `spaRoot` that `main.ts` derives rather than configures. The route is `/`, the port is `MC_PORT`, and there is no second process.
+
+**The default is off, and that default is load-bearing.** `spaRoot` is omitted by every test. Defaulting to "serve `dist` if it happens to be on disk" would make `GET /anything` answer 200 HTML on a machine that had run `pnpm build` and 404 JSON on one that had not — a test suite whose results depend on build residue. Serving the UI is a deployment decision, so the process entry point makes it, once, explicitly.
+
+**The bundle is public and the API is not.** `PUBLIC_ROUTE` on the static routes, because `index.html` *is* the login screen and requiring a session to fetch it makes logging in impossible. It discloses nothing — the same artifact any clone can build, holding no secret by construction — and a test asserts `GET /api/v1/sessions` still answers 401 with the bundle wide open.
+
+**Three refusals are the actual content.** Serving a file is the easy half. `/api/` never falls back, or a mistyped route hands JSON-parsing clients HTML and resurfaces three layers away as `MALFORMED_RESPONSE` — the same misdirection `listenWithRetry` exists to stop. A non-navigation asset fetch never falls back (the `Accept: text/html` check), or a mistyped bundle name answers 200 HTML under a JavaScript content-type and the browser reports a MIME error naming neither the missing file nor this handler. A non-GET never falls back.
+
+**HTML is never cached; hashed assets always are.** Vite puts the content hash in every asset filename, so `immutable` is simply true of `assets/*`. `index.html` is the one name that never changes while its contents change every build — cache it and a returning browser is pointed at bundles the last deploy deleted, presenting as a white screen that a reload does not fix.
+
+### Two things the implementation was forced into
+
+**The plugin is encapsulated, so the fallback gave up `sendFile`.** `@fastify/static` has no way to declare a route config, and the guard defaults every route to authenticated — so the public policy is stamped by an `onRoute` hook. On the root instance that hook would silently make *every* later non-API route public, which is precisely the inverted failure mode `auth/guard.ts` was written to avoid. Encapsulating it contains the blast radius but also confines the `sendFile` decorator, so the fallback answers `index.html` from memory instead. Read once at registration, which is the same rule `wildcard: false` already applies to the asset routes: **a rebuild needs a restart** — one thing to remember rather than two, and already the documented upgrade order.
+
+**A missing build warns rather than refuses.** An operator who ran `pnpm db:migrate` before `pnpm build` gets a working API and a line naming the command they skipped, not a dead process.
+
+### Autostart, without a Windows service
+
+`deploy/windows/` gains a launcher and an install/uninstall pair for a scheduled task. The rule at the top of that README still holds — a scheduled task starts the same ordinary foreground process with the F8.1 contract intact; nothing wraps it in a service host and no supervisor knowledge enters application code.
+
+**At logon as the user, never as SYSTEM**, because Mission Control spawns `claude.exe` and tails transcripts under `%USERPROFILE%\.claude\projects\`; under SYSTEM there is no such profile and both would fail looking like application bugs. **PostgreSQL is waited for rather than assumed** — `Automatic` means "asked to start", and the Backend's first query is its schema-version check. **Migrations are not applied at startup**: the Backend already refuses against a schema it was not compiled for and names the command, and an unattended process is the wrong thing to have rewriting a database.
+
+One latent failure was found by inspecting the registered task rather than trusting the registration: `Get-Command pwsh` resolves to a *version-stamped* Store path, so the next PowerShell update would rename the directory out from under the task and autostart would fail at the next logon with nothing in the launcher log — because the launcher never ran. It now prefers the MSI location and the WindowsApps alias, both of which survive upgrades.
+
+**It fights `pnpm dev` for port 8710**, stated plainly in the README rather than engineered around. One machine, one port.

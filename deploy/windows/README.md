@@ -1,4 +1,4 @@
-# Windows 11 development run story (TDS 02 §10)
+# Windows 11 run story (TDS 02 §10)
 
 PostgreSQL runs as a native Windows service; the four apps run as ordinary console
 processes. **No Docker, no WSL, no Windows-service registration for the apps.** Parity with
@@ -6,8 +6,9 @@ Ubuntu production is structural, not aspirational: the same PostgreSQL-backed qu
 removed Redis, so there is no dev substitute to diverge from), the same `.env` shape, the
 same foreground/stdout process contract.
 
-This directory holds **notes and optional convenience scripts only**. Nothing here installs
-anything or modifies the system, and no application code depends on any of it.
+This directory holds **notes and optional convenience scripts only**. No application code
+depends on any of it. The one script here that touches the system — `install-autostart.ps1` —
+registers a single scheduled task and `uninstall-autostart.ps1` removes it.
 
 ## Prerequisites
 
@@ -56,20 +57,77 @@ escape hatch, and it must name the account that already exists.
 `MC_DATA_DIR` can be omitted in development: it defaults to `%LOCALAPPDATA%\MissionControl`
 and the `exports/`, `hooks/` and `tmp/` subtree is created on first start.
 
-## Everyday commands
+## Two ways to run it, and when each is right
+
+**While developing — two processes, `:5173`.**
+
+```powershell
+pnpm dev     # Backend (tsx watch, :8710) + Vite dev server (:5173); Ctrl-C stops both
+```
+
+Open **http://localhost:5173**. You get HMR and an instant backend restart on save. The Vite
+dev server proxies `/api` to `127.0.0.1:8710` **with WebSocket upgrade proxying**, so
+`/api/v1/ws` works through the proxy and the app is same-origin in dev exactly as it is in
+production — there is no CORS branch anywhere in the system.
+
+**Running it for real — one process, `:8710`.**
+
+```powershell
+pnpm build                                        # shared -> apps -> SPA into apps/frontend/dist
+pnpm db:migrate                                   # only after pulling new migrations
+.\deploy\windows\start-mission-control.ps1 -NoLogFile
+```
+
+Open **http://localhost:8710**. The Backend serves `apps/frontend/dist` on its own origin
+(F2.3, `apps/backend/src/http/spa.ts`), so there is no Vite, no second port and no proxy —
+the same topology the systemd units describe, where "the Frontend has no unit".
+
+Equivalent without the launcher: `node apps\backend\dist\main.js` from the repository root.
+
+> **A rebuild needs a restart.** The asset routes and `index.html` are both read when the
+> process starts, which is the honest model for a build artifact. `pnpm build` then restart —
+> the same order as the Ubuntu upgrade runbook.
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Backend (`tsx watch`) + Vite dev server (`:5173`), colour-prefixed; Ctrl-C stops both |
 | `pnpm dev:workers` | Telegram + Sync workers (Phase 2 — not needed for Phase 1 work) |
 | `pnpm --filter @mc/backend dev` | One process, for focused work |
 | `pnpm typecheck` / `pnpm lint` / `pnpm test` | Quality gates; none of them need a database |
 | `pnpm test:int` | Integration tier — needs PostgreSQL and `TEST_DATABASE_URL` (TDS 07 §3.1) |
 | `pnpm build` | Builds shared, then the apps, then the SPA into `apps/frontend/dist` |
 
-The Vite dev server proxies `/api` to `127.0.0.1:8710` **with WebSocket upgrade proxying**,
-so `/api/v1/ws` works through the proxy and the app is same-origin in dev exactly as it is
-in production — there is no CORS branch anywhere in the system.
+## Starting at logon
+
+```powershell
+.\deploy\windows\install-autostart.ps1      # register
+Start-ScheduledTask -TaskName MissionControl   # start now, without logging out
+Stop-ScheduledTask  -TaskName MissionControl
+.\deploy\windows\uninstall-autostart.ps1    # remove; nothing else is left behind
+```
+
+Logs: `%LOCALAPPDATA%\MissionControl\launcher-logs` (one file per start, ten kept).
+
+Four decisions worth knowing, because each one is a failure you would otherwise diagnose the
+hard way:
+
+- **A scheduled task, not a Windows service.** The rule at the top of this file still holds —
+  the app is started as an ordinary foreground console process with the F8.1 contract intact.
+  Nothing wraps it in a service host and no supervisor leaks into application code.
+- **At logon, as you — never as SYSTEM.** Mission Control spawns `claude.exe` and tails
+  transcripts under `%USERPROFILE%\.claude\projects\`. Under SYSTEM there is no such profile,
+  so managed sessions and the observed-session tailer would both fail in ways that look like
+  application bugs. This is why it is a logon trigger and not a true boot trigger.
+- **PostgreSQL is waited for, not assumed.** `Automatic` means "asked to start", not "ready";
+  the Backend's first query is its schema-version check, so losing that race exits the process.
+  The launcher waits up to 90s, and the task retries three times at one-minute intervals.
+- **It will fight `pnpm dev` for port 8710.** One machine, one port. Run
+  `Stop-ScheduledTask -TaskName MissionControl` before a dev session — a Backend that loses the
+  bind retries ten times and then exits nonzero, which is visible in the launcher log and
+  nowhere else.
+
+Migrations are deliberately **not** applied at startup. The Backend refuses to start against a
+schema it was not compiled for and names the command; auto-migrating on boot would make an
+unattended process the thing that rewrites your database.
 
 ## Windows-specific behaviour worth knowing
 
