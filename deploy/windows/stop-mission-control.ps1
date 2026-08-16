@@ -37,12 +37,19 @@ if ($task -and $task.State -eq 'Running') {
 }
 
 if (Test-Path $PidFile) {
-    $backendPid = 0
-    if ([int]::TryParse((Get-Content $PidFile -Raw).Trim(), [ref] $backendPid) -and $backendPid -gt 0) {
-        $proc = Get-Process -Id $backendPid -ErrorAction SilentlyContinue
-        if ($proc -and $proc.ProcessName -eq 'node') {
-            Stop-Process -Id $backendPid -Force
-            Write-Host "[mission-control] stopped backend (PID $backendPid)"
+    # One `name=pid` line per unit — Backend, Telegram Worker, Sync Worker, and Qdrant when the
+    # launcher was asked to start it.
+    foreach ($line in (Get-Content $PidFile -ErrorAction SilentlyContinue)) {
+        $parts = $line -split '='
+        if ($parts.Count -lt 2) { continue }
+        $name = $parts[0].Trim()
+        $unitPid = 0
+        if ([int]::TryParse($parts[-1].Trim(), [ref] $unitPid) -and $unitPid -gt 0) {
+            $proc = Get-Process -Id $unitPid -ErrorAction SilentlyContinue
+            if ($proc -and $proc.ProcessName -in @('node', 'qdrant')) {
+                Stop-Process -Id $unitPid -Force
+                Write-Host "[mission-control] stopped $name (PID $unitPid)"
+            }
         }
     }
     Remove-Item $PidFile -Force -ErrorAction SilentlyContinue

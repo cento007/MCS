@@ -33,36 +33,36 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$Launcher = Join-Path $PSScriptRoot 'start-mission-control.ps1'
+$RepoRoot       = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$Launcher       = Join-Path $PSScriptRoot 'start-mission-control.ps1'
+$HiddenLauncher = Join-Path $PSScriptRoot 'start-hidden.vbs'
 
-if (-not (Test-Path $Launcher)) { throw "Launcher not found: $Launcher" }
+if (-not (Test-Path $Launcher))       { throw "Launcher not found: $Launcher" }
+if (-not (Test-Path $HiddenLauncher)) { throw "Hidden launcher not found: $HiddenLauncher" }
 
-# Resolve a **version-stable** interpreter path, in that order of preference.
+# Interpreter resolution moved into `start-hidden.vbs`, which picks a **version-stable** path at
+# run time rather than baking one into the task. That matters: `Get-Command pwsh` on a Store
+# install resolves to a version-stamped directory (…\Microsoft.PowerShell_7.6.4.0_x64__…\pwsh.exe),
+# and a scheduled task stores the literal path — so the next PowerShell update would rename it out
+# from under the task and autostart would fail at the next logon with nothing in the launcher log,
+# because the launcher never ran. Resolving inside the VBS makes that class of breakage impossible.
+
+# The task runs `wscript.exe`, not PowerShell directly, and that is the whole no-window story.
 #
-# `Get-Command pwsh` is deliberately the last pwsh candidate: on a Store install it resolves to
-# a version-stamped directory (…\Microsoft.PowerShell_7.6.4.0_x64__…\pwsh.exe). A scheduled task
-# stores the literal path, so the next PowerShell update renames that folder out from under it
-# and autostart fails at the next logon with nothing in the launcher log — because the launcher
-# never ran. The MSI location and the WindowsApps alias both survive upgrades.
-$shell = @(
-    'C:\Program Files\PowerShell\7\pwsh.exe',
-    (Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'),
-    (Get-Command pwsh -ErrorAction SilentlyContinue).Source,
-    (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
-) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+# PowerShell is a CONSOLE application, so an Interactive task gets a console allocated by Windows
+# before PowerShell executes a line — `-WindowStyle Hidden` can only hide it afterwards, which in
+# practice still flashes and on some machines leaves a window that stays. `wscript.exe` is a
+# GUI-subsystem host with no console at all; `start-hidden.vbs` launches PowerShell from it with
+# window style 0, so no console is ever created and there is nothing to hide.
+#
+# It still blocks for the life of the server (`bWaitOnReturn`), so Task Scheduler sees one
+# long-running task rather than one that exits immediately.
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+if (-not (Test-Path $wscript)) { throw "wscript.exe not found at $wscript" }
 
-if (-not $shell) { throw 'Neither pwsh nor powershell could be located.' }
-Write-Host "[mission-control] interpreter: $shell"
-
-# `-WindowStyle Hidden` is what keeps a console window off the desktop when the task has to fall
-# back to an Interactive principal (see below). PowerShell is a console application, so an
-# interactive task gives it a window that sits there for the entire life of the server — which is
-# the whole session, not a moment. Hidden suppresses it; a brief flash at logon is possible while
-# the console host initialises, and that is the price of not requiring elevation.
 $action = New-ScheduledTaskAction `
-    -Execute $shell `
-    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Launcher`"" `
+    -Execute $wscript `
+    -Argument "//nologo `"$HiddenLauncher`"" `
     -WorkingDirectory $RepoRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -121,12 +121,12 @@ $register = {
 # it landed in — the two differ in ways you would otherwise discover by accident.
 try {
     & $register 'S4U'
-    Write-Host '[mission-control] principal: S4U — no console window, and runs whether or not you are logged on'
+    Write-Host '[mission-control] principal: S4U — runs whether or not you are logged on'
 } catch {
     & $register 'Interactive'
-    Write-Host '[mission-control] principal: Interactive + hidden window (S4U needs elevation)'
-    Write-Host '[mission-control] for a fully windowless setup that also runs while logged out,'
-    Write-Host '[mission-control]   re-run this script from an ELEVATED PowerShell.'
+    Write-Host '[mission-control] principal: Interactive (S4U needs an elevated shell)'
+    Write-Host '[mission-control]   no console window either way — wscript.exe hosts the launcher.'
+    Write-Host '[mission-control]   re-run this ELEVATED to also keep running while logged out.'
 }
 
 Write-Host "[mission-control] registered scheduled task '$TaskName' (at logon, as $env:USERNAME)"

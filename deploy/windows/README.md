@@ -70,7 +70,7 @@ dev server proxies `/api` to `127.0.0.1:8710` **with WebSocket upgrade proxying*
 `/api/v1/ws` works through the proxy and the app is same-origin in dev exactly as it is in
 production — there is no CORS branch anywhere in the system.
 
-**Running it for real — one process, `:8710`.**
+**Running it for real — three processes, one port.**
 
 ```powershell
 pnpm build                                        # shared -> apps -> SPA into apps/frontend/dist
@@ -81,6 +81,19 @@ pnpm db:migrate                                   # only after pulling new migra
 Open **http://localhost:8710**. The Backend serves `apps/frontend/dist` on its own origin
 (F2.3, `apps/backend/src/http/spa.ts`), so there is no Vite, no second port and no proxy —
 the same topology the systemd units describe, where "the Frontend has no unit".
+
+The launcher starts the same three units systemd does — Backend, Telegram Worker, Sync
+Worker. `-BackendOnly` starts just the first; the workers only matter once Telegram or
+Obsidian is configured, but the Dashboard reports them down while they are not running.
+
+Supervision is deliberately **all-or-nothing**: one scheduled task cannot be three
+independently-restarted units, so if any of the three exits, the others are stopped and the
+task exits nonzero for Task Scheduler's restart policy to act on. Coarser than systemd, and
+stated rather than implied.
+
+**Not started here:** PostgreSQL and Ollama run as their own services. Qdrant is a standalone
+binary — pass `-WithQdrant` (optionally `-QdrantExe <path>`, default `C:\qdrant\qdrant.exe`)
+if you want the launcher to run it, though installing it as a service is better.
 
 Equivalent without the launcher: `node apps\backend\dist\main.js` from the repository root.
 
@@ -99,20 +112,32 @@ Equivalent without the launcher: `node apps\backend\dist\main.js` from the repos
 ## Starting at logon
 
 ```powershell
-.\deploy\windows\install-autostart.ps1      # register
+.\deploy\windows\install-autostart.ps1         # register
 Start-ScheduledTask -TaskName MissionControl   # start now, without logging out
-Stop-ScheduledTask  -TaskName MissionControl
-.\deploy\windows\uninstall-autostart.ps1    # remove; nothing else is left behind
+.\deploy\windows\stop-mission-control.ps1      # stop task AND the processes it started
+.\deploy\windows\uninstall-autostart.ps1       # remove; nothing else is left behind
 ```
 
-Logs: `%LOCALAPPDATA%\MissionControl\launcher-logs` (one file per start, ten kept).
+Logs: `%LOCALAPPDATA%\MissionControl\launcher-logs`, one `.log` and one `.err.log` per unit
+per start.
+
+**No console window.** The task runs `wscript.exe start-hidden.vbs`, not PowerShell directly.
+PowerShell is a *console* application, so an Interactive task gets a console allocated before
+it executes a line — `-WindowStyle Hidden` can only hide it afterwards, which still flashes
+and on some machines leaves a window that stays. `wscript.exe` is a GUI-subsystem host with no
+console at all, so none is ever created.
+
+**Prefer `stop-mission-control.ps1` over `Stop-ScheduledTask`.** The latter kills the task's
+host process and leaves the node children running, still holding the port — the next start then
+loses the bind and exits nonzero. The launcher reclaims its own recorded PIDs on the way up, so
+a forgotten stop self-heals, but the stop script is the clean path.
 
 Four decisions worth knowing, because each one is a failure you would otherwise diagnose the
 hard way:
 
 - **A scheduled task, not a Windows service.** The rule at the top of this file still holds —
-  the app is started as an ordinary foreground console process with the F8.1 contract intact.
-  Nothing wraps it in a service host and no supervisor leaks into application code.
+  the apps are started as ordinary foreground processes with the F8.1 contract intact.
+  Nothing wraps them in a service host and no supervisor leaks into application code.
 - **At logon, as you — never as SYSTEM.** Mission Control spawns `claude.exe` and tails
   transcripts under `%USERPROFILE%\.claude\projects\`. Under SYSTEM there is no such profile,
   so managed sessions and the observed-session tailer would both fail in ways that look like
