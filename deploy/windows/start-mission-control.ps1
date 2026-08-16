@@ -17,8 +17,10 @@
     implied — a worker that quietly died while the Backend stayed up would leave the Dashboard
     reporting a service down with nothing restarting it, which is the failure this shape avoids.
 
-    PostgreSQL, Ollama and Qdrant are NOT started here. The first two run as their own services;
-    Qdrant is a standalone binary and is `-WithQdrant`'s job if you want it.
+    PostgreSQL and Ollama are NOT started here — both run as their own services. Qdrant is a
+    standalone binary with no service, so it IS started, but only when nothing already answers on
+    6333: a server you launched by hand is adopted rather than duplicated, and is never stopped by
+    this script on the way out. `-NoQdrant` opts out entirely.
 
     This script is a launcher and nothing more. It holds no configuration: `.env` at the
     repository root remains the single bootstrap source (TDS 02 §8.2), and no application code
@@ -31,12 +33,14 @@
 .PARAMETER BackendOnly
     Start just the Backend. The workers only matter once Telegram or Obsidian are configured.
 
-.PARAMETER WithQdrant
-    Also start Qdrant from -QdrantExe. Off by default: it is third-party, like PostgreSQL, and
-    is better installed as a service than supervised by this script.
+.PARAMETER NoQdrant
+    Do not touch Qdrant at all. By default the launcher starts it **only if nothing is already
+    listening on 6333** — a server you started by hand is left completely alone, and is never
+    stopped by this script on the way out.
 
 .PARAMETER QdrantExe
-    Path to qdrant.exe. Defaults to C:\qdrant\qdrant.exe.
+    Path to qdrant.exe. Defaults to C:\qdrant\qdrant.exe. Its own directory becomes the working
+    directory, because Qdrant resolves `storage/` relative to cwd.
 
 .PARAMETER NoLogFile
     Write to the console instead of log files. This is what you want when running it by hand.
@@ -49,7 +53,7 @@
 param(
     [int] $Port,
     [switch] $BackendOnly,
-    [switch] $WithQdrant,
+    [switch] $NoQdrant,
     [string] $QdrantExe = 'C:\qdrant\qdrant.exe',
     [switch] $NoLogFile
 )
@@ -181,10 +185,10 @@ if (-not $NoLogFile) {
 $stamp   = '{0:yyyyMMdd-HHmmss}' -f (Get-Date)
 $started = @()
 
-function Start-Unit($Name, $FilePath, $ArgumentList) {
+function Start-Unit($Name, $FilePath, $ArgumentList, $WorkingDirectory) {
     $common = @{
         FilePath         = $FilePath
-        WorkingDirectory = $RepoRoot
+        WorkingDirectory = $(if ($WorkingDirectory) { $WorkingDirectory } else { $RepoRoot })
         NoNewWindow      = $true
         PassThru         = $true
     }
@@ -200,15 +204,39 @@ function Start-Unit($Name, $FilePath, $ArgumentList) {
     return @{ Name = $Name; Proc = $p }
 }
 
-if ($WithQdrant) {
-    if (Test-Path $QdrantExe) {
+# --- Qdrant: start it only if it is not already up ---------------------------------------------
+#
+# Idempotent by design, because Qdrant is the one dependency here that an operator also starts by
+# hand. If something already answers on 6333 this leaves it completely alone — it is not added to
+# `$started`, so the shutdown below will not kill a server this script did not launch. That
+# asymmetry is the point: adopting a process is easy and reaping someone else's is not recoverable.
+#
+# **The working directory is the binary's own folder, never the repository.** Qdrant resolves
+# `storage/` and `snapshots/` relative to its cwd, so launching it from the repo root would
+# silently create an empty store beside the source and present as every memory point having
+# vanished — with the real 592MB of data still sitting untouched in C:\qdrant\storage.
+if (-not $NoQdrant) {
+    if (Get-NetTCPConnection -LocalPort 6333 -State Listen -ErrorAction SilentlyContinue) {
+        Write-Step 'qdrant already running on 6333 — leaving it alone'
+    } elseif (Test-Path $QdrantExe) {
+        $qdrantHome = Split-Path -Parent $QdrantExe
+        $started += Start-Unit 'qdrant' $QdrantExe $null $qdrantHome
+
+        # Bounded wait so the Backend's startup collection check has something to talk to. Never
+        # fatal: that check is deliberately off the critical path and only warns, so a slow or
+        # broken Qdrant must not stop the Backend from serving.
+        $deadline = (Get-Date).AddSeconds(20)
+        while (-not (Get-NetTCPConnection -LocalPort 6333 -State Listen -ErrorAction SilentlyContinue) `
+               -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+        }
         if (Get-NetTCPConnection -LocalPort 6333 -State Listen -ErrorAction SilentlyContinue) {
-            Write-Step 'qdrant already listening on 6333 — leaving it alone'
+            Write-Step 'qdrant is listening on 6333'
         } else {
-            $started += Start-Unit 'qdrant' $QdrantExe $null
+            Write-Warning 'qdrant did not reach 6333 within 20s — memory features will report down'
         }
     } else {
-        Write-Warning "qdrant not found at $QdrantExe — skipping (memory features will report down)"
+        Write-Warning "qdrant not found at $QdrantExe — skipping (memory features will report down). Use -QdrantExe or -NoQdrant."
     }
 }
 

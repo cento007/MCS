@@ -91,9 +91,16 @@ independently-restarted units, so if any of the three exits, the others are stop
 task exits nonzero for Task Scheduler's restart policy to act on. Coarser than systemd, and
 stated rather than implied.
 
-**Not started here:** PostgreSQL and Ollama run as their own services. Qdrant is a standalone
-binary — pass `-WithQdrant` (optionally `-QdrantExe <path>`, default `C:\qdrant\qdrant.exe`)
-if you want the launcher to run it, though installing it as a service is better.
+**Qdrant is started only if nothing already answers on 6333.** It is a standalone binary with
+no service of its own, so the launcher runs it from `-QdrantExe` (default
+`C:\qdrant\qdrant.exe`) — but a server you started by hand is *adopted*, never duplicated, and
+is never stopped by this script on the way out. `-NoQdrant` opts out entirely.
+
+Its working directory is the binary's own folder, never the repository: Qdrant resolves
+`storage/` relative to cwd, so launching it from the repo root would create an empty store
+beside the source and present as every memory point having vanished.
+
+**Not started here:** PostgreSQL and Ollama, both of which run as their own services.
 
 Equivalent without the launcher: `node apps\backend\dist\main.js` from the repository root.
 
