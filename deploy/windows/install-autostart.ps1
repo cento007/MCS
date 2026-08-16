@@ -55,9 +55,14 @@ $shell = @(
 if (-not $shell) { throw 'Neither pwsh nor powershell could be located.' }
 Write-Host "[mission-control] interpreter: $shell"
 
+# `-WindowStyle Hidden` is what keeps a console window off the desktop when the task has to fall
+# back to an Interactive principal (see below). PowerShell is a console application, so an
+# interactive task gives it a window that sits there for the entire life of the server — which is
+# the whole session, not a moment. Hidden suppresses it; a brief flash at logon is possible while
+# the console host initialises, and that is the price of not requiring elevation.
 $action = New-ScheduledTaskAction `
     -Execute $shell `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Launcher`"" `
+    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Launcher`"" `
     -WorkingDirectory $RepoRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -66,6 +71,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
+    -Hidden `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -RestartCount 3 `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
@@ -77,22 +83,51 @@ $settings = New-ScheduledTaskSettingsSet `
 # `RestartCount 3` covers the one ordering failure the launcher cannot wait out: PostgreSQL
 # accepting connections but not yet ready to serve.
 
-$principal = New-ScheduledTaskPrincipal `
-    -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType Interactive `
-    -RunLevel Limited
-
+# `S4U`, not `Interactive`, and the reason is the console window.
+#
+# An Interactive principal runs the task **on your desktop**, so PowerShell — a console
+# application — gets a visible window that sits there for as long as the server runs. `-Hidden`
+# above does not help: it hides the task in the Task Scheduler UI, not the window.
+#
+# S4U ("service for user") runs as *you*, with your profile loaded, but in a non-interactive
+# session — so there is no desktop to draw a window on. That distinction matters here beyond
+# tidiness: Mission Control spawns `claude.exe` and reads `%USERPROFILE%\.claude\projects\`, so
+# it must run as the user. SYSTEM would hide the window too and break both.
+#
+# It also runs whether or not you are logged on, which is closer to the "at system startup" this
+# was originally asked for.
+#
 # Limited, not Highest: nothing here needs elevation, and an autostarted server should not hold
 # rights it never uses.
+$register = {
+    param($LogonType)
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId "$env:USERDOMAIN\$env:USERNAME" `
+        -LogonType $LogonType `
+        -RunLevel Limited
 
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Principal $principal `
-    -Description 'Mission Control backend (serves the API and the SPA on MC_PORT).' `
-    -Force | Out-Null
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Settings $settings `
+        -Principal $principal `
+        -Description 'Mission Control backend (serves the API and the SPA on MC_PORT).' `
+        -Force | Out-Null
+}
+
+# S4U needs the "Log on as a batch job" right, which an unelevated shell is refused ("Access is
+# denied"). Falling back keeps autostart working rather than failing outright, and says which mode
+# it landed in — the two differ in ways you would otherwise discover by accident.
+try {
+    & $register 'S4U'
+    Write-Host '[mission-control] principal: S4U — no console window, and runs whether or not you are logged on'
+} catch {
+    & $register 'Interactive'
+    Write-Host '[mission-control] principal: Interactive + hidden window (S4U needs elevation)'
+    Write-Host '[mission-control] for a fully windowless setup that also runs while logged out,'
+    Write-Host '[mission-control]   re-run this script from an ELEVATED PowerShell.'
+}
 
 Write-Host "[mission-control] registered scheduled task '$TaskName' (at logon, as $env:USERNAME)"
 Write-Host "[mission-control] start now:  Start-ScheduledTask -TaskName $TaskName"
