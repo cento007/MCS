@@ -4,6 +4,7 @@ import {
   findLatestSyncRun,
   insertSyncRun,
   isScheduledSyncDue,
+  isUniqueViolation,
   type JobPayload,
   type Logger,
   newId,
@@ -11,6 +12,7 @@ import {
   type QueuePort,
   readObsidianSettings,
   reclaimAbandonedSyncRuns,
+  SYNC_RUNS_ACTIVE_CONSTRAINT,
   type SyncRunTrigger,
 } from '@mc/shared';
 import type { SyncJob } from './sync.js';
@@ -117,6 +119,14 @@ export class SyncScheduler {
    * Insert the run and enqueue its job in one transaction (F6.3). A `23505` means a manual
    * trigger won the race in the same instant — the operator's sync is running, which is the
    * outcome the scheduler wanted anyway.
+   *
+   * The guard goes through `isUniqueViolation` rather than reading `error.code` directly, and
+   * that is not style: Drizzle 0.45 wraps every query failure in a `DrizzleQueryError` and puts
+   * the `pg` error on `cause`, so the top-level `code` is `undefined` and the naive check never
+   * matched. The expected race therefore *rethrew* — failing the tick and retaining a failed
+   * `obsidian.schedule` job on every worker start, visible only as a red count on the Dashboard.
+   * The Backend had already paid for this exact trap; the predicate now lives in `shared` so a
+   * third package cannot learn it a third time.
    */
   async #trigger(trigger: SyncRunTrigger): Promise<string | null> {
     try {
@@ -130,7 +140,7 @@ export class SyncScheduler {
         return run.id;
       });
     } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
+      if (isUniqueViolation(error, SYNC_RUNS_ACTIVE_CONSTRAINT)) {
         this.#logger.debug('a sync run was created by someone else first');
         return null;
       }

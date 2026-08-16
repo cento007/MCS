@@ -44,3 +44,5 @@ export * as schema from './schema/index.js';
  * than a detail of the table definition.
  */
 export type { NotificationPayload } from './schema/notifications.js';
+
+export * from './violations.js';

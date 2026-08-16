@@ -1,7 +1,8 @@
+import { isCheckViolation, isUniqueViolation } from '@mc/shared';
 import { ApiError } from '../http/errors.js';
 
 /**
- * Reading PostgreSQL's own verdict on a failed write.
+ * Turning PostgreSQL's verdict on a failed write into an API answer.
  *
  * Two constraint classes reach the API and both used to be invisible:
  *
@@ -11,72 +12,15 @@ import { ApiError } from '../http/errors.js';
  *    value this build writes into it. That is not the caller's fault at all, and the cure is one
  *    command, so it must not be reported as "an unexpected error occurred".
  *
- * ## The lesson this module exists to keep in one place
- *
- * **Drizzle 0.45 wraps every query failure in a `DrizzleQueryError` and puts the `pg` error on
- * `cause`.** A predicate that only inspected the top-level object answered `false` for every
- * violation, which silently turned every duplicate into a 500 — the exact defect that made
- * `isUniqueViolation` aspirational when it was first written. Verified again for the check case
- * against a real database before this module was written: the thrown object is a
- * `DrizzleQueryError` whose `cause` is a `DatabaseError` carrying
- * `code: '23514'`, `constraint: 'ck_sync_runs_kind'`, `table: 'sync_runs'`.
- *
- * So the chain is walked, bounded (a cyclic `cause` cannot spin this), and every predicate here
- * goes through the same walk rather than re-learning it.
+ * **The predicates themselves now live in `@mc/shared`** (`db/violations.ts`) and are re-exported
+ * here so every existing import keeps working. They moved because the Sync Worker independently
+ * rediscovered the trap they exist to close — Drizzle wraps the `pg` error on `cause`, so a
+ * top-level `error.code` check never matches — and a lesson two packages learn separately belongs
+ * in neither of them. What stays here is the part that is genuinely the Backend's: the mapping
+ * from a violation to an `ApiError`.
  */
 
-/** PostgreSQL `unique_violation`. */
-const UNIQUE_VIOLATION = '23505';
-/** PostgreSQL `check_violation`. */
-const CHECK_VIOLATION = '23514';
-
-interface PgErrorLike {
-  readonly code?: unknown;
-  readonly constraint?: unknown;
-  readonly cause?: unknown;
-}
-
-/** The first link in the `cause` chain carrying `sqlstate`, or `null`. Depth-bounded. */
-function pgErrorOf(error: unknown, sqlstate: string): PgErrorLike | null {
-  for (let candidate = error, depth = 0; depth < 5; depth += 1) {
-    if (typeof candidate !== 'object' || candidate === null) return null;
-
-    const pgError = candidate as PgErrorLike;
-    if (pgError.code === sqlstate) return pgError;
-    if (pgError.cause === undefined) return null;
-    candidate = pgError.cause;
-  }
-
-  return null;
-}
-
-/**
- * Is this error PostgreSQL rejecting a duplicate against a unique index?
- *
- * Needed because a pre-check plus an insert is not atomic: two concurrent registrations of the
- * same `repositories.local_path` both pass the check and one of them has to become a `CONFLICT`
- * rather than an `INTERNAL`. `constraint` narrows it to the index the caller expects, so an
- * unrelated collision is not silently reported as the one the handler was guarding.
- */
-export function isUniqueViolation(error: unknown, constraint?: string): boolean {
-  const pgError = pgErrorOf(error, UNIQUE_VIOLATION);
-  if (pgError === null) return false;
-  return constraint === undefined || pgError.constraint === constraint;
-}
-
-/**
- * Is this error PostgreSQL rejecting a value against a `CHECK` constraint?
- *
- * `constraint` is effectively mandatory in practice even though it is optional in the signature:
- * a handler that translated *any* check violation would be claiming to know why a constraint it
- * has never heard of fired. Every caller names the one it understands and lets the rest fall
- * through to `INTERNAL`, which is the honest answer for a violation nobody predicted.
- */
-export function isCheckViolation(error: unknown, constraint?: string): boolean {
-  const pgError = pgErrorOf(error, CHECK_VIOLATION);
-  if (pgError === null) return false;
-  return constraint === undefined || pgError.constraint === constraint;
-}
+export { isCheckViolation, isUniqueViolation };
 
 /** The `CHECK` that decides which discriminators `sync_runs` accepts (TDS 03 §4.5). */
 export const SYNC_RUN_KIND_CONSTRAINT = 'ck_sync_runs_kind';
