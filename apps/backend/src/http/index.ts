@@ -6,15 +6,15 @@ import { registerQueryStrictness } from './query-strictness.js';
 import { registerResponseConformance } from './response-conformance.js';
 import { registerNonStrippingSerializer } from './response-schema.js';
 import { registerRouteTable } from './route-table.js';
+import { shouldServeSpa } from './spa.js';
 
 /**
  * `http/` — Fastify wiring: route plugins per domain, the F5.4 error envelope, request-id,
  * auth guards, and (in production) static SPA serving with deep-link fallback (F2.3).
  *
- * SCAFFOLD STATE: request-id and the error envelope are real and wired. Auth guards,
- * per-domain route plugins, OpenAPI generation from Fastify schemas (F5.1) and the static
- * SPA plugin land with WS1/WS2 implementation. `http/` owns NO business logic — routes
- * validate and delegate to domain modules (TDS 02 §2).
+ * Request-id, the error envelope, auth guards, per-domain route plugins, OpenAPI generation
+ * from Fastify schemas (F5.1) and static SPA serving (`spa.ts`) are all wired. `http/` owns NO
+ * business logic — routes validate and delegate to domain modules (TDS 02 §2).
  */
 
 export const REQUEST_ID_HEADER = 'x-request-id';
@@ -64,8 +64,21 @@ export function registerHttpConventions(app: FastifyInstance): void {
   registerNonStrippingSerializer(app);
   registerResponseConformance(app);
 
-  app.setNotFoundHandler((request, reply) => {
-    void reply
+  // `null` until `registerSpa` installs one. Decorated here rather than there because Fastify
+  // allows exactly one not-found handler per context: the handler below has to exist before any
+  // route does, and the SPA is registered long after it.
+  app.decorate('spaFallback', null);
+
+  app.setNotFoundHandler(async (request, reply) => {
+    // A deep link into the SPA (`/sessions/<id>`) is not a missing route — it is client-side
+    // routing, and the server's job is to hand back the document that knows how to render it.
+    // `shouldServeSpa` is what keeps that from swallowing unmatched `/api/` paths (F2.3).
+    if (app.spaFallback !== null && shouldServeSpa(request)) {
+      await app.spaFallback(request, reply);
+      return;
+    }
+
+    await reply
       .code(404)
       .send(
         errorEnvelope(
@@ -163,3 +176,4 @@ export * from './query-strictness.js';
 export * from './response-conformance.js';
 export * from './response-schema.js';
 export * from './route-table.js';
+export * from './spa.js';

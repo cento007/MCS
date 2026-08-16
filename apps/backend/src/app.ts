@@ -37,7 +37,7 @@ import {
   registerServiceHealthRoutes,
   type ServiceHealthService,
 } from './health/index.js';
-import { generateRequestId, registerHttpConventions } from './http/index.js';
+import { generateRequestId, registerHttpConventions, registerSpa } from './http/index.js';
 import {
   type MemoryClients,
   type MemoryConfig,
@@ -79,10 +79,9 @@ import {
  * authentication is DB-backed (F5.5) and the guard covers every route: an app built without
  * one could serve nothing.
  *
- * SCAFFOLD STATE: request-id, the F5.4 error envelope, `GET /api/v1/health`, `auth/`, the
- * `ws/` hub, the `events/` bus + transactional outbox, and the `sessions/` domain are wired.
- * The Agent SDK wrapper behind `SessionRuntimePort`, observed-session ingest, GitHub, settings
- * and static SPA serving are registered here by their owning workstreams.
+ * Everything the process serves is registered here: request-id and the F5.4 error envelope, the
+ * `auth/` guard, the `ws/` hub, the `events/` bus + transactional outbox, every domain module,
+ * and — when `spaRoot` is supplied — the built SPA on the same origin (F2.3).
  */
 export interface BuildAppOptions {
   readonly config?: AppConfig;
@@ -225,6 +224,18 @@ export interface BuildAppOptions {
    * `MockAgentRuntime` does not — and it still needs somewhere for the step's prompt to land.
    */
   readonly workflowPrompts?: WorkflowPromptPort | undefined;
+  /**
+   * Absolute path to the built SPA (`apps/frontend/dist`), which this process then serves on the
+   * same origin as the API (F2.3, TDS 05 §12). `main.ts` resolves it; omitting it builds an
+   * API-only app.
+   *
+   * **Omitted by default, and that default is load-bearing for the test tiers.** Every test
+   * builds the app from a repository that has usually been built at least once, so defaulting
+   * this to "serve `dist` if it happens to exist on disk" would make `GET /anything` answer 200
+   * HTML on one machine and 404 JSON on another. Serving the UI is a deployment decision, so it
+   * is made once, explicitly, by the process entry point.
+   */
+  readonly spaRoot?: string | undefined;
 }
 
 /** Overrides for the relay, all optional. Tests use them; `main.ts` uses none of them. */
@@ -619,6 +630,14 @@ export function buildAppWithServices(options: BuildAppOptions): BuiltApp {
     queue,
     scanBounds: options.obsidianScanBounds,
   });
+
+  // The SPA (F2.3), and **last on purpose**: it is the only registration here that is not an API
+  // route, and putting it after every one of them makes the precedence obvious rather than
+  // subtle. It serves `apps/frontend/dist` on this same origin, which is what makes "the Frontend
+  // has no unit" true of the F2.1 topology instead of aspirational.
+  if (options.spaRoot !== undefined) {
+    registerSpa(app, { root: options.spaRoot });
+  }
 
   return {
     app,

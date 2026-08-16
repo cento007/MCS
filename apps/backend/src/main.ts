@@ -1,4 +1,5 @@
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import {
   checkSchemaVersion,
   createLoggerFromConfig,
@@ -17,6 +18,20 @@ import { createBackendQueue } from './queue/index.js';
 import { createClaudeAgentRuntime } from './sessions/managed/claude-agent-runtime.js';
 import { recoverManagedSessions } from './sessions/managed/index.js';
 import { readClaudeCodeLaunchSettings, readMaxConcurrentSessions } from './settings/claude-code.js';
+
+/**
+ * The built SPA this process serves (F2.3, TDS 05 §12).
+ *
+ * Derived, never configured. The seven bootstrap variables in `.env.example` are the whole of
+ * this system's env surface (TDS 02 §8.2) and an eighth to point at a directory that is always
+ * in the same place relative to this file would be a setting with one correct value.
+ *
+ * The relative path is identical under `tsx watch src/main.ts` and under `node dist/main.js`,
+ * because `src/` and `dist/` sit at the same depth inside `apps/backend`. `registerSpa` treats a
+ * missing build as a warning, so a checkout that has never run `pnpm build` still serves the
+ * whole API and says which command it is missing.
+ */
+const SPA_ROOT = fileURLToPath(new URL('../../frontend/dist', import.meta.url));
 
 /**
  * Backend process entry (TDS 02 §2).
@@ -93,6 +108,7 @@ async function main(): Promise<void> {
     db: database.db,
     queue,
     maxConcurrentSessions,
+    spaRoot: SPA_ROOT,
     // The managed Claude Code wrapper (F1.5). This is the one place the Agent SDK enters the
     // process graph; every test substitutes the WS6 §5.2 mock at this same seam.
     agentRuntime: createClaudeAgentRuntime({
