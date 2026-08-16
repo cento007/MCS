@@ -65,6 +65,20 @@ describe('the Backend serves the built SPA on the same origin as the API', () =>
     expect(response.headers['content-type']).toContain('text/html');
   });
 
+  it('serves the root even to a client that sent no Accept header, so a curl check is not a false alarm', async () => {
+    const response = await app.inject({ method: 'GET', url: '/', headers: { accept: '*/*' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(INDEX_HTML);
+  });
+
+  it('serves the root with a query string, which is still the root', async () => {
+    const response = await app.inject({ method: 'GET', url: '/?redirect=/sessions' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(INDEX_HTML);
+  });
+
   it('serves a deep link with the same document, so client-side routing survives a reload', async () => {
     const response = await app.inject({
       method: 'GET',

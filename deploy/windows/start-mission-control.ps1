@@ -79,11 +79,65 @@ if ($null -eq $pg) {
 $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) { throw 'node was not found on PATH.' }
 
-# --- Launch ----------------------------------------------------------------------------------
 if ($PSBoundParameters.ContainsKey('Port')) { $env:MC_PORT = "$Port" }
+
+$StateDir = Join-Path $env:LOCALAPPDATA 'MissionControl'
+$PidFile  = Join-Path $StateDir 'backend.pid'
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+
+# --- Reclaim our own orphan ------------------------------------------------------------------
+#
+# `Stop-ScheduledTask` kills the task's PowerShell process and **leaves node running**, still
+# holding MC_PORT. Nothing then reaps it: the next start loses the bind, retries ten times and
+# exits nonzero, so "stop, then start" leaves a zombie serving stale code and a task that looks
+# like it failed for no reason. Observed exactly that way.
+#
+# The recorded PID is what makes this safe. Killing "whatever holds the port" would happily kill
+# a `pnpm dev` backend the operator is working in; this only ever kills a process **this script
+# started**, and only when it is still alive and still the thing on the port.
+if (Test-Path $PidFile) {
+    $stalePid = 0
+    if ([int]::TryParse((Get-Content $PidFile -Raw).Trim(), [ref] $stalePid) -and $stalePid -gt 0) {
+        $stale = Get-Process -Id $stalePid -ErrorAction SilentlyContinue
+        if ($stale -and $stale.ProcessName -eq 'node') {
+            Write-Step "reclaiming orphaned backend from a previous run (PID $stalePid)"
+            Stop-Process -Id $stalePid -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+    }
+    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+}
+
+# --- Which URL actually works ----------------------------------------------------------------
+#
+# Printed rather than assumed, because "which port is the UI on" cost real time once already:
+# the SPA moved from Vite's :5173 to the Backend's own port, and nothing said so at the moment
+# of starting.
+#
+# `MC_HOST=127.0.0.1` binds IPv4 loopback only, and Windows resolves `localhost` to `::1` (AAAA)
+# ahead of `127.0.0.1` (A) — so `http://[::1]:<port>` is refused. Clients that follow Happy
+# Eyeballs (browsers, curl) fall back to IPv4 and `localhost` works anyway; the literal address
+# is printed because it is the one that cannot depend on that fallback.
+$mcHost = if ($env:MC_HOST) { $env:MC_HOST } else {
+    $envFile = Join-Path $RepoRoot '.env'
+    if (Test-Path $envFile) {
+        $m = Select-String -Path $envFile -Pattern '^\s*MC_HOST\s*=\s*(.+?)\s*$' | Select-Object -First 1
+        if ($m) { $m.Matches[0].Groups[1].Value } else { '127.0.0.1' }
+    } else { '127.0.0.1' }
+}
+$mcPort = if ($env:MC_PORT) { $env:MC_PORT } else {
+    $envFile = Join-Path $RepoRoot '.env'
+    if (Test-Path $envFile) {
+        $m = Select-String -Path $envFile -Pattern '^\s*MC_PORT\s*=\s*(\d+)\s*$' | Select-Object -First 1
+        if ($m) { $m.Matches[0].Groups[1].Value } else { '8710' }
+    } else { '8710' }
+}
+
+Write-Step "open http://${mcHost}:${mcPort}   (this serves the UI and the API; there is no :5173)"
 
 Set-Location $RepoRoot
 
+# --- Launch ----------------------------------------------------------------------------------
 if ($NoLogFile) {
     Write-Step "starting: $node apps\backend\dist\main.js"
     & $node $Entry
@@ -93,16 +147,36 @@ if ($NoLogFile) {
 # Task Scheduler captures no stdout, so the launcher owns the file. Deliberately NOT inside
 # MC_DATA_DIR: `deploy/systemd/README.md` states the app manages no log files and keeps no log
 # directory there, and that stays true — this is the launcher's file, not the application's.
-$LogDir = Join-Path $env:LOCALAPPDATA 'MissionControl\launcher-logs'
+$LogDir = Join-Path $StateDir 'launcher-logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-# One file per start, ten kept. Bounded without a rotation daemon, and a crash loop stays
-# readable instead of interleaving every attempt into one file.
+# One start per pair of files, ten kept. Bounded without a rotation daemon, and a crash loop
+# stays readable instead of interleaving every attempt into one file.
 Get-ChildItem $LogDir -Filter 'backend-*.log' -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -Skip 9 | Remove-Item -Force
+    Sort-Object LastWriteTime -Descending | Select-Object -Skip 19 | Remove-Item -Force
 
-$LogFile = Join-Path $LogDir ("backend-{0:yyyyMMdd-HHmmss}.log" -f (Get-Date))
+$stamp   = '{0:yyyyMMdd-HHmmss}' -f (Get-Date)
+$LogFile = Join-Path $LogDir "backend-$stamp.log"
+$ErrFile = Join-Path $LogDir "backend-$stamp.err.log"
 Write-Step "logging to $LogFile"
 
-& $node $Entry *>> $LogFile
-exit $LASTEXITCODE
+# `Start-Process -PassThru` rather than the call operator, purely so the PID is knowable and can
+# be recorded for the reclamation above. `Wait-Process` keeps this script in the foreground, so
+# Task Scheduler still sees one long-running task rather than one that exits immediately.
+$proc = Start-Process -FilePath $node -ArgumentList $Entry `
+    -WorkingDirectory $RepoRoot -NoNewWindow -PassThru `
+    -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile
+
+Set-Content -Path $PidFile -Value $proc.Id -Encoding ascii
+Write-Step "backend PID $($proc.Id)"
+
+try {
+    Wait-Process -Id $proc.Id
+} finally {
+    # Covers the ordinary stop. A force-kill of this shell skips it, which is exactly the case
+    # the PID-file reclamation above exists to clean up on the next start.
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+}
+
+exit $proc.ExitCode

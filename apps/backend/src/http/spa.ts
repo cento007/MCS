@@ -78,6 +78,18 @@ export function shouldServeSpa(request: FastifyRequest): boolean {
   if (request.method !== 'GET' && request.method !== 'HEAD') return false;
   if (request.url.startsWith(API_PREFIX)) return false;
 
+  /**
+   * The bare root always answers with the document, whatever the client claims to accept.
+   *
+   * `/` is the entry point: there is no ambiguity about what was wanted and no asset it could be
+   * mistaken for, so the `Accept` test below has nothing to protect here. Requiring it made
+   * `curl http://localhost:8710` — the first thing anyone runs to check the server is alive —
+   * answer 404 while the site worked perfectly in a browser, which reads as "it is down". That
+   * cost real debugging time, which is a strong argument that the check was in the wrong place.
+   */
+  const path = request.url.split('?')[0];
+  if (path === '/') return true;
+
   return request.headers.accept?.includes('text/html') === true;
 }
 
